@@ -236,4 +236,26 @@ export const S = {
   triageLabelDescription: 'needs grooming',
   createdPartly: (url: string, reason: string) =>
     `Created ${url} but could not finish adding it: ${reason}`,
+  // #24
+  toolSuggest: {
+    description:
+      'Suggest a kanban card for a follow-up, a deferred item or out-of-scope work you notice. This creates nothing: the person sees the suggestion on the board and presses Add or Dismiss.',
+    title: 'A short title for the card.',
+    spec: 'The card text: what is to be done and how to tell it is done.',
+    why: 'Why it is worth doing, in a sentence.',
+  },
+  suggestPrompt:
+    'When you notice a follow-up, a deferred item or out-of-scope work, call mcp__kanban__kanban_suggest (title, spec, why) instead of only mentioning it in text. It only proposes a card: the person presses Add. Do not create cards with kanban_create unless asked.',
+  suggested: (title: string) => `Claude suggests a card: ${title}`,
+  suggestedResult: (title: string) =>
+    `Suggested "${title}". The person decides whether to add it; do not create it yourself unless asked.`,
+  suggestFolded: (title: string) =>
+    `"${title}" is already a card or a suggestion; nothing was added.`,
+  suggestedHeader: (n: number) => `Suggested (${n})`,
+  suggestMore: (n: number) => `  +${n} more`,
+  suggestAdd: 'Add',
+  suggestDismiss: '✕',
+  suggestWhy: (why: string) => `Why: ${why}`,
+  suggestionsNotSaved: (reason: string) =>
+    `kanban: could not save the suggestions: ${reason}`,
 }

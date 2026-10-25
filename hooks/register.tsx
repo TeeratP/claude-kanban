@@ -12,6 +12,7 @@ import {
 import { guardEdit, guardWrite } from './guard'
 import { dropUnfinishedAdds } from './quick-add'
 import { S } from './strings'
+import { restoreSuggestions, withSuggestSection } from './suggest'
 import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
 import {
@@ -34,6 +35,7 @@ export const register: Register = (on, options) => {
     for (const spec of TOOL_SPECS) await $.tool.register(spec)
     inBackground($, bootstrap($))
     inBackground($, resumePendingSyncs($))
+    inBackground($, restoreSuggestions($))
 
     return next(e)
   })
@@ -92,6 +94,19 @@ export const register: Register = (on, options) => {
   ).catch(($, e, next) =>
     next.called ? next(e) : { deny: S.toolFailed('kanban_create') },
   )
+
+  on('tool.call', { tool: 'mcp__kanban__kanban_suggest' }, ($, e) =>
+    runTool($, 'kanban_suggest', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_suggest') },
+  )
+
+  // Asks Claude to suggest follow-ups as cards, in one short section.
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+
+    return { sections: withSuggestSection(composed.sections, e.traits) }
+  }).catch(($, e, next) => next(e))
 
   // A card file Claude wrote or edited shows on the board at once, unless the
   // edit would put a card in Human without a handoff; a guard that breaks lets

@@ -59,6 +59,10 @@ Press `+` in the toolbar (or `n` while the pane has the keys) to open a title fi
 
 The card shows at once with a pulsing `⟳` (`#0` until its backend has numbered it) and `✓` when it exists. On the local backend it is written to `.kanban/NNNN-slug.md`. On GitHub it is an issue with the `triage` label (created in the repo if missing, never overwritten), added to the project board with Status Backlog: that label marks it for grooming. If the backend refuses, the card disappears, a toast gives the reason and the form comes back with your text. If GitHub made the issue but could not add it to the board, the toast names the issue.
 
+### Suggestions from Claude
+
+When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `+` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+
 ## Backends
 
 A project uses one backend. They do not sync with each other.
@@ -139,6 +143,7 @@ Claude gets these tools. They work with the pane closed.
 | `kanban_handoff` | Records a handoff on a card. |
 | `kanban_move` | Moves a card to `human`, `claude`, `backlog` or `done`. |
 | `kanban_create` | Creates a card: a file on the local backend, an issue labeled `triage` on the project board on GitHub. The spec cannot open a handoff or feedback section: marker lines in it are escaped (local backend). |
+| `kanban_suggest` | Proposes a card for a follow-up. Creates nothing: the suggestion waits in the strip for you to add or dismiss it. |
 
 ### Handoff format
 

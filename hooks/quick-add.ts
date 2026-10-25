@@ -10,6 +10,7 @@ import {
   PENDING_PREFIX,
   errorMessage,
   isPendingId,
+  oneLine,
   withCard,
 } from './model'
 import { S } from './strings'
@@ -45,9 +46,6 @@ export function typeInQuickAdd(
   )
 }
 
-/** The title on one line: a card title never wraps. */
-const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
-
 /**
  * Adds the card the form describes: Enter in `field`, whose whole text is
  * `value`. The form closes and the card shows at once, marked ⟳ until the
@@ -75,13 +73,28 @@ export async function submitQuickAdd(
 
     return
   }
-  await addCard($, seen.title, seen.spec)
+  await addCard($, seen.title, seen.spec, () =>
+    reopenForm($, seen.title, seen.spec),
+  )
 }
 
-async function addCard(
+// What was typed comes back in the form unless the person has opened it again.
+function reopenForm($: EngineInterface, title: string, spec: string) {
+  return updateQuickAdd($, form =>
+    form.isOpen ? form : { title, spec, isOpen: true, hasDetails: spec !== '' },
+  )
+}
+
+/**
+ * Shows a card in Backlog at once, marked ⟳, and has the backend make it. When
+ * the backend refuses, the card goes, the reason is toasted and `undo` runs so
+ * whatever the card came from can come back.
+ */
+export async function addCard(
   $: EngineInterface,
   title: string,
   spec: string,
+  undo: () => Promise<unknown>,
 ): Promise<void> {
   const now = await $.clock.now()
   added += 1
@@ -130,7 +143,7 @@ async function addCard(
       'backlog',
     )
   } catch (error) {
-    await snapOut($, id, { title, spec }, errorMessage(error))
+    await snapOut($, id, undo, errorMessage(error))
 
     return
   }
@@ -160,12 +173,11 @@ async function addCard(
   inBackground($, refresh($))
 }
 
-// The backend refused: the card goes, the reason is told, and what was typed
-// comes back in the form unless the person has opened it again meanwhile.
+// The backend refused: the card goes and the reason is told.
 async function snapOut(
   $: EngineInterface,
   id: string,
-  typed: { title: string; spec: string },
+  undo: () => Promise<unknown>,
   reason: string,
 ): Promise<void> {
   await setBoard($, board => ({
@@ -177,11 +189,7 @@ async function snapOut(
 
     return rest
   })
-  await updateQuickAdd($, form =>
-    form.isOpen
-      ? form
-      : { ...typed, isOpen: true, hasDetails: typed.spec !== '' },
-  )
+  await undo()
   $.ui.toast(S.addFailed(reason))
   // An issue may have been made before the failure: show what is really there.
   inBackground($, refresh($))
