@@ -345,7 +345,8 @@ async function dispatch($: EngineInterface, cardId: string): Promise<void> {
 // section's last when that card is gone, nothing when no place was asked. A card
 // arriving in another section with no place asked goes last there on GitHub,
 // where the project keeps the order a reload gives (a local card takes the next
-// order on its own). A card still being made is not on the backend to go after.
+// order on its own); that default place is best effort, see `send`. A card still
+// being made is not on the backend to go after.
 function anchorOf(
   cards: readonly KanbanCard[],
   cardId: string,
@@ -395,6 +396,8 @@ async function send($: EngineInterface, cardId: string): Promise<boolean> {
       { ...card, column: sent.from },
       sent.to,
       anchorOf(cards, card.id, sent, info.kind === 'github'),
+      // Without a place asked for, the anchor is only the default one.
+      sent.after !== undefined,
     )
   } catch (error) {
     return settle($, card, sent, { reason: errorMessage(error) })

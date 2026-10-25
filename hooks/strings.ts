@@ -387,4 +387,8 @@ export const S = {
   filterClear: '✕',
   filterCount: (shown: number, total: number) => `${shown}/${total}`,
   noMatches: '  (no matches)',
+
+  // #31
+  positionSkipped: (card: KanbanCard, reason: string) =>
+    `kanban: left #${card.number} where GitHub put it, its position was not set: ${reason}`,
 }

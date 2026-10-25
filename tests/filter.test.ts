@@ -262,6 +262,43 @@ test('a collapsed section with a match is open, and the stored flag stays', () =
   })
 })
 
+// #31: a header pressed under a filter keeps its own answer, apart from the stored flag.
+test('a header press under a filter overrides what the board shows, never the stored flag', () => {
+  const cards = [
+    ...many('backlog', 2, 'Backlog'),
+    ...many('done', 3, 'Done', 20),
+  ]
+  // The filter opens Done; the person collapsed it.
+  const ui = { ...INITIAL_UI, filter: 'done', filterCollapsed: { done: true } }
+
+  const shown = applyFilter(cards, ui).ui
+  expect(shown.collapsed.done).toBe(true)
+  expect(ui.collapsed.done).toBe(true)
+  expect(kinds(layoutBoard({ cards, ui, bodyRows: 30 })).slice(-2)).toEqual([
+    'empty:backlog',
+    'header:done',
+  ])
+  expect(openCount(shown)).toBe(3)
+
+  // An open section collapses, and a collapsed one with no match opens.
+  const other = applyFilter(cards, {
+    ...open({ filter: 'backlog' }),
+    filterCollapsed: { backlog: true },
+  }).ui
+  expect(other.collapsed.backlog).toBe(true)
+  expect(
+    applyFilter(cards, {
+      ...INITIAL_UI,
+      filter: 'backlog',
+      filterCollapsed: { done: false },
+    }).ui.collapsed.done,
+  ).toBe(false)
+
+  // With no filter the override means nothing.
+  const plain = { ...INITIAL_UI, filterCollapsed: { backlog: true } }
+  expect(applyFilter(cards, plain)).toEqual({ cards, ui: plain })
+})
+
 test('an opened section takes its share of the rows', () => {
   const cards = many('done', 7, 'Done')
   const ui = { ...INITIAL_UI, filter: 'done' }

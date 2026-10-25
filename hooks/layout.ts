@@ -78,8 +78,9 @@ export function queueAfter(
 
 /**
  * What the board shows of `cards`: those the filter lets through, and `ui` with
- * every collapsed section that has a match open. The stored flags stay as they
- * are, so clearing the filter gives the sections back as they were.
+ * every collapsed section that has a match open, except where a header press
+ * since the filter was set says otherwise. The stored flags stay as they are,
+ * so clearing the filter gives the sections back as they were.
  */
 export function applyFilter(
   cards: readonly KanbanCard[],
@@ -88,18 +89,19 @@ export function applyFilter(
   if (!isFiltering(ui.filter)) return { cards, ui }
 
   const matched = filterCards(cards, ui.filter)
-  const has = (column: KanbanColumn) =>
-    matched.some(card => card.column === column)
+  const shown = (column: KanbanColumn) =>
+    ui.filterCollapsed[column] ??
+    (ui.collapsed[column] && !matched.some(card => card.column === column))
 
   return {
     cards: matched,
     ui: {
       ...ui,
       collapsed: {
-        human: ui.collapsed.human && !has('human'),
-        claude: ui.collapsed.claude && !has('claude'),
-        backlog: ui.collapsed.backlog && !has('backlog'),
-        done: ui.collapsed.done && !has('done'),
+        human: shown('human'),
+        claude: shown('claude'),
+        backlog: shown('backlog'),
+        done: shown('done'),
       },
     },
   }

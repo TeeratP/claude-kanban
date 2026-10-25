@@ -63,11 +63,25 @@ function glyphOf(entry: KanbanSync, tick: number, now: number) {
   }
 }
 
-function toggleSection($: EngineInterface, column: KanbanColumn) {
-  return updateUi($, ui => ({
-    ...ui,
-    collapsed: { ...ui.collapsed, [column]: !ui.collapsed[column] },
-  }))
+// Under a filter the press turns the section as drawn, which the filter may have
+// opened, and leaves the stored flag for when the filter is gone.
+async function toggleSection($: EngineInterface, column: KanbanColumn) {
+  const { cards } = await readBoard($)
+
+  return updateUi($, ui =>
+    isFiltering(ui.filter)
+      ? {
+          ...ui,
+          filterCollapsed: {
+            ...ui.filterCollapsed,
+            [column]: !applyFilter(cards, ui).ui.collapsed[column],
+          },
+        }
+      : {
+          ...ui,
+          collapsed: { ...ui.collapsed, [column]: !ui.collapsed[column] },
+        },
+  )
 }
 
 // Moves a section's window by `delta(cap)` cards, kept within its list; resolves

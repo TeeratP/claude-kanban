@@ -2134,6 +2134,55 @@ test('a position GitHub refuses fails the move with its reason', async () => {
   ).rejects.toThrow('gh returned the new position that could not be read')
 })
 
+test('a position nobody asked for is best effort: the move stands and the reason goes to the debug log', async () => {
+  const failures: [string, Route['reply']][] = [
+    ['HTTP 502: Bad Gateway', { exitCode: 1, stderr: 'HTTP 502: Bad Gateway' }],
+    [
+      'Could not resolve item',
+      { stdout: '{"errors":[{"message":"Could not resolve item"}]}' },
+    ],
+    ['the new position that could not be read', { stdout: 'oops' }],
+  ]
+  const skipped =
+    'kanban: left #12 where GitHub put it, its position was not set: '
+
+  for (const [reason, reply] of failures) {
+    const { $, calls, logs } = fakeEngine([
+      { match: ['gh', 'api', 'graphql'], reply },
+      ...WRITES,
+    ])
+
+    const patch = await moveGithub($, CFG, ghCard(), 'claude', null, false)
+
+    expect(patch).toMatchObject({ status: 'In progress', isClosed: false })
+    expect(calls.map(call => call.argv[1])).toContain('api')
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toContain(skipped)
+    expect(logs[0]).toContain(reason)
+  }
+
+  // An anchor that is not on the board has no position to set; the move still stands.
+  const gone = fakeEngine([...WRITES])
+  const anchor = ghCard({ id: 'gh:9', number: 9, itemId: undefined })
+  expect(
+    await moveGithub(gone.$, CFG, ghCard(), 'claude', anchor, false),
+  ).toMatchObject({ status: 'In progress' })
+  expect(gone.logs).toEqual([`${skipped}#9 is not on the project board.`])
+
+  // A place that was asked for still fails the move.
+  const asked = fakeEngine([
+    { match: ['gh', 'api', 'graphql'], reply: { exitCode: 1, stderr: 'boom' } },
+    ...WRITES,
+  ])
+  await expect(
+    moveGithub(asked.$, CFG, ghCard(), 'claude', null, true),
+  ).rejects.toThrow('boom')
+  await expect(
+    moveGithub(asked.$, CFG, ghCard(), 'claude', null),
+  ).rejects.toThrow('boom')
+  expect(asked.logs).toEqual([])
+})
+
 const ISSUE_URL = 'https://github.com/TeeratP/claude-kanban/issues/30'
 const TRIAGE_LIST = [
   'gh',
