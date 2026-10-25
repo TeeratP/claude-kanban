@@ -7,6 +7,7 @@ import { cellWidth } from '../hooks/model'
 import {
   click,
   keys,
+  lineRows,
   listRows,
   litRows,
   marks,
@@ -809,15 +810,66 @@ for (const surface of WITH_CLIENT) {
     await clock.advance(SYNC_PAUSE)
     expect(files[path(22, 'b')]).toContain('status: human')
 
-    // A drop on a second row moves nothing.
+    // A drop on a second row puts the card right after the card it belongs to.
     const other = await rowIndex(ui, 'card:md:0023-b')
     const onRow = await rowIndex(ui, 'act:md:0012-c')
     await ui.pointer({ type: 'down', x: 3, y: other, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: onRow, button: 'left' })
+    expect(await lineRows(ui)).toEqual(['act:md:0012-c'])
     await ui.pointer({ type: 'up', x: 3, y: onRow, button: 'left' })
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(23, 'b')]).toContain('status: backlog')
+    expect(files[path(23, 'b')]).toContain('status: claude')
+    const order = (n: number, slug: string) =>
+      Number(/order: (\d+)/.exec(files[path(n, slug)] ?? '')?.[1])
+    expect(order(12, 'c')).toBeLessThan(order(23, 'b'))
+    expect(order(23, 'b')).toBeLessThan(order(13, 'c'))
+    // Claude is at its limit of one, so the card waits and no prompt goes out.
     expect(prompts).toEqual([])
+    await ui.unmount()
+  })
+
+  test(`a click on a second row opens its card on the ${surface}`, async ($, on) => {
+    const { ui } = await crowd($, on, surface)
+
+    await click(ui, 'act:md:0012-c')
+
+    expect((await ui.find({ type: 'Text', text: /^#12 / }))?.text).toBe(
+      '#12 Claude 12',
+    )
+    await ui.unmount()
+  })
+
+  test(`a card put in a new place in Claude keeps its round on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await crowd($, on, surface)
+    const from = await rowIndex(ui, 'card:md:0011-c')
+    const to = await rowIndex(ui, 'act:md:0012-c')
+
+    // Card 11 goes after card 12, in the same section.
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
+    await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(11, 'c')]).toContain('status: claude')
+
+    // Claude looks at it again: it is the same round, not a second.
+    await showCard($, 11)
+    await click(ui, 'card:md:0011-c')
+    const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+    expect(texts.filter(text => text.startsWith('Round '))).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test(`a second row is not dragged: pulling it moves its card nowhere on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await crowd($, on, surface)
+    const from = await rowIndex(ui, 'act:md:0011-c')
+    const human = await rowIndex(ui, 'hdr:human')
+
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    await ui.pointer({ type: 'move', x: 3, y: human, button: 'left' })
+    await ui.pointer({ type: 'up', x: 3, y: human, button: 'left' })
+    await clock.advance(SYNC_PAUSE)
+
+    expect(files[path(11, 'c')]).toContain('status: claude')
     await ui.unmount()
   })
 

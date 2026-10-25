@@ -2,7 +2,7 @@ import type { On, RenderSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { click, row, rowIndex, rowKeys, rowStyle } from './board-ui'
+import { click, lineRows, row, rowIndex, rowKeys, rowStyle } from './board-ui'
 import { PANE, RUN, SCROLL, SYNC_PAUSE, boot, card, path } from './fakes'
 
 const WITH_CLIENT = ['terminal', 'desktop'] as const
@@ -68,8 +68,9 @@ for (const surface of WITH_CLIENT) {
     await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
     await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
 
+    // A header puts the card at the top of its section.
     const keys = await rowKeys(ui)
-    expect(between(keys, 'hdr:human', 'hdr:claude')).toEqual([LOGIN, DOCS])
+    expect(between(keys, 'hdr:human', 'hdr:claude')).toEqual([DOCS, LOGIN])
     expect(between(keys, 'hdr:backlog', 'hdr:done')).toEqual(['empty:backlog'])
     expect(
       await ui.find({ type: 'Text', text: '#3 Write docs' }),
@@ -108,7 +109,7 @@ for (const surface of WITH_CLIENT) {
     },
   )
 
-  test(`a drag highlights the header it is over and dims the card on the ${surface}`, async ($, on) => {
+  test(`a drag draws a line where the card would land and dims the card on the ${surface}`, async ($, on) => {
     const { clock, ui, files } = await start($, on, surface)
     const from = await rowIndex(ui, DOCS)
     const human = await rowIndex(ui, 'hdr:human')
@@ -116,32 +117,34 @@ for (const surface of WITH_CLIENT) {
 
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
     expect((await rowStyle(ui, DOCS)).dimColor).toBeUndefined()
+    expect(await lineRows(ui)).toEqual([])
 
+    // The line runs under the header: the card would be first in the section.
     await ui.pointer({ type: 'move', x: 3, y: human, button: 'left' })
     expect((await rowStyle(ui, DOCS)).dimColor).toBe(true)
-    expect((await rowStyle(ui, 'hdr:human')).inverse).toBe(true)
-    expect((await rowStyle(ui, 'hdr:claude')).inverse).toBeUndefined()
+    expect(await lineRows(ui)).toEqual(['hdr:human'])
+    expect((await rowStyle(ui, 'hdr:human')).inverse).toBeUndefined()
 
     await ui.pointer({ type: 'move', x: 3, y: claude, button: 'left' })
-    expect((await rowStyle(ui, 'hdr:human')).inverse).toBeUndefined()
-    expect((await rowStyle(ui, 'hdr:claude')).inverse).toBe(true)
+    expect(await lineRows(ui)).toEqual(['hdr:claude'])
 
     await ui.pointer({ type: 'up', x: 3, y: claude, button: 'left' })
     expect((await rowStyle(ui, DOCS)).dimColor).toBeUndefined()
+    expect(await lineRows(ui)).toEqual([])
     await clock.advance(SYNC_PAUSE)
     expect(files[path(3, 'docs')]).toContain('status: claude')
     await ui.unmount()
   })
 
-  test(`a drop that is not on another section's header moves nothing on the ${surface}`, async ($, on) => {
+  test(`a drop that leaves the card where it is, or is off the list, moves nothing on the ${surface}`, async ($, on) => {
     const { clock, ui, files } = await start($, on, surface)
     const docs = await rowIndex(ui, DOCS)
     const own = await rowIndex(ui, 'hdr:backlog')
     const api = await rowIndex(ui, 'card:md:0002-api')
     const before = { ...files }
 
-    // Onto its own header, onto another card, off the list either side.
-    for (const y of [own, api, -3, 40]) {
+    // Onto its own header (it is already first), off the list either side.
+    for (const y of [own, -3, 40]) {
       await ui.pointer({ type: 'down', x: 3, y: docs, button: 'left' })
       await ui.pointer({ type: 'move', x: 3, y, button: 'left' })
       await ui.pointer({ type: 'up', x: 3, y, button: 'left' })
@@ -150,6 +153,7 @@ for (const surface of WITH_CLIENT) {
     await ui.pointer({ type: 'down', x: 3, y: docs, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: api, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: docs, button: 'left' })
+    expect(await lineRows(ui)).toEqual([])
     await ui.pointer({ type: 'up', x: 3, y: docs, button: 'left' })
 
     await clock.advance(SYNC_PAUSE)

@@ -2,7 +2,15 @@ import type { On, RenderSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { click, keys, litRows, row, rowIndex, rowKeys } from './board-ui'
+import {
+  click,
+  keys,
+  lineRows,
+  litRows,
+  row,
+  rowIndex,
+  rowKeys,
+} from './board-ui'
 import type { BoardUi } from './board-ui'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 
@@ -286,7 +294,7 @@ for (const surface of WITH_CLIENT) {
     await ui.key({ key: 'k', meta: true })
     await ui.key({ key: 'return', ctrl: true })
     await ui.key({ key: 'm', meta: true })
-    await keys(ui, 'x', 'tab', 'left', 'right', 'J', 'h', '1')
+    await keys(ui, 'x', 'tab', 'left', 'right', 'h', '1')
 
     expect(await litRows(ui)).toEqual([LOGIN])
     expect(await ui.find({ type: 'Client' })).toBeDefined()
@@ -333,7 +341,9 @@ for (const surface of WITH_CLIENT) {
 
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
-    expect((await litRows(ui)).sort()).toEqual(['hdr:human', DOCS].sort())
+    // The click gave the cursor to the card; the drag draws a line, not a second highlight.
+    expect(await litRows(ui)).toEqual([DOCS])
+    expect(await lineRows(ui)).toEqual(['hdr:human'])
     await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
 
     await clock.advance(SYNC_PAUSE)

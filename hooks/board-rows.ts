@@ -1,5 +1,5 @@
 import type { KanbanCard, KanbanColumn } from '../types'
-import type { RowView, Seg } from './board-client'
+import type { Place, RowView, Seg } from './board-client'
 import { cardLine } from './layout'
 import type { Row } from './layout'
 import { COLUMNS, cellWidth, isColumn, truncate } from './model'
@@ -25,7 +25,8 @@ export type RowViewInput = {
 /** A message the board's Client posts, checked: it came from code, not a fact. */
 export type BoardMessage =
   | { type: 'open'; cardId: string }
-  | { type: 'drop'; cardId: string; column: KanbanColumn }
+  | { type: 'drop'; cardId: string; column: KanbanColumn; place?: Place }
+  | { type: 'shift'; cardId: string; dir: 'up' | 'down' }
   | { type: 'toggle'; column: KanbanColumn }
   | { type: 'page'; column: KanbanColumn; dir: 'up' | 'down' }
 
@@ -41,6 +42,9 @@ const view = (segs: Seg[]) => ({
   segs,
   width: cellWidth(segs.map(one => one.text).join('')),
 })
+
+// Done lists by update time, so a card has no place to be put in it.
+const isOrdered = (column: KanbanColumn) => column !== 'done'
 
 // The keys that send the card under the cursor to a section: its place from
 // the top (1-4) and its initial (h, c, b, d).
@@ -67,6 +71,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
           column: row.column,
           moveKeys,
           hint: S.moveKeys(moveKeys),
+          isOrdered: isOrdered(row.column),
           ...view([
             seg(`${collapsed[row.column] ? S.expand : S.collapse} `),
             seg(S.col[row.column], { bold: true }),
@@ -118,7 +123,9 @@ export function toRowViews(input: RowViewInput): RowView[] {
       case 'detail':
         views.push({
           key: `act:${row.card.id}`,
-          kind: 'text',
+          kind: 'detail',
+          column: row.column,
+          cardId: row.card.id,
           ...view(detailOf(row.card)),
         })
         break
@@ -127,6 +134,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
         views.push({
           key: `empty:${row.column}`,
           kind: 'text',
+          column: row.column,
           ...view([seg(S.empty, { dim: true })]),
         })
         break
@@ -144,18 +152,37 @@ export function toRowViews(input: RowViewInput): RowView[] {
   return views
 }
 
+function placeOf(value: unknown): Place | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+
+  const { at, cardId } = value as Record<string, unknown>
+  if (at === 'top') return { at }
+
+  return (at === 'before' || at === 'after') && typeof cardId === 'string'
+    ? { at, cardId }
+    : undefined
+}
+
 /** The message in `data`, or undefined when it is none the Client posts. */
 export function parseBoardMessage(data: unknown): BoardMessage | undefined {
   if (typeof data !== 'object' || data === null) return undefined
 
-  const { type, cardId, column, dir } = data as Record<string, unknown>
+  const { type, cardId, column, dir, place } = data as Record<string, unknown>
 
   switch (type) {
     case 'open':
       return typeof cardId === 'string' ? { type, cardId } : undefined
-    case 'drop':
-      return typeof cardId === 'string' && isColumn(column)
-        ? { type, cardId, column }
+    case 'drop': {
+      if (typeof cardId !== 'string' || !isColumn(column)) return undefined
+      if (place === undefined) return { type, cardId, column }
+
+      const at = placeOf(place)
+
+      return at === undefined ? undefined : { type, cardId, column, place: at }
+    }
+    case 'shift':
+      return typeof cardId === 'string' && (dir === 'up' || dir === 'down')
+        ? { type, cardId, dir }
         : undefined
     case 'toggle':
       return isColumn(column) ? { type, column } : undefined

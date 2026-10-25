@@ -47,15 +47,15 @@ The toolbar shows the refresh button, the active backend, when the board was las
 
 ### Moving cards
 
-- **Terminal and desktop:** drag a card onto a section header to move it. Click a card (press and release without moving) to open it.
-- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, fold a section, page a section), and `m` followed by `1`-`4` or `h`/`c`/`b`/`d` moves the card under the cursor to Human, Claude, Backlog or Done. Any other key cancels the move.
-- **VS Code and mobile:** there is no drag. Open the card and press a `Move to:` button.
+- **Terminal and desktop:** drag a card onto any row of a section: its header or the `(empty)` row puts it first, a card puts it before that card or after it, and a `↑`/`↓ N more` row puts it at that edge of the cards shown. Which side of a card is the lower half of its row on a terminal that reports the pointer finer than a cell (kitty, Ghostty, iTerm2, WezTerm, foot); on any other, the way the pointer came: dragged down onto a card the card goes after it, dragged up it goes before it (so the end of a section is reachable by dragging down onto its last card). A line under a row shows where it will land. Dropped in its own section it is reordered; in Done, which lists by update time, it simply moves there. Click a card (press and release without moving) to open it.
+- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, fold a section, page a section), and `m` followed by `1`-`4` or `h`/`c`/`b`/`d` moves the card under the cursor to Human, Claude, Backlog or Done. Any other key cancels the move. `Shift`+`K` and `Shift`+`J` move the card under the cursor one place up or down in its section.
+- **VS Code and mobile:** there is no drag. Open the card and press a `Move to:` button, or `↑`/`↓` to move it a place in its section.
 
 A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure on the card's row; open the card for the reason and a Retry button, or press `✕N retry` in the toolbar to send every failed move again. Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.
 
 ### Who is working on a card
 
-A card in Claude that Claude has worked on gets a dim second row under it: a coloured dot for each agent that took part (`Claude` for the main session, or the subagent's name or type; the same agent always gets the same colour), the name of the one that acted last, what it is doing (`⟳ Edit src/auth.ts`, `⟳ Bash npm test`, or `idle 3m` once nothing has run for a minute) and the cost so far, for example `12m · 48k tok`. The row fits the pane: the stats keep their room first, the activity takes what is left (a path loses its front before its file name) and a long agent name is shortened. The card's own row never changes, so rows stay one line each. A card waiting in the queue (see below) has no second row until it starts.
+A card in Claude that Claude has worked on gets a dim second row under it: a coloured dot for each agent that took part (`Claude` for the main session, or the subagent's name or type; the same agent always gets the same colour), the name of the one that acted last, what it is doing (`⟳ Edit src/auth.ts`, `⟳ Bash npm test`, or `idle 3m` once nothing has run for a minute) and the cost so far, for example `12m · 48k tok`. The row fits the pane: the stats keep their room first, the activity takes what is left (a path loses its front before its file name) and a long agent name is shortened. The card's own row never changes, so rows stay one line each. A card waiting in the queue (see below) has no second row until it starts. The row belongs to its card: a click on it opens the card, and a card dropped on it lands right after that card (the insertion line is drawn under the row). Dragging from it moves nothing, and the keyboard cursor skips it.
 
 A turn belongs to the card whose work or resume prompt started it, or to the card in Claude that Claude last touched with `kanban_show`, `kanban_handoff` or `kanban_move`; subagents it spawns work for the same card. Time counts while a turn runs on the card, tokens come from each model request in it (input and output, with tokens written to the cache counted as input; cache reads are shown apart, in the detail view). A round is one trip through Claude: it ends when the card leaves Claude and a new one starts when the card is worked on again. Totals are kept per directory and card, so they survive a restart. Open the card to see the agents by name and a breakdown by round.
 
@@ -180,7 +180,7 @@ Open a card in Human to review it. The detail view has:
 
 The Human queue can be reviewed from the keyboard: `a` approve, `s` send back, `p` park, `f` write feedback (moves the cursor to the box), `n` / `k` next / previous Human card (wrapping), `b` back to the board. The line under the title reads `Human 2 of 5`, and a dim line lists the keys. After Approve, Send back (or Answer) or Park the next Human card opens by itself, or the board when none is left; that card ignores Approve, Send back and Park for 0.6 s, so a key pressed twice decides one card, and the walking keys are never held back. The keys work while the pane has the keyboard; `Esc` is the engine's and hands the keyboard back to the prompt.
 
-Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
+Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Reordering a card within a section never prompts. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
 
 On mobile there is no text box, so Send back is not shown; the detail view says to use the terminal or desktop.
 
@@ -213,8 +213,8 @@ Your feedback.
 
 - `status` is one of `human`, `claude`, `backlog`, `done`; anything else counts as `backlog`.
 - `id` is the card number (`#7`); a missing `id` falls back to the filename's number. Titles may contain colons.
-- `order` sorts a section, lowest first. Done sorts by `updated`, newest first.
-- The Handoff, Feedback, Question and Answer sections are appended below the spec. The board rewrites `status`, `order` and `updated` when a card moves, and leaves the body alone.
+- `order` sorts a section, lowest first. Done sorts by `updated`, newest first. Reordering a card writes only its `order`, between its neighbours' when there is a gap and otherwise renumbering the section by tens (10, 20, 30, …), rewriting only the cards whose number changed. On GitHub the order is the project item's position (`updateProjectV2ItemPosition`).
+- The Handoff, Feedback, Question, Answer and Check run sections are appended below the spec. The board rewrites `status`, `order` and `updated` when a card moves, and leaves the body alone.
 - Done cards stay as files with `status: done`. The pane never deletes a file.
 - Files Claude writes or edits show on the board straight away.
 

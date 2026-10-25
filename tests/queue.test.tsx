@@ -1,9 +1,9 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, Mounted } from 'claude-code/testing'
 
 import { claudeLimit } from '../hooks/queue'
-import { click, hasClient, row, rowStyle } from './board-ui'
+import { click, hasClient, listRows, row, rowStyle } from './board-ui'
 import type { BoardUi } from './board-ui'
 import {
   CWD,
@@ -431,6 +431,44 @@ test('a queued card the person moves out of Claude leaves the queue and is never
   expect(prompts).toHaveLength(2)
   expect(prompts[1]).toMatch(/^Work on kanban card #3 "Gamma"/)
   await clock.advance(2500)
+  await ui.unmount()
+})
+
+test('a queued card put in a new place in Claude stays queued, and the queue follows the new order', async ($, on) => {
+  const { clock, ui, prompts, saved: store } = await open($, on, backlog())
+  await toClaude(ui, ALPHA)
+  await toClaude(ui, BETA)
+  await toClaude(ui, GAMMA)
+  await clock.advance(SYNC_PAUSE)
+  await clock.advance(2500)
+  expect(await text(ui, BETA)).toContain('queued 1')
+  expect(await text(ui, GAMMA)).toContain('queued 2')
+
+  // Gamma is dragged up onto Beta: before it.
+  const keysNow = (await listRows(ui)).map(one => one.key)
+  const from = keysNow.indexOf(GAMMA)
+  const to = keysNow.indexOf(BETA)
+  const { pointer } = ui as unknown as {
+    pointer: Mounted<'terminal'>['pointer']
+  }
+  await pointer({ type: 'down', x: 3, y: from, button: 'left' })
+  await pointer({ type: 'move', x: 3, y: to, button: 'left' })
+  await pointer({ type: 'up', x: 3, y: to, button: 'left' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.advance(2500)
+
+  expect(await text(ui, GAMMA)).toContain('queued 1')
+  expect(await text(ui, BETA)).toContain('queued 2')
+  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 2 queued')
+  expect(held(store).sort()).toEqual(['md:0002-beta', 'md:0003-gamma'])
+  // A reorder sends no prompt.
+  expect(prompts).toHaveLength(1)
+
+  // When the running card hands off, the card that was moved up starts first.
+  await $.tool.call({ ...MOVE, card: 1, to: 'human' })
+  await clock.advance(SYNC_PAUSE)
+  expect(prompts).toHaveLength(2)
+  expect(prompts[1]).toMatch(/^Work on kanban card #3 "Gamma"/)
   await ui.unmount()
 })
 
