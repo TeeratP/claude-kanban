@@ -8,6 +8,8 @@ export type Row =
   | { kind: 'header'; column: KanbanColumn; shown: number; total: number }
   | { kind: 'more'; column: KanbanColumn; dir: 'up' | 'down'; n: number }
   | { kind: 'card'; column: KanbanColumn; card: KanbanCard }
+  // The dim second row under a Claude card Claude has worked on.
+  | { kind: 'detail'; column: KanbanColumn; card: KanbanCard }
   | { kind: 'empty'; column: KanbanColumn }
   | { kind: 'note' }
 
@@ -15,6 +17,8 @@ export type LayoutInput = {
   cards: readonly KanbanCard[]
   ui: KanbanUi
   bodyRows: number
+  /** The ids of the cards that get a second row. */
+  details?: ReadonlySet<string>
 }
 
 /** The cards a section lists, in order: Done is its newest ten. */
@@ -36,10 +40,36 @@ export function openCount(ui: KanbanUi): number {
   return COLUMNS.filter(column => !ui.collapsed[column]).length
 }
 
-/** Cards a section shows at once, so the whole tree fits `bodyRows`. */
-export function capFor(bodyRows: number, openSections: number): number {
+/**
+ * Rows to keep back for second rows: those the Claude section can show, at most
+ * a section's cap of 5, none while it is collapsed.
+ */
+export function detailReserve(
+  cards: readonly KanbanCard[],
+  ui: KanbanUi,
+  details: ReadonlySet<string> | undefined,
+): number {
+  if (details === undefined || ui.collapsed.claude) return 0
+
+  return Math.min(
+    5,
+    cards.filter(card => card.column === 'claude' && details.has(card.id))
+      .length,
+  )
+}
+
+/**
+ * Cards a section shows at once, so the whole tree fits `bodyRows`, with
+ * `reserve` rows kept back for the second rows of Claude cards.
+ */
+export function capFor(
+  bodyRows: number,
+  openSections: number,
+  reserve = 0,
+): number {
   const sections = Math.max(1, openSections)
-  const cap = Math.floor((bodyRows - 1 - COLUMNS.length) / sections) - 2
+  const cap =
+    Math.floor((bodyRows - 1 - COLUMNS.length - reserve) / sections) - 2
 
   return Math.min(5, Math.max(1, cap))
 }
@@ -48,8 +78,13 @@ export function clampOffset(offset: number, len: number, cap: number): number {
   return Math.min(Math.max(0, len - cap), Math.max(0, offset))
 }
 
-export function layoutBoard({ cards, ui, bodyRows }: LayoutInput): Row[] {
-  const cap = capFor(bodyRows, openCount(ui))
+export function layoutBoard({
+  cards,
+  ui,
+  bodyRows,
+  details,
+}: LayoutInput): Row[] {
+  const cap = capFor(bodyRows, openCount(ui), detailReserve(cards, ui, details))
   const rows: Row[] = [{ kind: 'toolbar' }]
 
   for (const column of COLUMNS) {
@@ -67,6 +102,9 @@ export function layoutBoard({ cards, ui, bodyRows }: LayoutInput): Row[] {
     if (offset > 0) rows.push({ kind: 'more', column, dir: 'up', n: offset })
     for (const card of list.slice(offset, offset + cap)) {
       rows.push({ kind: 'card', column, card })
+      if (details?.has(card.id) === true && column === 'claude') {
+        rows.push({ kind: 'detail', column, card })
+      }
     }
     const below = list.length - (offset + cap)
     if (below > 0) rows.push({ kind: 'more', column, dir: 'down', n: below })

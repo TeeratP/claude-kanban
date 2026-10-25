@@ -1,7 +1,9 @@
 import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
 
-import type { KanbanColumn, KanbanSync } from '../types'
+import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
+import { detailIds, detailSegs, segProps } from './activity-view'
 import {
+  readActivity,
   readBoard,
   readPausedUntil,
   readSync,
@@ -16,6 +18,7 @@ import {
   capFor,
   cardLine,
   clampOffset,
+  detailReserve,
   hitTest,
   layoutBoard,
   openCount,
@@ -65,10 +68,15 @@ async function scrollSection(
 ): Promise<boolean> {
   const { cards } = await readBoard($)
   const len = sectionList(cards, column).length
+  const details = detailIds(cards, await readActivity($))
 
   const seen = { isMoved: false }
   await updateUi($, ui => {
-    const cap = capFor(bodyRows, openCount(ui))
+    const cap = capFor(
+      bodyRows,
+      openCount(ui),
+      detailReserve(cards, ui, details),
+    )
     const shown = clampOffset(ui.offsets[column], len, cap)
     const offset = clampOffset(shown + delta(cap), len, cap)
     seen.isMoved = offset !== shown
@@ -93,7 +101,12 @@ export async function handleBoardScroll(
   if (ui.view.mode !== 'board' || e.pointer === undefined) return false
 
   const { cards } = await readBoard($)
-  const rows = layoutBoard({ cards, ui, bodyRows: e.bodyRows })
+  const rows = layoutBoard({
+    cards,
+    ui,
+    bodyRows: e.bodyRows,
+    details: detailIds(cards, await readActivity($)),
+  })
   const column = hitTest(rows, e.pointer.row + lastBody.offset)
   if (column === undefined || ui.collapsed[column]) return false
 
@@ -143,6 +156,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const sync = await readSync($)
   const tick = await readTick($)
   const pausedUntil = await readPausedUntil($)
+  const activity = await readActivity($)
   const now = await $.clock.now()
   const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
@@ -154,7 +168,13 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     cards: board.cards,
     ui,
     bodyRows: scroll.bodyRows,
+    details: detailIds(board.cards, activity),
   })
+  const detailOf = (card: KanbanCard) => {
+    const one = activity.cards[card.id]
+
+    return one === undefined ? [] : detailSegs(columns, one, activity.live, now)
+  }
 
   const draw = (row: Row) => {
     switch (row.kind) {
@@ -270,6 +290,15 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         )
       }
 
+      case 'detail':
+        return (
+          <Text wrap="truncate-end">
+            {detailOf(row.card).map(part => (
+              <Text {...segProps(part)}>{part.text}</Text>
+            ))}
+          </Text>
+        )
+
       case 'empty':
         return (
           <Text dimColor wrap="truncate-end">
@@ -305,6 +334,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         return entry === undefined ? undefined : glyphOf(entry, tick, now)
       },
       ageOf: card => ageLabel(card.updatedAt, now),
+      detailOf,
     }),
     columns,
   }

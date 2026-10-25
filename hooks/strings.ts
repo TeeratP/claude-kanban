@@ -286,4 +286,20 @@ export const S = {
     'Answering is unavailable here: this screen has no text field. Use the terminal or desktop.',
   answerPrompt: (n: number) =>
     `Resume kanban card #${n}: the person answered your question; read it with mcp__kanban__kanban_show and continue.`,
+
+  // #17
+  mainAgent: 'Claude',
+  agentDot: '●',
+  agentsMore: (n: number) => `+${n}`,
+  toolRunning: (tool: string) => `⟳ ${tool}`,
+  working: '⟳ working',
+  idle: (age: string) => (age === 'now' ? 'idle' : `idle ${age}`),
+  statsSep: ' · ',
+  tokens: (label: string) => `${label} tok`,
+  cached: (label: string) => `${label} cached`,
+  agentsHeading: 'Agents',
+  totalHeading: 'Total',
+  roundHeading: (n: number) => `Round ${n}`,
+  activityFailed: (reason: string) =>
+    `kanban: could not record Claude's activity: ${reason}`,
 }

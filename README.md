@@ -53,6 +53,12 @@ The toolbar shows the refresh button, the active backend, when the board was las
 
 A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure on the card's row; open the card for the reason and a Retry button, or press `✕N retry` in the toolbar to send every failed move again. Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.
 
+### Who is working on a card
+
+A card in Claude that Claude has worked on gets a dim second row under it: a coloured dot for each agent that took part (`Claude` for the main session, or the subagent's name or type; the same agent always gets the same colour), the name of the one that acted last, what it is doing (`⟳ Edit src/auth.ts`, `⟳ Bash npm test`, or `idle 3m` once nothing has run for a minute) and the cost so far, for example `12m · 48k tok`. The row fits the pane: the stats keep their room first, the activity takes what is left (a path loses its front before its file name) and a long agent name is shortened. The card's own row never changes, so rows stay one line each.
+
+A turn belongs to the card whose work or resume prompt started it, or to the card in Claude that Claude last touched with `kanban_show`, `kanban_handoff` or `kanban_move`; subagents it spawns work for the same card. Time counts while a turn runs on the card, tokens come from each model request in it (input and output, with tokens written to the cache counted as input; cache reads are shown apart, in the detail view). A round is one trip through Claude: it ends when the card leaves Claude and a new one starts when the card is worked on again. Totals are kept per directory and card, so they survive a restart. Open the card to see the agents by name and a breakdown by round.
+
 ## Backends
 
 A project uses one backend. They do not sync with each other.

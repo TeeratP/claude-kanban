@@ -1,6 +1,7 @@
 import type { EngineInterface, Timer } from 'claude-code'
 
 import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
+import { noteCardLeft, noteCardPrompt } from './activity'
 import { readBoard, readSync, updateSync, updateTick } from './atoms'
 import { moveRemote } from './backend'
 import {
@@ -127,6 +128,7 @@ export async function moveCard(
   })
   const from = seen.from
   if (from === undefined) return
+  if (from === 'claude') await noteCardLeft($, cardId)
 
   await updateSync($, sync => {
     seen.entry = retarget(
@@ -406,8 +408,10 @@ async function settle(
     expireLater($, card.id, settledAt, settledAt)
     if (seen.announce === true) announceHandoff($, card)
     if (seen.onConfirm !== undefined) {
+      const text = promptFor(seen.onConfirm, card)
+      noteCardPrompt(card.id, text)
       $.prompt
-        .submit({ text: promptFor(seen.onConfirm, card) })
+        .submit({ text })
         .catch((error: unknown) =>
           $.ui.log(S.promptFailed(errorMessage(error))),
         )

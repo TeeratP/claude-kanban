@@ -97,6 +97,34 @@ export type KanbanCheckRun = {
   record: 'none' | 'saving' | 'saved' | 'failed'
   error: string
 }
+/** One Claude -> Human -> Claude round on a card: time and tokens spent, and who worked in it. */
+export type KanbanRound = {
+  startedAt: number
+  ms: number
+  input: number
+  output: number
+  cacheRead: number
+  agents: string[]
+  isOpen: boolean
+}
+/** What Claude has done on one card: its rounds, and the tool it is on now. */
+export type KanbanCardActivity = {
+  cardId: string
+  rounds: KanbanRound[]
+  lastAt: number
+  lastAgent: string
+  tool: string
+  target: string
+  toolId: string
+  isToolRunning: boolean
+}
+export type KanbanActivity = {
+  cards: Record<string, KanbanCardActivity>
+  /** The card the running main turn belongs to ('' for none) and where its time is counted from. */
+  live: { cardId: string; since: number; isRunning: boolean }
+  /** Each subagent seen, by its id: its name and the card it inherited. */
+  agents: Record<string, { name: string; cardId: string }>
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -109,6 +137,7 @@ declare module 'claude-code' {
       tick: number
       pausedUntil: number
       viewer: string
+      activity: Shaped<KanbanActivity>
     }
   }
 }

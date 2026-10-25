@@ -47,7 +47,7 @@ export async function marks(ui: BoardUi, mark: string) {
     : ui.findAll({ type: 'Text', text })
 }
 
-const ROW_KEY = /^(hdr|card|more|empty|note)\b/
+const ROW_KEY = /^(hdr|card|act|more|empty|note)\b/
 
 /** The list rows, top to bottom: the Client's keyed Boxes, or the Buttons. */
 export async function listRows(ui: BoardUi) {

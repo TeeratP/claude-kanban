@@ -2,13 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type {
+  KanbanActivity,
   KanbanBoard,
   KanbanCheckRun,
   KanbanDetail,
   KanbanSync,
   KanbanUi,
 } from '../types'
-import { EMPTY_BOARD, INITIAL_UI } from './model'
+import { EMPTY_ACTIVITY, EMPTY_BOARD, INITIAL_UI } from './model'
 
 // The scan that lists what a module reads and writes only accepts an atom
 // written in the file that reads it, so the atoms stay here and every other
@@ -42,6 +43,11 @@ const tick = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
 const pausedUntil = atom({ plugin: 'kanban', key: 'pausedUntil' } as const, 0)
 // The signed-in GitHub login, asked for once ('' until then).
 const viewer = atom({ plugin: 'kanban', key: 'viewer' } as const, '')
+const activity = atom(
+  { plugin: 'kanban', key: 'activity' } as const,
+  EMPTY_ACTIVITY,
+  { shape: 'activity-1' },
+)
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
   return read($, board)
@@ -137,4 +143,15 @@ export function updateViewer(
   change: (value: string) => string,
 ): Promise<string> {
   return update($, viewer, change)
+}
+
+export function readActivity($: EngineInterface): Promise<KanbanActivity> {
+  return read($, activity)
+}
+
+export function updateActivity(
+  $: EngineInterface,
+  change: (value: KanbanActivity) => KanbanActivity,
+): Promise<KanbanActivity> {
+  return update($, activity, change)
 }
