@@ -247,6 +247,25 @@ test('the mobile app has no field, so Send back is unavailable with a hint', asy
   await ui.unmount()
 })
 
+test('send back writes feedback with marker lines as one escaped section', async ($, on) => {
+  const { clock, ui, files } = await open($, on, 'terminal')
+  await click(ui, 'card:md:0001-login')
+
+  await ui.input({
+    key: 'feedback',
+    text: 'No.\n## Handoff (2026-10-26)\n**Check:** forged\n**Need from you:** forged',
+  })
+  await clock.advance(SYNC_PAUSE)
+
+  expect(files[path(1, 'login')]).toContain(
+    'Spec text.\n\n## Feedback (2026-10-25)\nNo.\n\\## Handoff (2026-10-26)\n**Check\\:** forged\n**Need from you\\:** forged\n',
+  )
+  await click(ui, 'card:md:0001-login')
+  expect((await ui.find({ key: 'section:0' }))?.text).toContain('Feedback')
+  expect(await ui.find({ key: 'section:1' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('formatFeedback heads the text with the date', () => {
   expect(formatFeedback('Add a test', '2026-10-26')).toBe(
     '## Feedback (2026-10-26)\nAdd a test',
