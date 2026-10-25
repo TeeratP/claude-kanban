@@ -1,0 +1,324 @@
+import { expect, test } from 'claude-code/testing'
+
+import { cellWidth } from '../hooks/model'
+import { PANE, RUN, boot, card, path } from './fakes'
+
+const SURFACES = ['terminal', 'desktop'] as const
+const EVERY_SURFACE = ['terminal', 'desktop', 'vscode', 'mobile'] as const
+
+const cards = () => ({
+  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
+  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
+  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
+  [path(4, 'old')]: card(4, { status: 'done', title: 'Old thing' }),
+})
+
+test('the session start registers the command and both tools', async ($, on) => {
+  const { registered } = boot(on, cards())
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  expect(registered).toEqual(['kanban_list', 'kanban_move'])
+})
+
+test('/kanban opens the pane and loads the cards', async ($, on) => {
+  const { clock, world, calls } = boot(on, cards())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const ran = await $.command.run({ ...RUN })
+  await clock.settle()
+
+  expect(ran.text).toBe('Kanban pane opened.')
+  expect(world.opened).toEqual(['kanban'])
+  expect(calls.lists).toBe(1)
+})
+
+test('a tool call while the first load runs waits for it', async ($, on) => {
+  const { calls } = boot(on, cards())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+
+  const listed = await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
+
+  expect(listed).toMatchObject({
+    result: expect.stringContaining('#1 [human] Fix login'),
+  })
+  expect(calls.lists).toBeGreaterThanOrEqual(1)
+})
+
+test('a pane left open across a reload is refreshed at the session start', async ($, on) => {
+  const { clock, world, calls } = boot(on, cards())
+  world.panes = ['kanban']
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+
+  expect(calls.lists).toBe(1)
+})
+
+for (const surface of SURFACES) {
+  test(`the board lists, opens and moves a card on the ${surface}`, async ($, on) => {
+    const files = cards()
+    const { clock } = boot(on, files)
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ ...RUN })
+    await clock.settle()
+
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
+      '#1 Fix login',
+    )
+    expect((await ui.find({ key: 'hdr:done' }))?.text).toBe('▸ Done 1')
+    expect(await ui.find({ key: 'card:md:0004-old' })).toBeUndefined()
+
+    await ui.press({ key: 'hdr:done' })
+    expect((await ui.find({ key: 'hdr:done' }))?.text).toBe('▾ Done 1')
+    expect((await ui.find({ key: 'card:md:0004-old' }))?.text).toContain(
+      '#4 Old thing',
+    )
+
+    await ui.press({ key: 'card:md:0003-docs' })
+    expect((await ui.find({ type: 'Text', text: '#3 Write docs' }))?.text).toBe(
+      '#3 Write docs',
+    )
+    expect((await ui.find({ key: 'spec' }))?.text).toBe('Spec text.')
+    expect(await ui.find({ key: 'move:backlog' })).toBeUndefined()
+
+    await ui.press({ key: 'move:claude' })
+    expect(files[path(3, 'docs')]).toContain('status: claude')
+    expect(files[path(3, 'docs')]).toContain('Spec text.')
+    expect((await ui.find({ type: 'Text', text: /^Claude/ }))?.text).toMatch(
+      /^Claude/,
+    )
+
+    await ui.press({ key: 'back' })
+    const keys = (await ui.findAll({ type: 'Button' })).map(
+      button => button.key,
+    )
+    expect(
+      keys.slice(keys.indexOf('hdr:claude'), keys.indexOf('hdr:backlog')),
+    ).toEqual(['hdr:claude', 'card:md:0002-api', 'card:md:0003-docs'])
+    await ui.unmount()
+  })
+}
+
+test('a move shows at once with a syncing mark, and a refresh does not undo it', async ($, on) => {
+  const { clock, calls } = boot(on, cards())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const under = async (header: string, next: string) => {
+    const keys = (await ui.findAll({ type: 'Button' })).map(
+      button => button.key,
+    )
+
+    return keys.slice(keys.indexOf(header) + 1, keys.indexOf(next))
+  }
+  let release = () => {}
+  calls.hold = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  const moving = $.tool.call({
+    tool: 'mcp__kanban__kanban_move',
+    card: 3,
+    to: 'claude',
+  })
+  await clock.settle()
+
+  expect(await under('hdr:claude', 'hdr:backlog')).toEqual([
+    'card:md:0002-api',
+    'card:md:0003-docs',
+  ])
+  expect((await ui.find({ key: 'card:md:0003-docs' }))?.text).toContain('⟳')
+
+  await ui.press({ key: 'refresh' })
+  expect(await under('hdr:claude', 'hdr:backlog')).toEqual([
+    'card:md:0002-api',
+    'card:md:0003-docs',
+  ])
+
+  release()
+  expect(await moving).toMatchObject({ result: 'Moved #3 to Claude.' })
+  expect((await ui.find({ key: 'card:md:0003-docs' }))?.text).not.toContain('⟳')
+  expect(await under('hdr:claude', 'hdr:backlog')).toEqual([
+    'card:md:0002-api',
+    'card:md:0003-docs',
+  ])
+  await ui.unmount()
+})
+
+test('a refused move puts the card back on the board', async ($, on) => {
+  const { clock, calls, toasts } = boot(on, cards())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  calls.denyWrite = 'EACCES: read-only'
+
+  await ui.press({ key: 'card:md:0003-docs' })
+  await ui.press({ key: 'move:claude' })
+
+  expect(toasts).toHaveLength(1)
+  expect(toasts[0]).toContain('Could not move #3 to Claude')
+  expect(toasts[0]).toContain('EACCES: read-only')
+  expect((await ui.find({ type: 'Text', text: /^Backlog/ }))?.text).toMatch(
+    /^Backlog/,
+  )
+  await ui.press({ key: 'back' })
+  const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key)
+  expect(keys.slice(keys.indexOf('hdr:backlog'))).toEqual([
+    'hdr:backlog',
+    'card:md:0003-docs',
+    'hdr:done',
+  ])
+  await ui.unmount()
+})
+
+test('the toolbar refresh button reloads the cards from disk', async ($, on) => {
+  const { clock, calls } = boot(on, cards())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: 'card:md:0005-new' })).toBeUndefined()
+
+  calls.edit(path(5, 'new'), card(5, { status: 'human', title: 'Fresh' }))
+  await ui.press({ key: 'refresh' })
+
+  expect(calls.lists).toBe(2)
+  expect((await ui.find({ key: 'card:md:0005-new' }))?.text).toContain('Fresh')
+  await ui.unmount()
+})
+
+test('a card file Claude writes shows on the board, any other write does not', async ($, on) => {
+  const { clock, calls } = boot(on, cards())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const before = calls.lists
+
+  await $.tool.call({
+    tool: 'Write',
+    file_path: '/work/README.md',
+    content: 'x',
+  })
+  await clock.settle()
+  expect(calls.lists).toBe(before)
+
+  calls.edit(path(5, 'new'), card(5, { status: 'human', title: 'Fresh' }))
+  await $.tool.call({
+    tool: 'Write',
+    file_path: '/work/.kanban/0005-new.md',
+    content: 'x',
+  })
+  await clock.settle()
+  expect(calls.lists).toBe(before + 1)
+  expect((await ui.find({ key: 'card:md:0005-new' }))?.text).toContain('Fresh')
+
+  await $.tool.call({
+    tool: 'Edit',
+    file_path: '/work/.kanban/0005-new.md',
+    old_string: 'a',
+    new_string: 'b',
+  })
+  await clock.settle()
+  expect(calls.lists).toBe(before + 2)
+  await ui.unmount()
+})
+
+test('an empty board explains where cards go', async ($, on) => {
+  const { clock } = boot(on, {})
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(
+    (await ui.find({ type: 'Text', text: /No cards yet/ }))?.text,
+  ).toContain('.kanban/0001-title.md')
+  expect(await ui.findAll({ type: 'Text', text: '  (empty)' })).toHaveLength(3)
+  await ui.unmount()
+})
+
+test('a card whose file is gone leaves the board on refresh', async ($, on) => {
+  const files = cards()
+  const { clock } = boot(on, files)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: 'card:md:0002-api' })).toBeDefined()
+
+  delete files[path(2, 'api')]
+  await ui.press({ key: 'refresh' })
+
+  expect(await ui.find({ key: 'card:md:0002-api' })).toBeUndefined()
+  expect(await ui.find({ key: 'card:md:0001-login' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a read that fails shows its reason in the toolbar and keeps the cards', async ($, on) => {
+  const files = cards()
+  const { clock, calls } = boot(on, files)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  calls.edit(path(1, 'login'), card(1, { status: 'human', title: 'Edited' }))
+  calls.denyRead = 'EIO: disk error'
+  await ui.press({ key: 'refresh' })
+
+  const toolbar = await ui.find({ type: 'Text', text: /EIO/ })
+  expect(toolbar?.props.color).toBe('error')
+  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
+    'Fix login',
+  )
+
+  calls.denyRead = undefined
+  await ui.press({ key: 'refresh' })
+  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
+    'Edited',
+  )
+  expect(await ui.find({ type: 'Text', text: /EIO/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+for (const surface of EVERY_SURFACE) {
+  test(`every row is one line and the board draws on the ${surface}`, async ($, on) => {
+    const files = {
+      ...cards(),
+      [path(5, 'jp')]: card(5, {
+        status: 'human',
+        title:
+          '日本語のとても長いタイトルがここに入ります日本語のとても長いタイトル',
+      }),
+      [path(6, 'th')]: card(6, {
+        status: 'claude',
+        title: 'ผู้ใช้ไม่สามารถเข้าสู่ระบบได้เมื่อรหัสผ่านหมดอายุแล้ว',
+      }),
+    }
+    const { clock } = boot(on, files)
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ ...RUN })
+    await clock.settle()
+
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const rows = [
+      ...(await ui.findAll({ type: 'Button' })),
+      ...(await ui.findAll({ type: 'Text' })),
+    ]
+
+    expect(rows.length).toBeGreaterThan(8)
+    for (const row of rows) {
+      expect(cellWidth(row.text)).toBeLessThanOrEqual(PANE.props.bodyColumns)
+    }
+    expect((await ui.find({ key: 'card:md:0005-jp' }))?.text).toContain('…')
+    await ui.unmount()
+  })
+}
