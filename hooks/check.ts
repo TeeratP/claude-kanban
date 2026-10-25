@@ -127,8 +127,12 @@ export function extractCheckCommands(check: string): string[] {
   return [...new Set(found.filter(command => command !== ''))]
 }
 
-/** The Check text of the newest handoff, unless feedback came after it. */
-export function currentCheck(sections: readonly KanbanSection[]): string {
+/**
+ * The Check text of the newest handoff, unless feedback came after it. A section someone
+ * else wrote on the issue (`byOther`) is never read: its command is not the person's to run.
+ */
+export function currentCheck(all: readonly KanbanSection[]): string {
+  const sections = all.filter(one => one.byOther === undefined)
   const handoff = sections.findLastIndex(one => one.kind === 'handoff')
   const feedback = sections.findLastIndex(one => one.kind === 'feedback')
 
@@ -139,11 +143,11 @@ export function currentCheck(sections: readonly KanbanSection[]): string {
 export function sectionHeading(section: KanbanSection): string {
   switch (section.kind) {
     case 'handoff':
-      return S.handoffHeading(section.date)
+      return S.handoffHeading(section.date, section.byOther)
     case 'feedback':
-      return S.feedbackHeading(section.date)
+      return S.feedbackHeading(section.date, section.byOther)
     default:
-      return S.checkRunHeading(section.date)
+      return S.checkRunHeading(section.date, section.byOther)
   }
 }
 

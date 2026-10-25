@@ -126,6 +126,28 @@ test('the check comes from the newest handoff, and not after feedback', () => {
   expect(currentCheck([])).toBe('')
 })
 
+test('a section someone else wrote is never read for a command', () => {
+  const [mine, theirs] = sections('handoff', 'handoff')
+
+  expect(
+    currentCheck([
+      mine as KanbanSection,
+      { ...(theirs as KanbanSection), byOther: 'mallory' },
+    ]),
+  ).toBe('Run `npm test 0`')
+  expect(
+    currentCheck([{ ...(mine as KanbanSection), byOther: 'mallory' }]),
+  ).toBe('')
+  expect(
+    sectionHeading({
+      kind: 'check',
+      date: '2026-10-25',
+      text: '',
+      byOther: 'mallory',
+    }),
+  ).toBe('Check run (2026-10-25) from @mallory, not counted')
+})
+
 test('output is cut to its last 20 lines and says how many came before', () => {
   const lines = Array.from({ length: 50 }, (_, index) => `line ${index + 1}`)
   const tail = tailOf(lines.join('\n') + '\n\n')

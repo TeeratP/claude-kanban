@@ -7,6 +7,7 @@ import type {
   KanbanGithub,
   KanbanTag,
 } from '../types'
+import { readViewer, updateViewer } from './atoms'
 import { parseSections } from './handoff'
 import { errorMessage } from './model'
 import { S } from './strings'
@@ -89,6 +90,11 @@ export function parseClaudeMd(text: string): ParsedClaudeMd | null {
   }
 }
 
+const AI_LABEL = 'ai'
+
+const isHumanLabel = (label: string) => label.toLowerCase() === 'human'
+const isAiLabel = (label: string) => label.toLowerCase() === AI_LABEL
+
 /** The column a GitHub card sits in: who holds the ball, not who owns the issue. */
 export function columnOf(
   status: string | undefined,
@@ -101,9 +107,7 @@ export function columnOf(
     return { column: 'backlog' }
   }
   if (name === 'in review') return { column: 'human', tag: 'review' }
-  if (labels.some(label => label.toLowerCase() === 'human')) {
-    return { column: 'human', tag: 'human' }
-  }
+  if (labels.some(isHumanLabel)) return { column: 'human', tag: 'human' }
 
   return { column: name === 'in progress' ? 'claude' : 'backlog' }
 }
@@ -172,18 +176,18 @@ export function planMove(
   if (to === 'human') return [...reopen, itemEdit(cfg.options.inReview)]
   if (to === 'claude') {
     const edit = ['gh', 'issue', 'edit', issue, '--repo', cfg.repo]
+    const human = card.labels?.find(isHumanLabel)
 
+    // The label first: a failure there leaves the Status as it was.
     return [
       ...reopen,
-      itemEdit(cfg.options.inProgress),
       [
         ...edit,
         '--add-label',
-        'ai',
-        ...(card.labels?.includes('human') === true
-          ? ['--remove-label', 'human']
-          : []),
+        AI_LABEL,
+        ...(human === undefined ? [] : ['--remove-label', human]),
       ],
+      itemEdit(cfg.options.inProgress),
     ]
   }
 
@@ -238,48 +242,71 @@ function listOf(value: unknown, what: string): Rec[] {
   return value.filter(isRec)
 }
 
-type Item = {
-  id: string
-  number: number
-  title: string
-  repository: string
-  status?: string
-  url?: string
-}
+/** GitHub's GraphQL budget after a query; `resetAt` is epoch milliseconds. */
+export type RateLimit = { cost: number; remaining: number; resetAt: number }
 
-/** Board items that are issues, as `gh project item-list --format json` prints them. */
-function parseItems(stdout: string): Item[] {
-  const data = parseJson(stdout, 'project items')
-  const items = listOf(isRec(data) ? data.items : undefined, 'project items')
+/** What a load found: the cards, and the rate limit as the last page reported it. */
+export type GithubLoad = { cards: KanbanCard[]; rateLimit?: RateLimit }
 
-  return items.flatMap(item => {
-    const content = isRec(item.content) ? item.content : {}
-    const number = content.number
-    if (
-      content.type !== 'Issue' ||
-      typeof number !== 'number' ||
-      typeof item.id !== 'string'
-    ) {
-      return []
-    }
-    const status = str(item.status)
-    const url = str(content.url)
+type RateLimitedError = Error & { isRateLimited: true; resetAt?: number }
 
-    return [
-      {
-        id: item.id,
-        number,
-        title: str(content.title) || str(item.title),
-        repository: str(content.repository),
-        ...(status === '' ? {} : { status }),
-        ...(url === '' ? {} : { url }),
-      },
-    ]
+function rateLimited(
+  cause: unknown,
+  resetAt: number | undefined,
+): RateLimitedError {
+  return Object.assign(new Error(errorMessage(cause)), {
+    isRateLimited: true as const,
+    ...(resetAt === undefined ? {} : { resetAt }),
   })
 }
 
-type Issue = {
+/** Whether a load failed because GitHub's rate limit is used up; `resetAt` is set when known. */
+export function isRateLimited(error: unknown): error is RateLimitedError {
+  return error instanceof Error && 'isRateLimited' in error
+}
+
+const PAGE_SIZE = 100
+
+// One query per page of the project's items: the Status value and, for the
+// issues, only the fields a card shows. Measured at 2 points a page (the cost
+// follows the `first` values asked for), where `gh project item-list` took about 100.
+const BOARD_QUERY = `query($projectId: ID!, $cursor: String) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      items(first: ${PAGE_SIZE}, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          fieldValueByName(name: "Status") {
+            ... on ProjectV2ItemFieldSingleSelectValue { name optionId }
+          }
+          content {
+            ... on Issue {
+              number title url state createdAt updatedAt
+              repository { nameWithOwner }
+              labels(first: 20) { nodes { name } }
+              closedByPullRequestsReferences(first: 5) {
+                nodes { number repository { nameWithOwner } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  rateLimit { cost remaining resetAt }
+}`
+
+// A board larger than MAX_PAGES pages shows its first 3000 items.
+const MAX_PAGES = 30
+const RATE_LIMITED = /rate limit/i
+
+type Entry = {
+  id: string
   number: number
+  title: string
+  url: string
+  status?: string
   labels: string[]
   isClosed: boolean
   createdAt: string
@@ -287,135 +314,219 @@ type Issue = {
   prNumbers: number[]
 }
 
-function isSameRepo(ref: unknown, repo: string): boolean {
-  if (!isRec(ref) || !isRec(ref.owner)) return true
+type Page = { entries: Entry[]; next?: string; rateLimit?: RateLimit }
 
-  return (
-    `${str(ref.owner.login)}/${str(ref.name)}`.toLowerCase() ===
-    repo.toLowerCase()
-  )
-}
+const isRepo = (ref: unknown, repo: string) =>
+  isRec(ref) && str(ref.nameWithOwner).toLowerCase() === repo.toLowerCase()
 
-/** Issues as `gh issue list --json ...` prints them, by number. */
-function parseIssues(stdout: string, repo: string): Map<number, Issue> {
-  const issues = new Map<number, Issue>()
+const nodesOf = (connection: unknown) =>
+  isRec(connection) && Array.isArray(connection.nodes)
+    ? connection.nodes.filter(isRec)
+    : []
 
-  for (const row of listOf(parseJson(stdout, 'issues'), 'issues')) {
-    if (typeof row.number !== 'number') continue
-
-    const prs = Array.isArray(row.closedByPullRequestsReferences)
-      ? row.closedByPullRequestsReferences.filter(isRec)
-      : []
-    issues.set(row.number, {
-      number: row.number,
-      labels: (Array.isArray(row.labels) ? row.labels : [])
-        .filter(isRec)
-        .map(label => str(label.name))
-        .filter(name => name !== ''),
-      isClosed: row.state === 'CLOSED',
-      createdAt: str(row.createdAt),
-      updatedAt: str(row.updatedAt),
-      prNumbers: prs.flatMap(pr =>
-        typeof pr.number === 'number' && isSameRepo(pr.repository, repo)
-          ? [pr.number]
-          : [],
-      ),
-    })
+function parseRateLimit(value: unknown): RateLimit | undefined {
+  if (!isRec(value)) return undefined
+  const { cost, remaining } = value
+  const resetAt = Date.parse(str(value.resetAt))
+  if (typeof cost !== 'number' || typeof remaining !== 'number') {
+    return undefined
   }
 
-  return issues
+  return Number.isNaN(resetAt) ? undefined : { cost, remaining, resetAt }
 }
 
-// Trims each entry to the fields read: bodies, label colors and node ids would
-// bury a big board in output and past the 4 MiB the engine keeps.
-const ITEM_FILTER =
-  '{items: [.items[] | {id, title, status, content: (.content | {type, number, title, url, repository})}]}'
-const ISSUE_FIELDS =
-  'number,labels,state,updatedAt,createdAt,closedByPullRequestsReferences'
-const ISSUE_FILTER =
-  '[.[] | {number, state, createdAt, updatedAt, labels: [.labels[] | {name}], closedByPullRequestsReferences: [.closedByPullRequestsReferences[] | {number, repository: (.repository | {name, owner: {login: .owner.login}})}]}]'
+/** One page of the board query: this repo's issues on the board, and the cursor of the next page. */
+function parsePage(stdout: string, repo: string): Page {
+  const data = parseJson(stdout, 'project items')
+  const root = isRec(data) && isRec(data.data) ? data.data : {}
+  const node = isRec(root.node) ? root.node : {}
+  if (!isRec(node.items)) throw new Error(S.ghBadJson('project items', ''))
 
-// gh pages `--limit` on its own, 100 entries per request, so this is a ceiling
-// on a board and not a page size. Trimmed, 3000 entries come to about 1.2 MiB.
-const LIST_LIMIT = 3000
-// A page takes two to three seconds, so the 30 s default gives out near 1000 items.
-const LIST_TIMEOUT_MS = 180000
+  const { endCursor, hasNextPage } = isRec(node.items.pageInfo)
+    ? node.items.pageInfo
+    : { endCursor: undefined, hasNextPage: false }
+  if (hasNextPage === true && str(endCursor) === '') {
+    throw new Error(S.ghBadJson('project items', ''))
+  }
+  const rateLimit = parseRateLimit(root.rateLimit)
 
-/** Board cards: the project's issues of this repo, with labels, state and PRs from the issue list. */
-export async function loadGithub(
-  $: EngineInterface,
-  info: KanbanGithub,
-): Promise<KanbanCard[]> {
-  const init = { timeoutMs: LIST_TIMEOUT_MS }
-  const [itemsOut, issuesOut] = await Promise.all([
-    runCommand(
-      $,
-      [
-        'gh',
-        'project',
-        'item-list',
-        String(info.projectNumber),
-        '--owner',
-        info.owner,
-        '--format',
-        'json',
-        '--limit',
-        String(LIST_LIMIT),
-        '--jq',
-        ITEM_FILTER,
-      ],
-      init,
-    ),
-    runCommand(
-      $,
-      [
-        'gh',
-        'issue',
-        'list',
-        '--repo',
-        info.repo,
-        '--state',
-        'all',
-        '--limit',
-        String(LIST_LIMIT),
-        '--json',
-        ISSUE_FIELDS,
-        '--jq',
-        ISSUE_FILTER,
-      ],
-      init,
-    ),
-  ])
-  const issues = parseIssues(issuesOut, info.repo)
-  const items = parseItems(itemsOut).filter(
-    item => item.repository.toLowerCase() === info.repo.toLowerCase(),
-  )
-
-  return items.flatMap((item, order): KanbanCard[] => {
-    const issue = issues.get(item.number)
-    if (issue === undefined) return []
-
-    const { column, tag } = columnOf(item.status, issue.labels, issue.isClosed)
+  const entries = listOf(node.items.nodes, 'project items').flatMap(item => {
+    const content = isRec(item.content) ? item.content : {}
+    // Pull requests and drafts come back without issue fields; other repos' issues are not this board's cards.
+    if (
+      typeof content.number !== 'number' ||
+      typeof item.id !== 'string' ||
+      !isRepo(content.repository, repo)
+    ) {
+      return []
+    }
+    const status = isRec(item.fieldValueByName)
+      ? str(item.fieldValueByName.name)
+      : ''
 
     return [
       {
-        id: `gh:${item.number}`,
-        number: item.number,
-        title: item.title,
-        column,
-        order,
-        createdAt: issue.createdAt,
-        updatedAt: issue.updatedAt,
-        ...(tag === undefined ? {} : { tag }),
-        itemId: item.id,
-        ...(item.status === undefined ? {} : { status: item.status }),
-        labels: issue.labels,
-        isClosed: issue.isClosed,
-        ...(item.url === undefined ? {} : { url: item.url }),
-        ...(issue.prNumbers.length === 0 ? {} : { prNumbers: issue.prNumbers }),
+        id: item.id,
+        number: content.number,
+        title: str(content.title),
+        url: str(content.url),
+        ...(status === '' ? {} : { status }),
+        labels: nodesOf(content.labels)
+          .map(label => str(label.name))
+          .filter(name => name !== ''),
+        isClosed: content.state === 'CLOSED',
+        createdAt: str(content.createdAt),
+        updatedAt: str(content.updatedAt),
+        prNumbers: nodesOf(content.closedByPullRequestsReferences).flatMap(
+          pr =>
+            typeof pr.number === 'number' && isRepo(pr.repository, repo)
+              ? [pr.number]
+              : [],
+        ),
       },
     ]
   })
+
+  return {
+    entries,
+    ...(hasNextPage === true ? { next: str(endCursor) } : {}),
+    ...(rateLimit === undefined ? {} : { rateLimit }),
+  }
+}
+
+// The graphql budget's reset time, from the endpoint that does not count against it.
+async function resetOf($: EngineInterface): Promise<number | undefined> {
+  try {
+    const limit = parseJson(
+      await runCommand($, [
+        'gh',
+        'api',
+        'rate_limit',
+        '--jq',
+        '.resources.graphql | {remaining, reset}',
+      ]),
+      'rate limit',
+    )
+
+    // A budget with points left means a secondary limit, which has no reset time.
+    return isRec(limit) &&
+      limit.remaining === 0 &&
+      typeof limit.reset === 'number'
+      ? limit.reset * 1000
+      : undefined
+  } catch (error) {
+    $.ui.log(S.rateLimitLookupFailed(errorMessage(error)), { to: 'debug' })
+
+    return undefined
+  }
+}
+
+async function runPage(
+  $: EngineInterface,
+  info: KanbanGithub,
+  cursor: string | undefined,
+): Promise<string> {
+  try {
+    return await runCommand($, [
+      'gh',
+      'api',
+      'graphql',
+      '-f',
+      `query=${BOARD_QUERY}`,
+      '-F',
+      `projectId=${info.projectId}`,
+      ...(cursor === undefined ? [] : ['-f', `cursor=${cursor}`]),
+    ])
+  } catch (error) {
+    if (!RATE_LIMITED.test(errorMessage(error))) throw error
+
+    throw rateLimited(error, await resetOf($))
+  }
+}
+
+/**
+ * Board cards: the project's issues of this repo, in one query per 100 items.
+ * Throws a rate-limited error (see `isRateLimited`) when GitHub's budget is used up.
+ */
+export async function loadGithub(
+  $: EngineInterface,
+  info: KanbanGithub,
+): Promise<GithubLoad> {
+  const entries: Entry[] = []
+  let rateLimit: RateLimit | undefined
+  let cursor: string | undefined
+
+  for (let pages = 1; ; pages += 1) {
+    const page = parsePage(await runPage($, info, cursor), info.repo)
+    entries.push(...page.entries)
+    rateLimit = page.rateLimit ?? rateLimit
+    if (page.next === undefined) break
+    if (pages === MAX_PAGES) {
+      $.ui.log(S.pageLimitReached(MAX_PAGES * PAGE_SIZE), { to: 'debug' })
+      break
+    }
+    cursor = page.next
+  }
+
+  const cards = entries.map((entry, order): KanbanCard => {
+    const { column, tag } = columnOf(entry.status, entry.labels, entry.isClosed)
+
+    return {
+      id: `gh:${entry.number}`,
+      number: entry.number,
+      title: entry.title,
+      column,
+      order,
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+      ...(tag === undefined ? {} : { tag }),
+      itemId: entry.id,
+      ...(entry.status === undefined ? {} : { status: entry.status }),
+      labels: entry.labels,
+      isClosed: entry.isClosed,
+      ...(entry.url === '' ? {} : { url: entry.url }),
+      ...(entry.prNumbers.length === 0 ? {} : { prNumbers: entry.prNumbers }),
+    }
+  })
+
+  return { cards, ...(rateLimit === undefined ? {} : { rateLimit }) }
+}
+
+// Labels are repo-wide and not case-sensitive, so any spelling of `ai` will do.
+async function ensureAiLabel(
+  $: EngineInterface,
+  info: KanbanGithub,
+): Promise<void> {
+  const names = await runCommand($, [
+    'gh',
+    'label',
+    'list',
+    '--repo',
+    info.repo,
+    '--search',
+    AI_LABEL,
+    '--limit',
+    '100',
+    '--json',
+    'name',
+    '--jq',
+    '.[].name',
+  ])
+  if (names.split('\n').some(name => isAiLabel(name.trim()))) return
+
+  await runCommand($, [
+    'gh',
+    'label',
+    'create',
+    AI_LABEL,
+    '--repo',
+    info.repo,
+    '--color',
+    '5319e7',
+    '--description',
+    S.aiLabelDescription,
+    '--force',
+  ])
 }
 
 /** Moves the card on GitHub; resolves the fields that changed, throws on the first failing command. */
@@ -425,21 +536,24 @@ export async function moveGithub(
   card: KanbanCard,
   to: KanbanColumn,
 ): Promise<Partial<KanbanCard>> {
+  const labels = card.labels ?? []
+  // `--add-label ai` fails on a repo that has no such label.
+  if (to === 'claude' && !labels.some(isAiLabel)) await ensureAiLabel($, info)
+
   for (const argv of planMove(card, to, info)) {
     const out = await runCommand($, argv)
     if (isVerify(argv) && out.trim() !== 'CLOSED') {
       throw new Error(S.closeNotVerified(card))
     }
   }
-  const labels = card.labels ?? []
 
   return {
     ...(to === 'backlog' && isParked(card) ? {} : { status: STATUS_OF[to] }),
     ...(to === 'claude'
       ? {
           labels: [
-            ...labels.filter(label => label !== 'human'),
-            ...(labels.includes('ai') ? [] : ['ai']),
+            ...labels.filter(label => !isHumanLabel(label)),
+            ...(labels.some(isAiLabel) ? [] : [AI_LABEL]),
           ],
         }
       : {}),
@@ -448,7 +562,7 @@ export async function moveGithub(
   }
 }
 
-/** Adds a Handoff or Feedback section to the issue as a comment. */
+/** Adds a Handoff, Feedback or Check run section to the issue as a comment. */
 export async function appendGithub(
   $: EngineInterface,
   info: KanbanGithub,
@@ -471,13 +585,31 @@ export async function appendGithub(
   )
 }
 
-const SECTION_COMMENT = /^## (?:Handoff|Feedback) \(/
+const SECTION_COMMENT = /^## (?:Handoff|Feedback|Check run) \(/
 
-/** The issue body as the spec, and its Handoff / Feedback comments as sections, oldest first. */
+/** The signed-in GitHub login, asked for once per session. */
+export async function viewerLogin($: EngineInterface): Promise<string> {
+  const known = await readViewer($)
+  if (known !== '') return known
+
+  const login = (
+    await runCommand($, ['gh', 'api', 'user', '--jq', '.login'])
+  ).trim()
+  if (login === '') throw new Error(S.ghBadJson('the signed-in user', ''))
+
+  return updateViewer($, () => login)
+}
+
+/**
+ * The issue body as the spec, and its Handoff / Feedback / Check run comments as sections,
+ * oldest first. A section written by anyone but `viewer` carries `byOther`: anyone can comment
+ * on a public repo, so only the signed-in user's sections count.
+ */
 export async function detailGithub(
   $: EngineInterface,
   info: KanbanGithub,
   card: KanbanCard,
+  viewer: string,
 ): Promise<Pick<KanbanDetail, 'body' | 'sections'>> {
   const out = await runCommand($, [
     'gh',
@@ -497,13 +629,21 @@ export async function detailGithub(
     .map(comment => ({
       body: str(comment.body).trim(),
       createdAt: str(comment.createdAt),
+      author: isRec(comment.author) ? str(comment.author.login) : '',
     }))
     .filter(comment => SECTION_COMMENT.test(comment.body))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 
   return {
     body: str(issue.body).trim(),
-    sections: comments.flatMap(comment => parseSections(comment.body).sections),
+    sections: comments.flatMap(comment => {
+      const { sections } = parseSections(comment.body)
+      if (comment.author.toLowerCase() === viewer.toLowerCase()) return sections
+
+      const byOther = comment.author === '' ? S.unknownAuthor : comment.author
+
+      return sections.map(section => ({ ...section, byOther }))
+    }),
   }
 }
 

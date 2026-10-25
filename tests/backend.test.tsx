@@ -6,7 +6,7 @@ import type { KanbanBoard, KanbanCard } from '../types'
 import { backendMode, detectBackend } from '../hooks/backend'
 import { CWD, PANE, RUN, boot, card, path } from './fakes'
 import { rowKeys } from './board-ui'
-import { fakeEngine, fakeProcess } from './fake-gh'
+import { boardRoute, fakeEngine, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
 
 const KANBAN_MD = [
@@ -18,28 +18,6 @@ const KANBAN_MD = [
 
 const REPO = 'TeeratP/claude-kanban'
 
-const item = (id: string, number: number, status: string) => ({
-  id,
-  title: `Item ${number}`,
-  status,
-  content: {
-    type: 'Issue',
-    number,
-    title: `Remote ${number}`,
-    url: `https://github.com/${REPO}/issues/${number}`,
-    repository: REPO,
-  },
-})
-
-const issue = (number: number, label: string) => ({
-  number,
-  state: 'OPEN',
-  labels: [{ id: `L_${label}`, name: label, color: 'fff' }],
-  createdAt: '2026-10-01T10:00:00Z',
-  updatedAt: '2026-10-02T10:00:00Z',
-  closedByPullRequestsReferences: [],
-})
-
 const SIGNED_IN: Route = { match: ['gh', 'auth', 'status'], reply: {} }
 const SIGNED_OUT: Route = {
   match: ['gh', 'auth', 'status'],
@@ -50,18 +28,10 @@ const REMOTE: Route = {
   reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
 }
 const LOAD: Route[] = [
-  {
-    match: ['gh', 'project', 'item-list'],
-    reply: {
-      stdout: JSON.stringify({
-        items: [item('PVTI_1', 1, 'In progress'), item('PVTI_2', 2, 'Backlog')],
-      }),
-    },
-  },
-  {
-    match: ['gh', 'issue', 'list'],
-    reply: { stdout: JSON.stringify([issue(1, 'ai'), issue(2, 'ai')]) },
-  },
+  boardRoute([
+    issueNode({ number: 1, status: 'In progress', labels: ['ai'] }),
+    issueNode({ number: 2, status: 'Backlog', labels: ['ai'] }),
+  ]),
 ]
 
 // Local cards sit on disk in every test, so a GitHub board that showed them

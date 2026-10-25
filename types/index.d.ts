@@ -68,6 +68,7 @@ export type KanbanSection = {
   date: string
   text: string
   fields?: { did: string; check: string; changed: string; need: string }
+  byOther?: string
 }
 export type KanbanDetail = {
   cardId: string
@@ -105,6 +106,8 @@ declare module 'claude-code' {
       detail: Shaped<KanbanDetail | null>
       check: Shaped<Record<string, KanbanCheckRun>>
       tick: number
+      pausedUntil: number
+      viewer: string
     }
   }
 }

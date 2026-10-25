@@ -12,11 +12,11 @@ import {
   appendGithub,
   detailGithub,
   diffGithub,
-  loadGithub,
   moveGithub,
   parseClaudeMd,
   resolveGithub,
   runCommand,
+  viewerLogin,
 } from './github'
 import type { ParsedClaudeMd } from './github'
 import {
@@ -27,6 +27,7 @@ import {
   moveLocal,
 } from './local'
 import { errorMessage } from './model'
+import { loadGithubPaced } from './rate-limit'
 import { S } from './strings'
 
 // A backend is a set of plain functions per kind: `$` may only be handed to
@@ -39,7 +40,7 @@ export async function loadCards(
 ): Promise<KanbanCard[]> {
   if (info.kind === 'local') return loadLocal($)
 
-  return loadGithub($, info)
+  return loadGithubPaced($, info)
 }
 
 /** Moves the card; resolves the fields that changed, throws on failure. */
@@ -72,7 +73,7 @@ export async function readDetail(
 ): Promise<Pick<KanbanDetail, 'body' | 'sections'>> {
   if (info.kind === 'local') return detailLocal($, card)
 
-  return detailGithub($, info, card)
+  return detailGithub($, info, card, await viewerLogin($))
 }
 
 /** Creates a card and returns it; only the local backend does, GitHub cards come from issues. */

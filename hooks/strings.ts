@@ -14,6 +14,10 @@ const COL = {
 
 const BACKEND = { github: 'GitHub', local: 'Local' } as const
 
+// A section someone else wrote on the issue is shown, but never counts.
+const fromOther = (login?: string) =>
+  login === undefined ? '' : ` from @${login}, not counted`
+
 // Every string the person or the model reads lives here.
 export const S = {
   commandDescription: 'Open the kanban board in a side pane',
@@ -53,8 +57,10 @@ export const S = {
   detailFailed: (reason: string) => `Could not read the card: ${reason}`,
   metaColumn: (column: KanbanColumn) => COL[column],
   syncPending: (to: KanbanColumn) => `⟳ syncing to ${COL[to]}`,
-  handoffHeading: (date: string) => `Handoff (${date})`,
-  feedbackHeading: (date: string) => `Feedback (${date})`,
+  handoffHeading: (date: string, byOther?: string) =>
+    `Handoff (${date})${fromOther(byOther)}`,
+  feedbackHeading: (date: string, byOther?: string) =>
+    `Feedback (${date})${fromOther(byOther)}`,
 
   toolList: {
     description:
@@ -226,7 +232,21 @@ export const S = {
   checkSaved: '✓ Saved on the card',
   checkSaveFailed: (reason: string) =>
     `Could not save the run on the card: ${reason}`,
-  checkRunHeading: (date: string) => `Check run (${date})`,
+  checkRunHeading: (date: string, byOther?: string) =>
+    `Check run (${date})${fromOther(byOther)}`,
   checkField: { command: 'Command', result: 'Result', output: 'Output' },
   checkLogFailed: (reason: string) => `kanban: a check run failed: ${reason}`,
+
+  // #15
+  // Short: they share a 44-column toolbar with the backend label.
+  rateLimitHit: (minutes: number) => `limit hit · paused ${minutes}m`,
+  rateLimitLow: (minutes: number) => `limit low · paused ${minutes}m`,
+  refreshWhilePaused: (minutes: number) =>
+    `GitHub rate limit is low and polling is paused for ${minutes}m. Refreshing anyway.`,
+  rateLimitLookupFailed: (reason: string) =>
+    `kanban: could not read when the GitHub rate limit resets: ${reason}`,
+  pageLimitReached: (items: number) =>
+    `kanban: the board has more than ${items} items; only the first ${items} are shown.`,
+  aiLabelDescription: 'agent can do end-to-end',
+  unknownAuthor: 'unknown',
 }
