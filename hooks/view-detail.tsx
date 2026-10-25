@@ -11,7 +11,7 @@ import {
 } from './atoms'
 import { appendSection, readDetail, readDiff } from './backend'
 import { ensureBackend } from './board'
-import { formatFeedback } from './handoff'
+import { formatAnswer, formatFeedback, questionOf } from './handoff'
 import { COLUMNS, MAX_ATTEMPTS, ageLabel, capDiff, errorMessage } from './model'
 import { S } from './strings'
 import { moveCard, moveOptions, retry } from './sync'
@@ -125,15 +125,21 @@ export async function showTab(
   }
 }
 
-/** Records the feedback on the card, then returns it to Claude with a prompt to resume. */
+/**
+ * Records the feedback on the card, then returns it to Claude with a prompt to resume.
+ * On a card Claude asked a question on, the feedback is the answer.
+ */
 export async function sendBack(
   $: EngineInterface,
   cardId: string,
   text: string,
 ) {
   const feedback = text.trim()
+  const isAsk =
+    (await readBoard($)).cards.find(one => one.id === cardId)?.tag ===
+    'question'
   if (feedback === '') {
-    $.ui.toast(S.feedbackFirst)
+    $.ui.toast(isAsk ? S.answerFirst : S.feedbackFirst)
 
     return
   }
@@ -152,16 +158,27 @@ export async function sendBack(
     try {
       const info = await ensureBackend($)
       const date = new Date(await $.clock.now()).toISOString().slice(0, 10)
-      await appendSection($, info, card, formatFeedback(feedback, date))
+      await appendSection(
+        $,
+        info,
+        card,
+        isAsk ? formatAnswer(feedback, date) : formatFeedback(feedback, date),
+      )
     } catch (error) {
-      $.ui.toast(S.feedbackFailed(errorMessage(error)))
+      $.ui.toast(
+        isAsk
+          ? S.answerFailed(errorMessage(error))
+          : S.feedbackFailed(errorMessage(error)),
+      )
 
       return
     }
 
     await updateUi($, ui => ({ ...ui, draft: '' }))
     await closeDetail($)
-    await moveCard($, cardId, 'claude', { onConfirm: 'resume' })
+    await moveCard($, cardId, 'claude', {
+      onConfirm: isAsk ? 'answer' : 'resume',
+    })
   } finally {
     sending.delete(cardId)
   }
@@ -210,6 +227,9 @@ export async function renderDetail(
   const hasDiff = (card.prNumbers?.length ?? 0) > 0
   const tab = hasDiff ? view.tab : 'card'
   const isHuman = card.column === 'human'
+  const isAsk = isHuman && card.tag === 'question'
+  // The question being asked, once the card's sections are read.
+  const asking = isReady && isAsk ? questionOf(detail.sections) : undefined
 
   const drawDiff = (shown: KanbanDetail) => {
     switch (shown.diffState) {
@@ -244,6 +264,9 @@ export async function renderDetail(
           onPress={() => retry($, card.id)}
         />
       )}
+      {asking !== undefined && (
+        <Markdown key="question" text={`**${S.askBlock}**\n\n${asking.text}`} />
+      )}
       {isHuman && (
         <Box flexDirection="row" gap={1}>
           <Button
@@ -257,7 +280,7 @@ export async function renderDetail(
             <Button
               key="sendback"
               hotkey="s"
-              label={S.sendBack}
+              label={isAsk ? S.answerButton : S.sendBack}
               onPress={async () =>
                 sendBack($, card.id, (await readUi($)).draft)
               }
@@ -272,13 +295,13 @@ export async function renderDetail(
         </Box>
       )}
       {isHuman && Input === undefined && (
-        <Text dimColor>{S.sendBackNoField}</Text>
+        <Text dimColor>{isAsk ? S.answerNoField : S.sendBackNoField}</Text>
       )}
       {isHuman && Input !== undefined && (
         <Input
           key="feedback"
-          label={S.feedbackLabel}
-          placeholder={S.feedbackPlaceholder}
+          label={isAsk ? S.answerLabel : S.feedbackLabel}
+          placeholder={isAsk ? S.answerPlaceholder : S.feedbackPlaceholder}
           rows={3}
           value={ui.draft}
           onInput={value => updateUi($, one => ({ ...one, draft: value }))}
@@ -326,12 +349,15 @@ export async function renderDetail(
       )}
       {isReady &&
         tab === 'card' &&
-        detail.sections.map((section, index) => (
-          <Markdown
-            key={`section:${index}`}
-            text={`**${section.kind === 'handoff' ? S.handoffHeading(section.date, section.byOther) : S.feedbackHeading(section.date, section.byOther)}**\n\n${section.text}`}
-          />
-        ))}
+        detail.sections.map((section, index) =>
+          // The open question is shown at the top.
+          section === asking ? null : (
+            <Markdown
+              key={`section:${index}`}
+              text={`**${S.headingOf(section)}**\n\n${section.text}`}
+            />
+          ),
+        )}
     </Box>
   )
 }

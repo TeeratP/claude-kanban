@@ -5,10 +5,11 @@ import type {
   KanbanColumn,
   KanbanDetail,
   KanbanGithub,
+  KanbanSection,
   KanbanTag,
 } from '../types'
 import { readViewer, updateViewer } from './atoms'
-import { parseSections } from './handoff'
+import { gistOf, parseSections, questionOf } from './handoff'
 import { errorMessage } from './model'
 import { S } from './strings'
 
@@ -266,11 +267,16 @@ export function isRateLimited(error: unknown): error is RateLimitedError {
 }
 
 const PAGE_SIZE = 100
+// Enough to see past a few remarks to the newest section.
+const COMMENTS_SEEN = 5
 
 // One query per page of the project's items: the Status value and, for the
-// issues, only the fields a card shows. Measured at 2 points a page (the cost
-// follows the `first` values asked for), where `gh project item-list` took about 100.
+// issues, only the fields a card shows, plus the newest comments to tell an open
+// question from the rest. Measured at 3 points a page (the cost follows the
+// connections asked for: 2 without the comments), where `gh project item-list`
+// took about 100.
 const BOARD_QUERY = `query($projectId: ID!, $cursor: String) {
+  viewer { login }
   node(id: $projectId) {
     ... on ProjectV2 {
       items(first: ${PAGE_SIZE}, after: $cursor) {
@@ -287,6 +293,9 @@ const BOARD_QUERY = `query($projectId: ID!, $cursor: String) {
               labels(first: 20) { nodes { name } }
               closedByPullRequestsReferences(first: 5) {
                 nodes { number repository { nameWithOwner } }
+              }
+              comments(last: ${COMMENTS_SEEN}) {
+                nodes { body createdAt author { login } }
               }
             }
           }
@@ -312,6 +321,7 @@ type Entry = {
   createdAt: string
   updatedAt: string
   prNumbers: number[]
+  question?: string
 }
 
 type Page = { entries: Entry[]; next?: string; rateLimit?: RateLimit }
@@ -349,6 +359,7 @@ function parsePage(stdout: string, repo: string): Page {
     throw new Error(S.ghBadJson('project items', ''))
   }
   const rateLimit = parseRateLimit(root.rateLimit)
+  const viewer = isRec(root.viewer) ? str(root.viewer.login) : ''
 
   const entries = listOf(node.items.nodes, 'project items').flatMap(item => {
     const content = isRec(item.content) ? item.content : {}
@@ -363,6 +374,9 @@ function parsePage(stdout: string, repo: string): Page {
     const status = isRec(item.fieldValueByName)
       ? str(item.fieldValueByName.name)
       : ''
+    const ask = questionOf(
+      sectionsOf(nodesOf(content.comments).map(commentOf), viewer),
+    )
 
     return [
       {
@@ -383,6 +397,7 @@ function parsePage(stdout: string, repo: string): Page {
               ? [pr.number]
               : [],
         ),
+        ...(ask === undefined ? {} : { question: gistOf(ask.text) }),
       },
     ]
   })
@@ -470,6 +485,9 @@ export async function loadGithub(
 
   const cards = entries.map((entry, order): KanbanCard => {
     const { column, tag } = columnOf(entry.status, entry.labels, entry.isClosed)
+    // Only a card in Human is waiting on the person for an answer.
+    const question = column === 'human' ? entry.question : undefined
+    const shown = question === undefined ? tag : 'question'
 
     return {
       id: `gh:${entry.number}`,
@@ -479,7 +497,8 @@ export async function loadGithub(
       order,
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
-      ...(tag === undefined ? {} : { tag }),
+      ...(shown === undefined ? {} : { tag: shown }),
+      ...(question === undefined ? {} : { question }),
       itemId: entry.id,
       ...(entry.status === undefined ? {} : { status: entry.status }),
       labels: entry.labels,
@@ -557,12 +576,19 @@ export async function moveGithub(
           ],
         }
       : {}),
-    ...(to === 'human' ? { tag: 'review' as const } : {}),
+    ...(to === 'human'
+      ? {
+          tag:
+            card.tag === 'question'
+              ? ('question' as const)
+              : ('review' as const),
+        }
+      : {}),
     isClosed: to === 'done',
   }
 }
 
-/** Adds a Handoff or Feedback section to the issue as a comment. */
+/** Adds a Handoff, Feedback, Question or Answer section to the issue as a comment. */
 export async function appendGithub(
   $: EngineInterface,
   info: KanbanGithub,
@@ -585,7 +611,7 @@ export async function appendGithub(
   )
 }
 
-const SECTION_COMMENT = /^## (?:Handoff|Feedback) \(/
+const SECTION_COMMENT = /^## (?:Handoff|Feedback|Question|Answer) \(/
 
 /** The signed-in GitHub login, asked for once per session. */
 export async function viewerLogin($: EngineInterface): Promise<string> {
@@ -600,10 +626,39 @@ export async function viewerLogin($: EngineInterface): Promise<string> {
   return updateViewer($, () => login)
 }
 
+type Comment = { body: string; createdAt: string; author: string }
+
+const commentOf = (comment: Rec): Comment => ({
+  body: str(comment.body).trim(),
+  createdAt: str(comment.createdAt),
+  author: isRec(comment.author) ? str(comment.author.login) : '',
+})
+
 /**
- * The issue body as the spec, and its Handoff / Feedback comments as sections, oldest
- * first. A section written by anyone but `viewer` carries `byOther`: anyone can comment
- * on a public repo, so only the signed-in user's sections count.
+ * The sections in comments, oldest first. A section written by anyone but `viewer`
+ * carries `byOther`: anyone can comment on a public repo, so only the signed-in user's
+ * sections count.
+ */
+function sectionsOf(
+  comments: readonly Comment[],
+  viewer: string,
+): KanbanSection[] {
+  return comments
+    .filter(comment => SECTION_COMMENT.test(comment.body))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .flatMap(comment => {
+      const { sections } = parseSections(comment.body)
+      if (comment.author.toLowerCase() === viewer.toLowerCase()) return sections
+
+      const byOther = comment.author === '' ? S.unknownAuthor : comment.author
+
+      return sections.map(section => ({ ...section, byOther }))
+    })
+}
+
+/**
+ * The issue body as the spec, and its Handoff / Feedback / Question / Answer comments as
+ * sections, oldest first (see `sectionsOf` for whose count).
  */
 export async function detailGithub(
   $: EngineInterface,
@@ -626,24 +681,11 @@ export async function detailGithub(
 
   const comments = (Array.isArray(issue.comments) ? issue.comments : [])
     .filter(isRec)
-    .map(comment => ({
-      body: str(comment.body).trim(),
-      createdAt: str(comment.createdAt),
-      author: isRec(comment.author) ? str(comment.author.login) : '',
-    }))
-    .filter(comment => SECTION_COMMENT.test(comment.body))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map(commentOf)
 
   return {
     body: str(issue.body).trim(),
-    sections: comments.flatMap(comment => {
-      const { sections } = parseSections(comment.body)
-      if (comment.author.toLowerCase() === viewer.toLowerCase()) return sections
-
-      const byOther = comment.author === '' ? S.unknownAuthor : comment.author
-
-      return sections.map(section => ({ ...section, byOther }))
-    }),
+    sections: sectionsOf(comments, viewer),
   }
 }
 

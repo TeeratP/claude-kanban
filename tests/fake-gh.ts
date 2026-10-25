@@ -116,6 +116,8 @@ export type FakeIssue = {
   labels?: string[]
   prs?: { number: number; repo?: string }[]
   repo?: string
+  /** The newest comments, oldest first; `author: null` is an account that is gone. */
+  comments?: { body: string; createdAt?: string; author?: string | null }[]
 }
 
 const REPO = 'TeeratP/claude-kanban'
@@ -145,16 +147,30 @@ export function issueNode(issue: FakeIssue) {
           repository: { nameWithOwner: pr.repo ?? REPO },
         })),
       },
+      comments: {
+        nodes: (issue.comments ?? []).map((comment, index) => ({
+          body: comment.body,
+          createdAt: comment.createdAt ?? `2026-10-2${index}T12:00:00Z`,
+          author:
+            comment.author === null
+              ? null
+              : { login: comment.author ?? 'TeeratP' },
+        })),
+      },
     },
   }
 }
 
 const PAGE = 100
 
-/** How a `gh api graphql` answers: the nodes 100 at a time by cursor, like the real one. */
+/**
+ * How a `gh api graphql` answers: the nodes 100 at a time by cursor, like the real one,
+ * for the signed-in `viewer`.
+ */
 export function boardReply(
   nodes: readonly unknown[],
   rateLimit: Record<string, unknown> = LIVE_RATE_LIMIT,
+  viewer = 'TeeratP',
 ) {
   return (argv: readonly string[]): Reply => {
     const cursor = argv.find(part => part.startsWith('cursor='))
@@ -165,6 +181,7 @@ export function boardReply(
     return {
       stdout: JSON.stringify({
         data: {
+          viewer: { login: viewer },
           node: {
             items: {
               pageInfo: { hasNextPage: to < nodes.length, endCursor: `c${to}` },

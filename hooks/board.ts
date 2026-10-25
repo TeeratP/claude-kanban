@@ -76,6 +76,13 @@ export async function applyMode(
   }
 }
 
+// What the person is told about a card that is theirs now: the question Claude asks, or
+// that the card waits on them.
+const waitingText = (card: KanbanCard) =>
+  card.tag === 'question' && card.question !== undefined
+    ? S.claudeAsks(card)
+    : S.handedToYou(card)
+
 /**
  * Toasts each card that is in Human now and was not before. Only a load calls
  * it: a move the person makes is already on the board, so it never shows as new.
@@ -94,12 +101,12 @@ function announceHumanChanges(
   )
   for (const card of after.cards)
     if (card.column === 'human' && !known.has(card.id))
-      $.ui.toast(S.handedToYou(card))
+      $.ui.toast(waitingText(card))
 }
 
 /** Tells the person Claude put a card in Human: a toast, and a notification. */
 export function announceHandoff($: EngineInterface, card: KanbanCard): void {
-  const text = S.handedToYou(card)
+  const text = waitingText(card)
   $.ui.toast(text)
   $.ui
     .notify(text)
@@ -143,7 +150,17 @@ export function mergeRemote(
     const own = mine.get(card.id)
 
     return own !== undefined && (isUnsettled(card) || confirmed.has(card.id))
-      ? { ...card, column: own.column, order: own.order }
+      ? {
+          ...card,
+          column: own.column,
+          order: own.order,
+          // The question Claude just asked may not be in the comments this load read.
+          ...(own.column === 'human' &&
+          own.tag === 'question' &&
+          own.question !== undefined
+            ? { tag: own.tag, question: own.question }
+            : {}),
+        }
       : card
   })
   const kept = local.filter(

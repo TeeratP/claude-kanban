@@ -2,6 +2,7 @@ import type {
   KanbanBackendMode,
   KanbanCard,
   KanbanColumn,
+  KanbanSection,
   KanbanTag,
 } from '../types'
 
@@ -11,6 +12,13 @@ const COL = {
   backlog: 'Backlog',
   done: 'Done',
 } satisfies Record<KanbanColumn, string>
+
+const SECTION_NAME = {
+  handoff: 'Handoff',
+  feedback: 'Feedback',
+  question: 'Question',
+  answer: 'Answer',
+} satisfies Record<KanbanSection['kind'], string>
 
 const BACKEND = { github: 'GitHub', local: 'Local' } as const
 
@@ -29,7 +37,11 @@ export const S = {
     `kanban: could not refresh the board: ${reason}`,
 
   col: COL,
-  tagShort: { review: 'rev', human: 'hum' } satisfies Record<KanbanTag, string>,
+  tagShort: {
+    review: 'rev',
+    human: 'hum',
+    question: '?',
+  } satisfies Record<KanbanTag, string>,
   count: (shown: number, total: number) =>
     shown === total ? String(total) : `${shown} of ${total}`,
   empty: '  (empty)',
@@ -99,7 +111,7 @@ export const S = {
   // #6
   toolShow: {
     description:
-      'Show one kanban card in full: its spec, then every Handoff and Feedback section, newest last.',
+      'Show one kanban card in full: its spec, then every Handoff, Feedback, Question and Answer section, newest last.',
     card: 'The card number, as shown by kanban_list.',
   },
   toolHandoff: {
@@ -223,4 +235,30 @@ export const S = {
     `kanban: the board has more than ${items} items; only the first ${items} are shown.`,
   aiLabelDescription: 'agent can do end-to-end',
   unknownAuthor: 'unknown',
+  // #21
+  headingOf: (section: KanbanSection) =>
+    `${SECTION_NAME[section.kind]} (${section.date})${fromOther(section.byOther)}`,
+  toolAsk: {
+    description:
+      'Ask the person a blocking question on a kanban card when you cannot go on without a decision only they can make. Records the question and moves the card to Human; you are asked to resume once they answer. Not for progress updates or for questions you can settle yourself: record a handoff with kanban_handoff when the work is done.',
+    card: 'The card number, as shown by kanban_list.',
+    question:
+      'The question, with what you need decided and the options you see.',
+  },
+  askEmpty: 'question must be text that is not empty.',
+  askFailed: (reason: string) => `Could not record the question: ${reason}`,
+  asked: (card: KanbanCard) =>
+    `Recorded your question on #${card.number} and moved it to Human (syncing). Stop here: you are asked to resume once the person answers.`,
+  claudeAsks: (card: KanbanCard) =>
+    `Claude asks: ${card.question ?? card.title} (#${card.number})`,
+  askBlock: 'Claude asks',
+  answerButton: 'Answer',
+  answerLabel: 'Answer',
+  answerPlaceholder: 'Your answer to Claude',
+  answerFirst: 'Write the answer first, then send it to Claude.',
+  answerFailed: (reason: string) => `Could not save the answer: ${reason}`,
+  answerNoField:
+    'Answering is unavailable here: this screen has no text field. Use the terminal or desktop.',
+  answerPrompt: (n: number) =>
+    `Resume kanban card #${n}: the person answered your question; read it with mcp__kanban__kanban_show and continue.`,
 }
