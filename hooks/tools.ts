@@ -74,11 +74,9 @@ async function move(
   const card = board.cards.find(one => one.number === number)
   if (card === undefined) return { deny: S.noSuchCard(number) }
 
-  const moved = await moveCard($, card.id, to)
+  await moveCard($, card.id, to)
 
-  return moved.ok
-    ? { result: S.moved(card, to) }
-    : { deny: S.moveFailed(card, to, moved.error) }
+  return { result: S.moved(card, to) }
 }
 
 /** Serves one of this plugin's tools. */

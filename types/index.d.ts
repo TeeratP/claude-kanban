@@ -83,6 +83,7 @@ declare module 'claude-code' {
       ui: Shaped<KanbanUi>
       sync: Shaped<Record<string, KanbanSync>>
       detail: Shaped<KanbanDetail | null>
+      tick: number
     }
   }
 }

@@ -37,8 +37,6 @@ export const S = {
   failedGlyph: '✕',
   confirmed: '✓',
 
-  moveFailed: (card: KanbanCard, to: KanbanColumn, reason: string) =>
-    `Could not move #${card.number} to ${COL[to]}: ${reason}`,
   githubUnavailable: 'The GitHub backend is not available in this build.',
   unreadableCard: (path: string) => `${path} is not a kanban card file.`,
   cardHasNoFile: (card: KanbanCard) => `Card #${card.number} has no file.`,
@@ -71,10 +69,30 @@ export const S = {
     `The kanban board could not be loaded${reason === undefined ? '' : `: ${reason}`}.`,
   listEmpty: 'No cards on the board.',
   moved: (card: KanbanCard, to: KanbanColumn) =>
-    `Moved #${card.number} to ${COL[to]}.`,
+    `Moved #${card.number} to ${COL[to]} (syncing).`,
   noSuchCard: (n: unknown) => `There is no kanban card #${String(n)}.`,
   badColumn: (to: unknown) =>
     `"${String(to)}" is not a column; use human, claude, backlog or done.`,
   badCard: 'card must be a whole number.',
   toolFailed: (name: string) => `${name} failed; see the debug log.`,
+
+  // #4
+  movedBack: (
+    card: KanbanCard,
+    to: KanbanColumn,
+    from: KanbanColumn,
+    reason: string,
+  ) =>
+    `Could not move #${card.number} to ${COL[to]}, so it is back in ${COL[from]}: ${reason}`,
+  syncFailed: (reason: string) =>
+    `kanban: a card move could not be synced: ${reason}`,
+  retry: 'Retry',
+  retryAll: (n: number) => `✕${n} retry`,
+  syncSaved: '✓ saved',
+  syncFailedNote: (reason: string, attempt: number, max: number) =>
+    `✕ ${reason} (attempt ${attempt}/${max})`,
+  workPrompt: (n: number, title: string) =>
+    `Work on kanban card #${n} "${title}": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it to human with mcp__kanban__kanban_move.`,
+  resumePrompt: (n: number) =>
+    `Resume kanban card #${n}: read the newest feedback (mcp__kanban__kanban_show) and continue.`,
 }

@@ -1,7 +1,7 @@
 import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
 
-import type { KanbanColumn, KanbanSyncPhase } from '../types'
-import { readBoard, readSync, readUi, updateUi } from './atoms'
+import type { KanbanColumn, KanbanSync } from '../types'
+import { readBoard, readSync, readTick, readUi, updateUi } from './atoms'
 import { refresh } from './board'
 import {
   capFor,
@@ -13,17 +13,29 @@ import {
   sectionList,
 } from './layout'
 import type { Row } from './layout'
-import { ageLabel, truncate } from './model'
+import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
 import { S } from './strings'
+import { retryAll } from './sync'
 import { openDetail } from './view-detail'
 
 // Where the pane's window sat at the last draw; a wheel row is relative to it.
 let lastBody = { offset: 0 }
 
-const GLYPH: Record<KanbanSyncPhase, { text: string; color: string }> = {
-  pending: { text: S.syncing, color: 'warning' },
-  ok: { text: S.confirmed, color: 'success' },
-  failed: { text: S.failedGlyph, color: 'error' },
+// A terminal cell cannot spin or fade, so a pending mark pulses with the
+// ticker and a confirmed one dims after its first second.
+function glyphOf(entry: KanbanSync, tick: number, now: number) {
+  switch (entry.phase) {
+    case 'pending':
+      return { text: S.syncing, color: 'warning', dim: tick % 2 === 1 }
+    case 'ok':
+      return {
+        text: S.confirmed,
+        color: 'success',
+        dim: now - (entry.settledAt ?? now) >= TICK_BRIGHT_MS,
+      }
+    case 'failed':
+      return { text: S.failedGlyph, color: 'error', dim: false }
+  }
 }
 
 function toggleSection($: EngineInterface, column: KanbanColumn) {
@@ -78,7 +90,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const board = await readBoard($)
   const ui = await readUi($)
   const sync = await readSync($)
+  const tick = await readTick($)
   const now = await $.clock.now()
+  const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
   lastBody = { offset: scroll.offset }
 
@@ -102,9 +116,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             : board.fetchedAt === 0
               ? ''
               : S.updated(ageLabel(board.fetchedAt, now)))
+        const retryLabel = S.retryAll(failed.length)
         const text = truncate(
           ` ${[label, status].filter(part => part !== '').join(' · ')}`,
-          columns - 1,
+          columns - 1 - (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1),
         )
 
         return (
@@ -120,6 +135,12 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
               <Text color="error" wrap="truncate-end">
                 {text}
               </Text>
+            )}
+            {failed.length > 0 && (
+              <Button key="retry-all" plain onPress={() => retryAll($)}>
+                {' '}
+                <Text color="error">{retryLabel}</Text>
+              </Button>
             )}
           </Box>
         )
@@ -164,14 +185,16 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       case 'card': {
         const { card } = row
         const entry = sync[card.id]
-        const glyph = entry === undefined ? undefined : GLYPH[entry.phase]
+        const glyph =
+          entry === undefined ? undefined : glyphOf(entry, tick, now)
         const line = cardLine(
           card,
           columns,
           glyph?.text ?? ' ',
           ageLabel(card.updatedAt, now),
         )
-        const tint = glyph === undefined ? {} : { color: glyph.color }
+        const tint =
+          glyph === undefined ? {} : { color: glyph.color, dimColor: glyph.dim }
 
         return (
           <Button

@@ -1,6 +1,6 @@
 import type { EngineInterface, RenderInput } from 'claude-code'
 
-import type { KanbanDetail, KanbanView } from '../types'
+import type { KanbanDetail, KanbanSync, KanbanView } from '../types'
 import {
   readBoard,
   readDetailState,
@@ -10,11 +10,19 @@ import {
 } from './atoms'
 import { readDetail } from './backend'
 import { ensureBackend } from './board'
-import { COLUMNS, ageLabel, errorMessage } from './model'
+import { COLUMNS, MAX_ATTEMPTS, ageLabel, errorMessage } from './model'
 import { S } from './strings'
-import { moveCard } from './sync'
+import { moveCard, retry } from './sync'
 
 type DetailView = Extract<KanbanView, { mode: 'detail' }>
+
+function syncNote(entry: KanbanSync): string {
+  if (entry.phase === 'pending') return S.syncPending(entry.to)
+
+  return entry.phase === 'ok'
+    ? S.syncSaved
+    : S.syncFailedNote(entry.error ?? '', entry.attempts, MAX_ATTEMPTS)
+}
 
 /** Shows a card's detail and reads its spec and sections from the backend. */
 export async function openDetail($: EngineInterface, cardId: string) {
@@ -83,11 +91,11 @@ export async function renderDetail(
     )
   }
 
-  const pending = sync[card.id]?.phase === 'pending' ? sync[card.id] : undefined
+  const entry = sync[card.id]
   const meta = [
     S.col[card.column],
     ageLabel(card.updatedAt, now),
-    pending === undefined ? '' : S.syncPending(pending.to),
+    entry === undefined ? '' : syncNote(entry),
   ].filter(part => part !== '')
   const isReady = detail?.cardId === card.id && !detail.isLoading
 
@@ -96,13 +104,30 @@ export async function renderDetail(
       {back}
       <Text weight="bold">{`#${card.number} ${card.title}`}</Text>
       <Text dimColor>{meta.join(' · ')}</Text>
+      {entry?.phase === 'failed' && (
+        <Button
+          key="retry"
+          variant="primary"
+          label={S.retry}
+          onPress={() => retry($, card.id)}
+        />
+      )}
       <Box flexDirection="row" gap={1}>
         <Text dimColor>{S.moveTo}</Text>
         {COLUMNS.filter(column => column !== card.column).map(column => (
           <Button
             key={`move:${column}`}
             label={S.col[column]}
-            onPress={() => moveCard($, card.id, column)}
+            onPress={() =>
+              moveCard(
+                $,
+                card.id,
+                column,
+                card.column === 'backlog' && column === 'claude'
+                  ? { onConfirm: 'work' }
+                  : undefined,
+              )
+            }
           />
         ))}
       </Box>
