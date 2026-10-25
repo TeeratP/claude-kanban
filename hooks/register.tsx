@@ -11,8 +11,13 @@ import {
 } from './board'
 import { guardEdit, guardWrite } from './guard'
 import { S } from './strings'
+import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
-import { handleBoardScroll, renderBoard } from './view-board'
+import {
+  handleBoardMessage,
+  handleBoardScroll,
+  renderBoard,
+} from './view-board'
 import { renderDetail } from './view-detail'
 
 export const register: Register = (on, options) => {
@@ -26,6 +31,7 @@ export const register: Register = (on, options) => {
     })
     for (const spec of TOOL_SPECS) await $.tool.register(spec)
     inBackground($, bootstrap($))
+    inBackground($, resumePendingSyncs($))
 
     return next(e)
   })
@@ -51,6 +57,13 @@ export const register: Register = (on, options) => {
   on('ui.scroll', { requestId: 'kanban' }, async ($, e, next) =>
     (await handleBoardScroll($, e)) ? {} : next(e),
   ).catch(($, e, next) => next(e))
+
+  // A click on a row or a card dropped on a header, posted by the board's Client.
+  on('ui.message', { requestId: 'kanban', element: 'board' }, async ($, e) => {
+    await handleBoardMessage($, e.data)
+
+    return {}
+  }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'mcp__kanban__kanban_list' }, ($, e) =>
     runTool($, 'kanban_list', e),

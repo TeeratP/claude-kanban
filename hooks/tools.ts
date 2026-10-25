@@ -8,13 +8,7 @@ import type {
 } from '../types'
 import { readDetailState, updateDetailState } from './atoms'
 import { appendSection, createCard, readDetail } from './backend'
-import {
-  announceHandoff,
-  ensureBoard,
-  inBackground,
-  refresh,
-  setBoard,
-} from './board'
+import { ensureBoard, inBackground, refresh, setBoard } from './board'
 import { formatHandoff, isFilled, isHandoffValid } from './handoff'
 import { sectionList } from './layout'
 import { COLUMNS, errorMessage, isColumn } from './model'
@@ -242,17 +236,19 @@ async function move(
       const { sections } = await readDetail($, info, card)
       if (!isHandoffValid(sections)) return { deny: S.needHandoff(card) }
     } catch (error) {
-      return { deny: S.moveFailed(card, to, errorMessage(error)) }
+      return { deny: S.detailFailed(errorMessage(error)) }
     }
   }
 
-  const moved = await moveCard($, card.id, to)
-  if (moved.ok && to === 'human' && card.column !== 'human')
-    announceHandoff($, card)
+  // Announced only once the backend confirms: a refused move never reaches the person.
+  await moveCard(
+    $,
+    card.id,
+    to,
+    to === 'human' && card.column !== 'human' ? { announce: true } : undefined,
+  )
 
-  return moved.ok
-    ? { result: S.moved(card, to) }
-    : { deny: S.moveFailed(card, to, moved.error) }
+  return { result: S.moved(card, to) }
 }
 
 async function create(

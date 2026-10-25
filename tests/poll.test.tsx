@@ -3,28 +3,28 @@ import type { Engine } from 'claude-code/testing'
 
 import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
 import { mergeRemote } from '../hooks/board'
-import { CWD, PANE, RUN, boot, card, path } from './fakes'
+import { click, row, rowKeys } from './board-ui'
+import {
+  CWD,
+  HANDED_OFF,
+  PANE,
+  RUN,
+  SYNC_PAUSE,
+  boot,
+  card,
+  path,
+} from './fakes'
 
 const POLL = 45_000
-
-// Card 3 is moved to Human by these tests, which the handoff rule only allows after a handoff.
-const HANDOFF = [
-  'Spec text.',
-  '',
-  '## Handoff (2026-10-25)',
-  '**Did:** Wrote the docs',
-  '**Check:** Read the README',
-  '**Changed:** README.md',
-  '**Need from you:** Approve',
-].join('\n')
 
 const cards = () => ({
   [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
   [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
+  // Card 3 is moved to Human by these tests, which needs a handoff.
   [path(3, 'docs')]: card(
     3,
     { status: 'backlog', title: 'Write docs' },
-    HANDOFF,
+    HANDED_OFF,
   ),
   [path(4, 'old')]: card(4, { status: 'done', title: 'Old thing' }),
 })
@@ -135,12 +135,12 @@ test('a poll shows a card added on disk', async ($, on) => {
   await clock.settle()
   world.panes = ['kanban']
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ key: 'card:md:0005-new' })).toBeUndefined()
+  expect(await row(ui, 'card:md:0005-new')).toBeUndefined()
 
   calls.edit(path(5, 'new'), card(5, { status: 'backlog', title: 'Fresh' }))
   await clock.advance(POLL)
 
-  expect((await ui.find({ key: 'card:md:0005-new' }))?.text).toContain('Fresh')
+  expect((await row(ui, 'card:md:0005-new'))?.text).toContain('Fresh')
   await ui.unmount()
 })
 
@@ -195,7 +195,8 @@ test('a poll does not undo a move that is still pending', async ($, on) => {
     card: 3,
     to: 'claude',
   })
-  await clock.settle()
+  // Past the pause for further moves the move is out, held at the write.
+  await clock.advance(SYNC_PAUSE)
   const before = calls.lists
   await clock.advance(POLL)
   expect(calls.lists).toBe(before + 1)
@@ -219,19 +220,15 @@ test('the pane opens from the saved board while the first load runs', async ($, 
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await ui.find({ key: 'card:md:0009-cached' }))?.text).toContain(
-    'Cached card',
-  )
-  expect(await ui.find({ key: 'card:md:0001-login' })).toBeUndefined()
+  expect((await row(ui, 'card:md:0009-cached'))?.text).toContain('Cached card')
+  expect(await row(ui, 'card:md:0001-login')).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /loading/ })).toBeDefined()
 
   release()
   await clock.settle()
 
-  expect(await ui.find({ key: 'card:md:0009-cached' })).toBeUndefined()
-  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
-    'Fix login',
-  )
+  expect(await row(ui, 'card:md:0009-cached')).toBeUndefined()
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('Fix login')
   expect(await ui.find({ type: 'Text', text: /loading/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /updated/ })).toBeDefined()
   await ui.unmount()
@@ -285,15 +282,12 @@ test('a saved board of another shape is ignored', async ($, on) => {
   await open($)
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const shown = await ui.findAll({ type: 'Button' })
-  expect(shown.filter(button => button.key?.startsWith('card:'))).toEqual([])
+  expect((await rowKeys(ui)).filter(key => key.startsWith('card:'))).toEqual([])
 
   release()
   await clock.settle()
 
-  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
-    'Fix login',
-  )
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('Fix login')
   expect(logs).toEqual([])
   await ui.unmount()
 })
@@ -310,7 +304,7 @@ test('the board saved for another directory is not shown', async ($, on) => {
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await ui.find({ key: 'card:md:0009-cached' })).toBeUndefined()
+  expect(await row(ui, 'card:md:0009-cached')).toBeUndefined()
   await ui.unmount()
 })
 
@@ -393,7 +387,7 @@ test('a card the person moves to Human is not announced to them', async ($, on) 
   world.panes = ['kanban']
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  await ui.press({ key: 'card:md:0003-docs' })
+  await click(ui, 'card:md:0003-docs')
   await ui.press({ key: 'move:human' })
   await clock.advance(POLL)
 
@@ -413,7 +407,12 @@ test('a card Claude moves to Human is a toast and a notification', async ($, on)
     to: 'human',
   })
 
-  expect(moved).toMatchObject({ result: 'Moved #3 to Human.' })
+  expect(moved).toMatchObject({ result: 'Moved #3 to Human (syncing).' })
+  expect(toasts).toEqual([])
+  expect(notices).toEqual([])
+
+  await clock.advance(SYNC_PAUSE)
+
   expect(toasts).toEqual(['Waiting on you: #3 Write docs'])
   expect(notices).toEqual(['Waiting on you: #3 Write docs'])
   expect(statuses.at(-1)).toBe('2 cards waiting on you')
@@ -435,6 +434,7 @@ test('a move the backend refuses is not announced as handed over', async ($, on)
   const { clock, calls, toasts, notices, statuses } = boot(on, cards())
   await open($)
   await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   calls.denyWrite = 'EACCES: read-only'
 
   const moved = await $.tool.call({
@@ -442,12 +442,24 @@ test('a move the backend refuses is not announced as handed over', async ($, on)
     card: 3,
     to: 'human',
   })
+  await clock.advance(SYNC_PAUSE)
 
-  expect(moved).toMatchObject({ deny: expect.stringContaining('EACCES') })
+  expect(moved).toMatchObject({ result: 'Moved #3 to Human (syncing).' })
+  expect(toasts).toEqual([])
+  expect(notices).toEqual([])
+
+  // The first try failed; three retries follow before the card goes back.
+  for (let tries = 0; tries < 3; tries += 1) {
+    await ui.press({ key: 'retry-all' })
+    await clock.settle()
+  }
+
   expect(toasts).toHaveLength(1)
   expect(toasts[0]).toContain('Could not move #3 to Human')
+  expect(toasts[0]).toContain('EACCES')
   expect(notices).toEqual([])
   expect(statuses.at(-1)).toBe('1 card waiting on you')
+  await ui.unmount()
 })
 
 test('cards that reached Human since the saved board are announced, the rest are not', async ($, on) => {

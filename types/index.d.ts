@@ -53,6 +53,7 @@ export type KanbanSync = {
   error?: string
   settledAt?: number
   onConfirm?: 'work' | 'resume'
+  announce?: boolean
 }
 export type KanbanView =
   { mode: 'board' } | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
@@ -87,6 +88,7 @@ declare module 'claude-code' {
       ui: Shaped<KanbanUi>
       sync: Shaped<Record<string, KanbanSync>>
       detail: Shaped<KanbanDetail | null>
+      tick: number
     }
   }
 }

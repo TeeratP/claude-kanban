@@ -1,8 +1,10 @@
 import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
 
-import type { KanbanColumn, KanbanSyncPhase } from '../types'
-import { readBoard, readSync, readUi, updateUi } from './atoms'
+import type { KanbanColumn, KanbanSync } from '../types'
+import { readBoard, readSync, readTick, readUi, updateUi } from './atoms'
 import { refresh } from './board'
+import type { BoardProps } from './board-client'
+import { parseBoardMessage, toRowViews } from './board-rows'
 import {
   capFor,
   cardLine,
@@ -13,17 +15,29 @@ import {
   sectionList,
 } from './layout'
 import type { Row } from './layout'
-import { ageLabel, truncate } from './model'
+import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
 import { S } from './strings'
+import { moveCard, moveOptions, retryAll } from './sync'
 import { openDetail } from './view-detail'
 
 // Where the pane's window sat at the last draw; a wheel row is relative to it.
-let lastBody = { offset: 0 }
+let lastBody = { offset: 0, bodyRows: 0 }
 
-const GLYPH: Record<KanbanSyncPhase, { text: string; color: string }> = {
-  pending: { text: S.syncing, color: 'warning' },
-  ok: { text: S.confirmed, color: 'success' },
-  failed: { text: S.failedGlyph, color: 'error' },
+// A terminal cell cannot spin or fade, so a pending mark pulses with the
+// ticker and a confirmed one dims after its first second.
+function glyphOf(entry: KanbanSync, tick: number, now: number) {
+  switch (entry.phase) {
+    case 'pending':
+      return { text: S.syncing, color: 'warning', dim: tick % 2 === 1 }
+    case 'ok':
+      return {
+        text: S.confirmed,
+        color: 'success',
+        dim: now - (entry.settledAt ?? now) >= TICK_BRIGHT_MS,
+      }
+    case 'failed':
+      return { text: S.failedGlyph, color: 'error', dim: false }
+  }
 }
 
 function toggleSection($: EngineInterface, column: KanbanColumn) {
@@ -73,14 +87,50 @@ export async function handleBoardScroll(
   return true
 }
 
+/** Acts on what the board's Client posted: a click on a row or a card dropped. */
+export async function handleBoardMessage(
+  $: EngineInterface,
+  data: unknown,
+): Promise<void> {
+  const message = parseBoardMessage(data)
+  if (message === undefined) return
+
+  switch (message.type) {
+    case 'open':
+      await openDetail($, message.cardId)
+      break
+    case 'drop': {
+      const { cards } = await readBoard($)
+      const from = cards.find(one => one.id === message.cardId)?.column
+      await moveCard(
+        $,
+        message.cardId,
+        message.column,
+        from === undefined ? undefined : moveOptions(from, message.column),
+      )
+      break
+    }
+    case 'toggle':
+      await toggleSection($, message.column)
+      break
+    case 'page':
+      await scrollSection($, message.column, lastBody.bodyRows, cap =>
+        message.dir === 'up' ? -cap : cap,
+      )
+      break
+  }
+}
+
 export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
   const board = await readBoard($)
   const ui = await readUi($)
   const sync = await readSync($)
+  const tick = await readTick($)
   const now = await $.clock.now()
+  const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
-  lastBody = { offset: scroll.offset }
+  lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
 
   const rows = layoutBoard({
     cards: board.cards,
@@ -99,9 +149,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             : board.fetchedAt === 0
               ? ''
               : S.updated(ageLabel(board.fetchedAt, now)))
+        const retryLabel = S.retryAll(failed.length)
         const text = truncate(
           ` ${[label, status].filter(part => part !== '').join(' · ')}`,
-          columns - 1,
+          columns - 1 - (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1),
         )
 
         return (
@@ -117,6 +168,12 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
               <Text color="error" wrap="truncate-end">
                 {text}
               </Text>
+            )}
+            {failed.length > 0 && (
+              <Button key="retry-all" plain onPress={() => retryAll($)}>
+                {' '}
+                <Text color="error">{retryLabel}</Text>
+              </Button>
             )}
           </Box>
         )
@@ -161,14 +218,16 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       case 'card': {
         const { card } = row
         const entry = sync[card.id]
-        const glyph = entry === undefined ? undefined : GLYPH[entry.phase]
+        const glyph =
+          entry === undefined ? undefined : glyphOf(entry, tick, now)
         const line = cardLine(
           card,
           columns,
           glyph?.text ?? ' ',
           ageLabel(card.updatedAt, now),
         )
-        const tint = glyph === undefined ? {} : { color: glyph.color }
+        const tint =
+          glyph === undefined ? {} : { color: glyph.color, dimColor: glyph.dim }
 
         return (
           <Button
@@ -201,5 +260,39 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     }
   }
 
-  return <Box flexDirection="column">{rows.map(draw)}</Box>
+  // Terminal and desktop draw the list through a Client, which takes the
+  // pointer for drag and drop; the toolbar stays Buttons above it. (The table
+  // names a Client on every surface, so the surface decides.)
+  if (e.surface !== 'terminal' && e.surface !== 'desktop') {
+    return <Box flexDirection="column">{rows.map(draw)}</Box>
+  }
+
+  const { Client } = $.ui.resolve(e)
+  const props: BoardProps = {
+    rows: toRowViews({
+      rows,
+      columns,
+      collapsed: ui.collapsed,
+      glyphOf: card => {
+        const entry = sync[card.id]
+
+        return entry === undefined ? undefined : glyphOf(entry, tick, now)
+      },
+      ageOf: card => ageLabel(card.updatedAt, now),
+    }),
+    columns,
+  }
+
+  return (
+    <Box flexDirection="column">
+      {draw({ kind: 'toolbar' })}
+      <Client
+        key="board"
+        module="./board-client.tsx"
+        props={props}
+        width="100%"
+        height={props.rows.length}
+      />
+    </Box>
+  )
 }

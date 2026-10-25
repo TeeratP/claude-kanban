@@ -12,7 +12,7 @@ import {
   parseClaudeMd,
   planMove,
 } from '../hooks/github'
-import { boot } from './fakes'
+import { SYNC_PAUSE, boot } from './fakes'
 import { fakeEngine, fakeProcess } from './fake-gh'
 import type { Route } from './fake-gh'
 
@@ -1019,7 +1019,8 @@ test('through the board: a CLAUDE.md names the project, cards load from gh, a mo
     to: 'claude',
   })
 
-  expect(moved).toMatchObject({ result: 'Moved #4 to Claude.' })
+  expect(moved).toMatchObject({ result: 'Moved #4 to Claude (syncing).' })
+  await clock.advance(SYNC_PAUSE)
   expect(calls.slice(0, 2).map(call => call.argv)).toEqual([
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
@@ -1049,4 +1050,36 @@ test('through the board: a CLAUDE.md names the project, cards load from gh, a mo
     '--remove-label',
     'human',
   ])
+})
+
+test('a card that leaves Human on a GitHub board loses its tag without a reload', async ($, on) => {
+  const { clock } = boot(on, { 'CLAUDE.md': KANBAN })
+  fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    ...LOAD_ROUTES,
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'edit'], reply: {} },
+  ])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const listed = await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
+  expect(listed).toMatchObject({
+    result: expect.stringContaining('#3 [human] Issue 3 (review)'),
+  })
+
+  await $.tool.call({
+    tool: 'mcp__kanban__kanban_move',
+    card: 3,
+    to: 'claude',
+  })
+  await clock.advance(SYNC_PAUSE)
+  const after = await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
+
+  expect(after).toMatchObject({
+    result: expect.stringContaining('#3 [claude] Issue 3 updated'),
+  })
+  expect(after).not.toMatchObject({
+    result: expect.stringContaining('Issue 3 (review)'),
+  })
 })

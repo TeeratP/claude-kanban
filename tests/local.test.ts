@@ -151,40 +151,43 @@ test('moving a card rewrites status, updated and order, and keeps the body', asy
     ),
     [path(3, 'c')]: card(3, { status: 'backlog' }),
   }
-  boot(on, files)
+  const { clock } = boot(on, files)
 
   const moved = await $.tool.call({
     tool: 'mcp__kanban__kanban_move',
     card: 3,
     to: 'claude',
   })
+  await clock.advance(300)
 
-  expect(moved).toMatchObject({ result: 'Moved #3 to Claude.' })
+  expect(moved).toMatchObject({ result: 'Moved #3 to Claude (syncing).' })
   const parsed = parseCardFile('0003-c.md', files[path(3, 'c')] ?? '')
   expect(parsed?.card.column).toBe('claude')
   expect(parsed?.card.order).toBe(6)
-  expect(parsed?.card.updatedAt).toBe(new Date(NOW).toISOString())
+  expect(parsed?.card.updatedAt).toBe(new Date(NOW + 300).toISOString())
   expect(parsed?.card.createdAt).toBe('2026-10-25T10:00:00Z')
   expect(parsed?.body).toBe('Spec text.')
   expect(files[path(2, 'b')]).toContain('Old.')
 })
 
-test('a move the backend refuses puts the card back and says why', async ($, on) => {
+test('a move the backend refuses is answered at once and writes nothing', async ($, on) => {
   const files = { [path(1, 'a')]: card(1, { status: 'human' }) }
-  const { calls, toasts } = boot(on, files)
+  const before = files[path(1, 'a')]
+  const { clock, calls } = boot(on, files)
   await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
 
   calls.denyWrite = 'EACCES: read-only'
-  const refused = await $.tool.call({
+  const moved = await $.tool.call({
     tool: 'mcp__kanban__kanban_move',
     card: 1,
     to: 'done',
   })
+  await clock.advance(300)
   const after = await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
 
-  expect(refused).toMatchObject({ deny: expect.stringContaining('EACCES') })
-  expect(toasts[0]).toContain('Could not move #1 to Done')
-  expect(after).toMatchObject({ result: expect.stringContaining('#1 [human]') })
+  expect(moved).toMatchObject({ result: 'Moved #1 to Done (syncing).' })
+  expect(files[path(1, 'a')]).toBe(before)
+  expect(after).toMatchObject({ result: expect.stringContaining('#1 [done]') })
 })
 
 test('a board that cannot be read is an error to the tool, not an empty list', async ($, on) => {

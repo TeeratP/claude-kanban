@@ -2,6 +2,7 @@ import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import { click, row, rowKeys } from './board-ui'
 import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
 
 const board = () => {
@@ -35,8 +36,8 @@ async function start($: Engine, on: On) {
 
 test('the wheel over a section scrolls that section and nothing else', async ($, on) => {
   const { ui, scrolls } = await start($, on)
-  expect(await ui.find({ key: 'more:backlog:up' })).toBeUndefined()
-  expect((await ui.find({ key: 'more:backlog:down' }))?.text).toBe('  ↓ 3 more')
+  expect(await row(ui, 'more:backlog:up')).toBeUndefined()
+  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 3 more')
 
   const result = await $.ui.scroll({
     ...SCROLL,
@@ -46,12 +47,12 @@ test('the wheel over a section scrolls that section and nothing else', async ($,
 
   expect(result).toEqual({})
   expect(scrolls).toHaveLength(0)
-  expect((await ui.find({ key: 'more:backlog:up' }))?.text).toBe('  ↑ 1 more')
-  expect((await ui.find({ key: 'more:backlog:down' }))?.text).toBe('  ↓ 2 more')
-  expect(await ui.find({ key: 'card:md:0011-b' })).toBeUndefined()
-  expect(await ui.find({ key: 'card:md:0012-b' })).toBeDefined()
-  expect(await ui.find({ key: 'more:human:up' })).toBeUndefined()
-  expect((await ui.find({ key: 'more:human:down' }))?.text).toBe('  ↓ 2 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
+  expect(await row(ui, 'card:md:0011-b')).toBeUndefined()
+  expect(await row(ui, 'card:md:0012-b')).toBeDefined()
+  expect(await row(ui, 'more:human:up')).toBeUndefined()
+  expect((await row(ui, 'more:human:down'))?.text).toBe('  ↓ 2 more')
   await ui.unmount()
 })
 
@@ -60,12 +61,12 @@ test('the wheel stops at the ends of the list', async ($, on) => {
   const pointer = { column: 3, row: BACKLOG_CARD }
 
   await $.ui.scroll({ ...SCROLL, by: 40, pointer })
-  expect((await ui.find({ key: 'more:backlog:up' }))?.text).toBe('  ↑ 3 more')
-  expect(await ui.find({ key: 'more:backlog:down' })).toBeUndefined()
+  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 3 more')
+  expect(await row(ui, 'more:backlog:down')).toBeUndefined()
 
   await $.ui.scroll({ ...SCROLL, by: -40, pointer })
-  expect(await ui.find({ key: 'more:backlog:up' })).toBeUndefined()
-  expect((await ui.find({ key: 'more:backlog:down' }))?.text).toBe('  ↓ 3 more')
+  expect(await row(ui, 'more:backlog:up')).toBeUndefined()
+  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 3 more')
   await ui.unmount()
 })
 
@@ -79,7 +80,7 @@ test('the wheel over a header scrolls its section too', async ($, on) => {
   })
 
   expect(scrolls).toHaveLength(0)
-  expect((await ui.find({ key: 'more:human:up' }))?.text).toBe('  ↑ 1 more')
+  expect((await row(ui, 'more:human:up'))?.text).toBe('  ↑ 1 more')
   await ui.unmount()
 })
 
@@ -94,7 +95,7 @@ test("the wheel over the toolbar, a collapsed section or nothing is the engine's
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 29 } })
 
   expect(scrolls).toHaveLength(3)
-  expect(await ui.find({ key: 'more:human:up' })).toBeUndefined()
+  expect(await row(ui, 'more:human:up')).toBeUndefined()
   await ui.unmount()
 })
 
@@ -104,13 +105,13 @@ test("scroll keys, which carry no pointer, are the engine's", async ($, on) => {
   await $.ui.scroll({ ...SCROLL, by: 1 })
 
   expect(scrolls).toEqual([{ by: 1 }])
-  expect(await ui.find({ key: 'more:backlog:up' })).toBeUndefined()
+  expect(await row(ui, 'more:backlog:up')).toBeUndefined()
   await ui.unmount()
 })
 
 test("in the detail view the wheel is the engine's", async ($, on) => {
   const { ui, scrolls } = await start($, on)
-  await ui.press({ key: 'card:md:0011-b' })
+  await click(ui, 'card:md:0011-b')
 
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 3 } })
 
@@ -121,13 +122,13 @@ test("in the detail view the wheel is the engine's", async ($, on) => {
 test('the more rows page a section by a screenful', async ($, on) => {
   const { ui } = await start($, on)
 
-  await ui.press({ key: 'more:backlog:down' })
-  expect((await ui.find({ key: 'more:backlog:up' }))?.text).toBe('  ↑ 3 more')
-  expect(await ui.find({ key: 'more:backlog:down' })).toBeUndefined()
+  await click(ui, 'more:backlog:down')
+  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 3 more')
+  expect(await row(ui, 'more:backlog:down')).toBeUndefined()
 
-  await ui.press({ key: 'more:backlog:up' })
-  expect(await ui.find({ key: 'more:backlog:up' })).toBeUndefined()
-  expect((await ui.find({ key: 'more:backlog:down' }))?.text).toBe('  ↓ 3 more')
+  await click(ui, 'more:backlog:up')
+  expect(await row(ui, 'more:backlog:up')).toBeUndefined()
+  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 3 more')
   await ui.unmount()
 })
 
@@ -142,9 +143,7 @@ test('a smaller pane shows fewer cards per section', async ($, on) => {
     surface: 'terminal',
   })
 
-  expect(
-    await ui.findAll({ type: 'Button', text: /^ {2}#\d+ Backlog/ }),
-  ).toHaveLength(1)
-  expect((await ui.find({ key: 'more:backlog:down' }))?.text).toBe('  ↓ 7 more')
+  expect((await rowKeys(ui)).filter(key => /-b$/.test(key))).toHaveLength(1)
+  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 7 more')
   await ui.unmount()
 })
