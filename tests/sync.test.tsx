@@ -2,6 +2,7 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 
 import { cellWidth } from '../hooks/model'
+import { click, marks, row, rowKeys } from './board-ui'
 import { HANDED_OFF, PANE, RUN, boot, card, path } from './fakes'
 
 const cards = () => ({
@@ -38,7 +39,7 @@ const keysBetween = async (
   header: string,
   next: string,
 ) => {
-  const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key)
+  const keys = await rowKeys(ui)
 
   return keys.slice(keys.indexOf(header) + 1, keys.indexOf(next))
 }
@@ -48,27 +49,26 @@ test('a move is pending, then confirmed, then gone after two seconds', async ($,
   const { clock, ui } = await open($, on, files)
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
-  expect((await ui.find({ key: DOCS }))?.text).toContain('⟳')
+  expect((await row(ui, DOCS))?.text).toContain('⟳')
   expect(await keysBetween(ui, 'hdr:claude', 'hdr:backlog')).toContain(DOCS)
   expect(files[path(3, 'docs')]).toContain('status: backlog')
 
   await clock.advance(300)
   expect(files[path(3, 'docs')]).toContain('status: claude')
-  expect((await ui.find({ key: DOCS }))?.text).toContain('✓')
-  expect((await ui.find({ type: 'Text', text: '✓' }))?.props).toMatchObject({
-    color: 'success',
-    dimColor: false,
-  })
+  expect((await row(ui, DOCS))?.text).toContain('✓')
+  const bright = (await marks(ui, '✓'))[0]?.props
+  expect(bright).toMatchObject({ color: 'success' })
+  expect(bright?.dimColor ?? false).toBe(false)
 
   // The ticker redraws every 400 ms, so the fade lands on the first beat past a second.
   await clock.advance(1300)
-  expect((await ui.find({ type: 'Text', text: '✓' }))?.props).toMatchObject({
+  expect((await marks(ui, '✓'))[0]?.props).toMatchObject({
     color: 'success',
     dimColor: true,
   })
 
   await clock.advance(1000)
-  expect((await ui.find({ key: DOCS }))?.text).not.toMatch(/[⟳✓✕]/)
+  expect((await row(ui, DOCS))?.text).not.toMatch(/[⟳✓✕]/)
   expect(await keysBetween(ui, 'hdr:claude', 'hdr:backlog')).toContain(DOCS)
   await ui.unmount()
 })
@@ -81,17 +81,14 @@ test('the pending mark pulses with the ticker', async ($, on) => {
   })
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
-  const pulse = async () =>
-    (await ui.find({ type: 'Text', text: '⟳' }))?.props.dimColor
+  const pulse = async () => (await marks(ui, '⟳'))[0]?.props.dimColor ?? false
   const seen = [await pulse()]
   for (let beat = 0; beat < 4; beat += 1) {
     await clock.advance(400)
     seen.push(await pulse())
   }
 
-  expect((await ui.find({ type: 'Text', text: '⟳' }))?.props.color).toBe(
-    'warning',
-  )
+  expect((await marks(ui, '⟳'))[0]?.props.color).toBe('warning')
   expect(seen).toEqual([false, true, false, true, false])
 
   release()
@@ -124,7 +121,7 @@ test('a refused move shows a cross and a Retry that sends it again', async ($, o
   const { clock, calls, toasts, ui } = await open($, on, files)
   calls.denyWrite = 'EACCES: read-only'
 
-  await ui.press({ key: DOCS })
+  await click(ui, DOCS)
   await ui.press({ key: 'move:claude' })
   await clock.advance(300)
 
@@ -157,11 +154,10 @@ test('the toolbar counts failed moves and retries them all', async ($, on) => {
   await clock.advance(300)
 
   expect((await ui.find({ key: 'retry-all' }))?.text).toContain('✕2 retry')
-  expect(
-    (await ui.findAll({ type: 'Text', text: /^✕$/ })).map(
-      mark => mark.props.color,
-    ),
-  ).toEqual(['error', 'error'])
+  expect((await marks(ui, '✕')).map(mark => mark.props.color)).toEqual([
+    'error',
+    'error',
+  ])
 
   const toolbar = [
     await ui.find({ key: 'refresh' }),
@@ -211,7 +207,7 @@ test('after the first try and three retries the card goes back, with the reason'
   expect(await keysBetween(ui, 'hdr:claude', 'hdr:backlog')).not.toContain(DOCS)
   expect(await keysBetween(ui, 'hdr:backlog', 'hdr:done')).toEqual([DOCS])
   expect(await ui.find({ key: 'retry-all' })).toBeUndefined()
-  expect((await ui.find({ key: DOCS }))?.text).not.toMatch(/[⟳✓✕]/)
+  expect((await row(ui, DOCS))?.text).not.toMatch(/[⟳✓✕]/)
   await ui.unmount()
 })
 
@@ -271,7 +267,7 @@ test('a move made while one is out is sent after it, once', async ($, on) => {
   await $.tool.call({ ...MOVE, card: 3, to: 'human' })
   await clock.advance(1000)
   expect(calls.writes).toEqual([])
-  expect((await ui.find({ key: DOCS }))?.text).toContain('⟳')
+  expect((await row(ui, DOCS))?.text).toContain('⟳')
   expect(await keysBetween(ui, 'hdr:human', 'hdr:claude')).toContain(DOCS)
 
   release()
@@ -311,13 +307,13 @@ test('a move undone before it is sent makes no call', async ($, on) => {
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(100)
-  expect((await ui.find({ key: DOCS }))?.text).toContain('⟳')
+  expect((await row(ui, DOCS))?.text).toContain('⟳')
   await $.tool.call({ ...MOVE, card: 3, to: 'backlog' })
   await clock.advance(1000)
 
   expect(calls.writes).toEqual([])
   expect(files[path(3, 'docs')]).toContain('status: backlog')
-  expect((await ui.find({ key: DOCS }))?.text).not.toMatch(/[⟳✓✕]/)
+  expect((await row(ui, DOCS))?.text).not.toMatch(/[⟳✓✕]/)
   expect(await keysBetween(ui, 'hdr:backlog', 'hdr:done')).toEqual([DOCS])
   await ui.unmount()
 })
@@ -338,7 +334,7 @@ test('a move that fails after another was asked for sends the newer one', async 
   await clock.settle()
   calls.denyWrite = undefined
 
-  await ui.press({ key: DOCS })
+  await click(ui, DOCS)
   expect((await ui.find({ type: 'Text', text: /^Human/ }))?.text).toContain(
     'EACCES: read-only (attempt 1/4)',
   )
@@ -357,7 +353,7 @@ test('the work prompt goes out only once the backend has confirmed', async ($, o
     release = resolve
   })
 
-  await ui.press({ key: DOCS })
+  await click(ui, DOCS)
   await ui.press({ key: 'move:claude' })
   await clock.advance(300)
   expect(prompts).toEqual([])
@@ -376,7 +372,7 @@ test('a refused move submits no prompt, and nor does a move by Claude', async ($
   const { clock, calls, prompts, ui } = await open($, on, cards())
   calls.denyWrite = 'EACCES: read-only'
 
-  await ui.press({ key: DOCS })
+  await click(ui, DOCS)
   await ui.press({ key: 'move:claude' })
   await clock.advance(300)
   for (let tries = 0; tries < 3; tries += 1) {

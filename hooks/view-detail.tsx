@@ -14,7 +14,7 @@ import { ensureBackend } from './board'
 import { formatFeedback } from './handoff'
 import { COLUMNS, MAX_ATTEMPTS, ageLabel, capDiff, errorMessage } from './model'
 import { S } from './strings'
-import { moveCard, retry } from './sync'
+import { moveCard, moveOptions, retry } from './sync'
 
 type DetailView = Extract<KanbanView, { mode: 'detail' }>
 
@@ -292,14 +292,7 @@ export async function renderDetail(
             key={`move:${column}`}
             label={S.col[column]}
             onPress={() =>
-              moveCard(
-                $,
-                card.id,
-                column,
-                card.column === 'backlog' && column === 'claude'
-                  ? { onConfirm: 'work' }
-                  : {},
-              )
+              moveCard($, card.id, column, moveOptions(card.column, column))
             }
           />
         ))}

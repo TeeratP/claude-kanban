@@ -5,6 +5,7 @@ import type { On } from 'claude-code'
 import type { KanbanBoard, KanbanDetail } from '../types'
 import { formatFeedback } from '../hooks/handoff'
 import { capDiff } from '../hooks/model'
+import { click, rowKeys } from './board-ui'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -30,12 +31,12 @@ for (const surface of SURFACES) {
   test(`a Human card offers approve, send back and park on the ${surface}`, async ($, on) => {
     const { ui } = await open($, on, surface)
 
-    await ui.press({ key: 'card:md:0003-docs' })
+    await click(ui, 'card:md:0003-docs')
     expect(await ui.find({ key: 'approve' })).toBeUndefined()
     expect(await ui.find({ key: 'feedback' })).toBeUndefined()
     await ui.press({ key: 'back' })
 
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
     expect((await ui.find({ key: 'approve' }))?.props.label).toBe('Approve')
     expect((await ui.find({ key: 'sendback' }))?.props.label).toBe('Send back')
     expect((await ui.find({ key: 'park' }))?.props.label).toBe('Park')
@@ -46,7 +47,7 @@ for (const surface of SURFACES) {
   test(`approve moves the card to Done and park to Backlog on the ${surface}`, async ($, on) => {
     const { clock, ui, files, prompts } = await open($, on, surface)
 
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
     await ui.press({ key: 'approve' })
     expect(await ui.find({ key: 'approve' })).toBeUndefined()
     expect((await ui.find({ type: 'Text', text: /^Done/ }))?.text).toMatch(
@@ -56,7 +57,7 @@ for (const surface of SURFACES) {
     expect(files[path(1, 'login')]).toContain('status: done')
 
     await ui.press({ key: 'back' })
-    await ui.press({ key: 'card:md:0002-api' })
+    await click(ui, 'card:md:0002-api')
     await ui.press({ key: 'park' })
     await clock.advance(SYNC_PAUSE)
     expect(files[path(2, 'api')]).toContain('status: backlog')
@@ -66,7 +67,7 @@ for (const surface of SURFACES) {
 
   test(`send back saves the feedback, moves the card to Claude and asks Claude to resume on the ${surface}`, async ($, on) => {
     const { clock, ui, files, prompts, toasts } = await open($, on, surface)
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
 
     await ui.press({ key: 'sendback' })
     expect(toasts).toEqual([
@@ -99,12 +100,12 @@ for (const surface of SURFACES) {
     expect(toasts).toHaveLength(1)
 
     expect(await ui.find({ key: 'back' })).toBeUndefined()
-    const keys = (await ui.findAll({ type: 'Button' })).map(b => b.key)
+    const keys = await rowKeys(ui)
     expect(
       keys.slice(keys.indexOf('hdr:claude'), keys.indexOf('hdr:backlog')),
     ).toEqual(['hdr:claude', 'card:md:0001-login'])
 
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
       'Feedback (2026-10-25)',
     )
@@ -116,7 +117,7 @@ for (const surface of SURFACES) {
 
   test(`Enter in the feedback field sends the card back on the ${surface}`, async ($, on) => {
     const { clock, ui, files, prompts } = await open($, on, surface)
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
 
     await ui.input({ key: 'feedback', text: 'Add a test' })
     await clock.advance(SYNC_PAUSE)
@@ -135,7 +136,7 @@ for (const surface of SURFACES) {
       on,
       surface,
     )
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
     await ui.input({ key: 'feedback', text: 'Add a test', kind: 'change' })
     calls.denyWrite = 'EACCES: read-only'
 
@@ -164,7 +165,7 @@ for (const surface of SURFACES) {
       on,
       surface,
     )
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
     await ui.input({ key: 'feedback', text: 'Add a test', kind: 'change' })
     // The append lands, the status write after it is refused.
     calls.denyWriteAfter = 1
@@ -188,11 +189,11 @@ for (const surface of SURFACES) {
 
   test(`a draft stays with the card it was written for on the ${surface}`, async ($, on) => {
     const { ui } = await open($, on, surface)
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
     await ui.input({ key: 'feedback', text: 'Add a test', kind: 'change' })
     await ui.press({ key: 'back' })
 
-    await ui.press({ key: 'card:md:0002-api' })
+    await click(ui, 'card:md:0002-api')
 
     expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
     await ui.unmount()
@@ -201,7 +202,7 @@ for (const surface of SURFACES) {
   test(`a Backlog card moved to Claude asks Claude to work on it, any other move does not on the ${surface}`, async ($, on) => {
     const { clock, ui, files, prompts } = await open($, on, surface)
 
-    await ui.press({ key: 'card:md:0003-docs' })
+    await click(ui, 'card:md:0003-docs')
     await ui.press({ key: 'move:claude' })
     expect(prompts).toEqual([])
     await clock.advance(SYNC_PAUSE)
@@ -230,7 +231,7 @@ test('the mobile app has no field, so Send back is unavailable with a hint', asy
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'mobile' })
 
-  await ui.press({ key: 'card:md:0001-login' })
+  await click(ui, 'card:md:0001-login')
 
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
   expect(await ui.find({ key: 'sendback' })).toBeUndefined()
@@ -345,11 +346,11 @@ for (const surface of SURFACES) {
   test(`the diff tab shows only for a card with a pull request, and says when there is no diff on the ${surface}`, async ($, on) => {
     pullRequest(on)
     const { ui } = await open($, on, surface)
-    await ui.press({ key: 'card:md:0002-api' })
+    await click(ui, 'card:md:0002-api')
     expect(await ui.find({ key: 'tab:diff' })).toBeUndefined()
     await ui.press({ key: 'back' })
 
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
     expect((await ui.find({ key: 'tab:card' }))?.props.variant).toBe('primary')
     expect(await ui.find({ key: 'spec' })).toBeDefined()
 
@@ -370,7 +371,7 @@ for (const surface of SURFACES) {
     const diff = pullRequest(on)
     diff.diff = { text: file('a.ts', 2), omitted: 4200 }
     const { ui } = await open($, on, surface)
-    await ui.press({ key: 'card:md:0001-login' })
+    await click(ui, 'card:md:0001-login')
 
     await ui.press({ key: 'tab:diff' })
 

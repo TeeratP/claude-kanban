@@ -14,6 +14,11 @@ export type MoveOptions = {
   announce?: boolean
 }
 
+/** The options for a move the person makes: Backlog to Claude asks Claude to start work. */
+export function moveOptions(from: KanbanColumn, to: KanbanColumn): MoveOptions {
+  return from === 'backlog' && to === 'claude' ? { onConfirm: 'work' } : {}
+}
+
 const DEBOUNCE_MS = 300
 const TICK_MS = 400
 

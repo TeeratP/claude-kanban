@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
 import { mergeRemote } from '../hooks/board'
+import { click, row, rowKeys } from './board-ui'
 import {
   CWD,
   HANDED_OFF,
@@ -129,12 +130,12 @@ test('a poll shows a card added on disk', async ($, on) => {
   await clock.settle()
   world.panes = ['kanban']
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ key: 'card:md:0005-new' })).toBeUndefined()
+  expect(await row(ui, 'card:md:0005-new')).toBeUndefined()
 
   calls.edit(path(5, 'new'), card(5, { status: 'backlog', title: 'Fresh' }))
   await clock.advance(POLL)
 
-  expect((await ui.find({ key: 'card:md:0005-new' }))?.text).toContain('Fresh')
+  expect((await row(ui, 'card:md:0005-new'))?.text).toContain('Fresh')
   await ui.unmount()
 })
 
@@ -214,19 +215,15 @@ test('the pane opens from the saved board while the first load runs', async ($, 
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await ui.find({ key: 'card:md:0009-cached' }))?.text).toContain(
-    'Cached card',
-  )
-  expect(await ui.find({ key: 'card:md:0001-login' })).toBeUndefined()
+  expect((await row(ui, 'card:md:0009-cached'))?.text).toContain('Cached card')
+  expect(await row(ui, 'card:md:0001-login')).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /loading/ })).toBeDefined()
 
   release()
   await clock.settle()
 
-  expect(await ui.find({ key: 'card:md:0009-cached' })).toBeUndefined()
-  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
-    'Fix login',
-  )
+  expect(await row(ui, 'card:md:0009-cached')).toBeUndefined()
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('Fix login')
   expect(await ui.find({ type: 'Text', text: /loading/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /updated/ })).toBeDefined()
   await ui.unmount()
@@ -279,15 +276,12 @@ test('a saved board of another shape is ignored', async ($, on) => {
   await open($)
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const shown = await ui.findAll({ type: 'Button' })
-  expect(shown.filter(button => button.key?.startsWith('card:'))).toEqual([])
+  expect((await rowKeys(ui)).filter(key => key.startsWith('card:'))).toEqual([])
 
   release()
   await clock.settle()
 
-  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
-    'Fix login',
-  )
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('Fix login')
   expect(logs).toEqual([])
   await ui.unmount()
 })
@@ -304,7 +298,7 @@ test('the board saved for another directory is not shown', async ($, on) => {
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await ui.find({ key: 'card:md:0009-cached' })).toBeUndefined()
+  expect(await row(ui, 'card:md:0009-cached')).toBeUndefined()
   await ui.unmount()
 })
 
@@ -387,7 +381,7 @@ test('a card the person moves to Human is not announced to them', async ($, on) 
   world.panes = ['kanban']
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  await ui.press({ key: 'card:md:0003-docs' })
+  await click(ui, 'card:md:0003-docs')
   await ui.press({ key: 'move:human' })
   await clock.advance(POLL)
 

@@ -6,6 +6,7 @@ import type { KanbanBackendInfo } from '../types'
 import { createCard } from '../hooks/backend'
 import { parseSections } from '../hooks/handoff'
 import { parseCardFile, serializeCardFile } from '../hooks/local'
+import { click } from './board-ui'
 import { NOW, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 
 const tool = (name: string): `mcp__${string}__${string}` =>
@@ -259,7 +260,7 @@ test('kanban_handoff shows in a detail view that is open on the card', async ($,
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'card:md:0001-a' })
+  await click(ui, 'card:md:0001-a')
   expect(await ui.find({ key: 'section:0' })).toBeUndefined()
 
   await $.tool.call({
