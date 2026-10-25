@@ -55,6 +55,11 @@ export type KanbanSync = {
   onConfirm?: 'work' | 'resume'
   announce?: boolean
 }
+export type KanbanPrompt = 'work' | 'resume'
+export type KanbanQueue = {
+  limit: number
+  held: Record<string, KanbanPrompt>
+}
 export type KanbanView =
   { mode: 'board' } | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
 export type KanbanUi = {
@@ -89,6 +94,7 @@ declare module 'claude-code' {
       sync: Shaped<Record<string, KanbanSync>>
       detail: Shaped<KanbanDetail | null>
       tick: number
+      queue: Shaped<KanbanQueue>
     }
   }
 }

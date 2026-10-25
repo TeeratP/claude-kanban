@@ -1,4 +1,10 @@
-import type { KanbanBoard, KanbanCard, KanbanColumn, KanbanUi } from '../types'
+import type {
+  KanbanBoard,
+  KanbanCard,
+  KanbanColumn,
+  KanbanQueue,
+  KanbanUi,
+} from '../types'
 
 export const PANE = 'kanban'
 export const KANBAN_DIR = '.kanban'
@@ -25,6 +31,14 @@ export const EMPTY_BOARD: KanbanBoard = {
   cards: [],
   fetchedAt: 0,
   isLoading: false,
+}
+
+// How many cards Claude works on at once unless the setting says otherwise.
+export const DEFAULT_CLAUDE_LIMIT = 1
+
+export const EMPTY_QUEUE: KanbanQueue = {
+  limit: DEFAULT_CLAUDE_LIMIT,
+  held: {},
 }
 
 export const INITIAL_UI: KanbanUi = {

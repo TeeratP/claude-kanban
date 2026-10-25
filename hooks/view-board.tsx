@@ -1,7 +1,14 @@
 import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
 
 import type { KanbanColumn, KanbanSync } from '../types'
-import { readBoard, readSync, readTick, readUi, updateUi } from './atoms'
+import {
+  readBoard,
+  readQueue,
+  readSync,
+  readTick,
+  readUi,
+  updateUi,
+} from './atoms'
 import { refresh } from './board'
 import type { BoardProps } from './board-client'
 import { parseBoardMessage, toRowViews } from './board-rows'
@@ -16,6 +23,7 @@ import {
 } from './layout'
 import type { Row } from './layout'
 import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
+import { headerCount, queuePlace, queueView } from './queue'
 import { S } from './strings'
 import { moveCard, moveOptions, retryAll } from './sync'
 import { openDetail } from './view-detail'
@@ -134,6 +142,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const ui = await readUi($)
   const sync = await readSync($)
   const tick = await readTick($)
+  const queue = queueView(await readQueue($), board.cards, sync)
   const now = await $.clock.now()
   const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
@@ -205,7 +214,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           >
             {ui.collapsed[column] ? S.expand : S.collapse}{' '}
             <Text weight="bold">{S.col[column]}</Text>{' '}
-            <Text dimColor>{S.count(row.shown, row.total)}</Text>
+            <Text dimColor>
+              {headerCount(row.column, row.shown, row.total, queue)}
+            </Text>
           </Button>
         )
       }
@@ -235,10 +246,11 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         const entry = sync[card.id]
         const glyph =
           entry === undefined ? undefined : glyphOf(entry, tick, now)
+        const place = queuePlace(queue, card.id)
         const line = cardLine(
           card,
           columns,
-          glyph?.text ?? ' ',
+          glyph?.text ?? (place === undefined ? ' ' : S.queuedMark(place)),
           ageLabel(card.updatedAt, now),
         )
         const tint =
@@ -248,7 +260,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           <Button
             key={`card:${card.id}`}
             plain
-            dimColor={card.column === 'done'}
+            dimColor={card.column === 'done' || place !== undefined}
             onPress={() => openDetail($, card.id)}
           >
             {line.left}
@@ -294,6 +306,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         return entry === undefined ? undefined : glyphOf(entry, tick, now)
       },
       ageOf: card => ageLabel(card.updatedAt, now),
+      queue,
     }),
     columns,
   }

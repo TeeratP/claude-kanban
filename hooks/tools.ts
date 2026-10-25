@@ -6,7 +6,7 @@ import type {
   KanbanCard,
   KanbanSection,
 } from '../types'
-import { readDetailState, updateDetailState } from './atoms'
+import { readDetailState, readQueue, updateDetailState } from './atoms'
 import { appendSection, createCard, readDetail } from './backend'
 import { ensureBoard, inBackground, refresh, setBoard } from './board'
 import { formatHandoff, isFilled, isHandoffValid } from './handoff'
@@ -112,9 +112,10 @@ async function list(
   const board = await ensureBoard($)
   if (board.fetchedAt === 0) return { deny: S.boardUnavailable(board.error) }
 
+  const { held } = await readQueue($)
   const lines = COLUMNS.filter(one => column === undefined || column === one)
     .flatMap(one => sectionList(board.cards, one))
-    .map(S.listLine)
+    .map(card => S.listLine(card, held[card.id] !== undefined))
 
   return { result: lines.length === 0 ? S.listEmpty : lines.join('\n') }
 }

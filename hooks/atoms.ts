@@ -1,8 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { KanbanBoard, KanbanDetail, KanbanSync, KanbanUi } from '../types'
-import { EMPTY_BOARD, INITIAL_UI } from './model'
+import type {
+  KanbanBoard,
+  KanbanDetail,
+  KanbanQueue,
+  KanbanSync,
+  KanbanUi,
+} from '../types'
+import { EMPTY_BOARD, EMPTY_QUEUE, INITIAL_UI } from './model'
 
 // The scan that lists what a module reads and writes only accepts an atom
 // written in the file that reads it, so the atoms stay here and every other
@@ -25,6 +31,9 @@ const detail = atom({ plugin: 'kanban', key: 'detail' } as const, null, {
   shape: 'detail-2',
 })
 const tick = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
+const queue = atom({ plugin: 'kanban', key: 'queue' } as const, EMPTY_QUEUE, {
+  shape: 'queue-1',
+})
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
   return read($, board)
@@ -83,4 +92,15 @@ export function updateTick(
   change: (value: number) => number,
 ): Promise<number> {
   return update($, tick, change)
+}
+
+export function readQueue($: EngineInterface): Promise<KanbanQueue> {
+  return read($, queue)
+}
+
+export function updateQueue(
+  $: EngineInterface,
+  change: (value: KanbanQueue) => KanbanQueue,
+): Promise<KanbanQueue> {
+  return update($, queue, change)
 }

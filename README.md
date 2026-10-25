@@ -25,7 +25,7 @@ At the prompt of a terminal session:
 /plugin install kanban --marketplace TeeratP/claude-kanban
 ```
 
-Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)).
+Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)) and the `claudeLimit` option (see [How many cards Claude works on at once](#how-many-cards-claude-works-on-at-once)).
 
 From a shell:
 
@@ -52,6 +52,14 @@ The toolbar shows the refresh button, the active backend, when the board was las
 - **VS Code and mobile:** there is no drag. Open the card and press a `Move to:` button.
 
 A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure on the card's row; open the card for the reason and a Retry button, or press `✕N retry` in the toolbar to send every failed move again. Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.
+
+### How many cards Claude works on at once
+
+The `claudeLimit` setting is a whole number, `1` by default; `0` means no limit. You set it on the settings screen at install and can change it later in the plugin's settings in the config menu (the plugin reloads with the new value). A decimal is rounded down; a negative value or anything but a number counts as unset (`1`).
+
+When Claude is at its limit and you move another card to Claude (the moves that prompt Claude: Backlog to Claude, and Send back), the card goes into the Claude section marked `queued N` and dim, and no prompt is sent. The Claude header reads `Claude 1/1 · 2 queued`. When a card leaves Claude (to Human, Done or Backlog, or its move to Claude is given up), the backend confirms that, and the top queued card starts: its work or resume prompt is sent then, never two at once. Queue order is the order of the section. Moving a queued card out of Claude takes it out of the queue.
+
+A queued card is in Status In progress on GitHub like any card in Claude: a column means who holds the ball. The queue itself is local, saved per working directory and `backend` setting, so it survives a restart; the waiting cards start at the first load of the board once a slot is free. Lowering the limit stops no card that is already working. Cards Claude moves itself with `kanban_move` are never queued (they carry no prompt), though they use up a slot; `kanban_list` marks a waiting card `(queued)` so Claude leaves it alone.
 
 ## Backends
 

@@ -10,6 +10,7 @@ import {
   refreshAfter,
 } from './board'
 import { guardEdit, guardWrite } from './guard'
+import { applyQueue, claudeLimit } from './queue'
 import { S } from './strings'
 import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
@@ -22,9 +23,11 @@ import { renderDetail } from './view-detail'
 
 export const register: Register = (on, options) => {
   const mode = backendMode(options.backend)
+  const limit = claudeLimit(options.claudeLimit)
 
   on('session.start', async ($, e, next) => {
     await applyMode($, mode)
+    await applyQueue($, mode, limit)
     await $.command.register({
       name: 'kanban',
       description: S.commandDescription,

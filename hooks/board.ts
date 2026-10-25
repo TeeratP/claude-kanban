@@ -10,6 +10,7 @@ import type {
 import { readBoard, readSync, updateBoard } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
 import { EMPTY_BOARD, PANE, errorMessage, isKanbanFile } from './model'
+import { releaseQueued } from './queue'
 import { S } from './strings'
 
 const POLL_MS = 45_000
@@ -286,6 +287,8 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     })
     announceHumanChanges($, seen.before, board)
     await saveCache($, board)
+    // A card may have left Claude behind our back.
+    inBackground($, releaseQueued($))
 
     return board
   } catch (error) {

@@ -11,6 +11,7 @@ import {
   setBoard,
 } from './board'
 import { MAX_ATTEMPTS, TICK_SHOWN_MS, errorMessage, maxOrder } from './model'
+import { holdPrompt, releaseQueued, submitPrompt } from './queue'
 import { S } from './strings'
 
 export type MoveOptions = {
@@ -86,7 +87,8 @@ function retarget(
 /**
  * Moves a card at once on the board, then, after a pause for further moves,
  * asks the backend to make it so. A refused move waits for a retry and, once
- * out of tries, puts the card back and says why.
+ * out of tries, puts the card back and says why. A prompt that Claude's limit
+ * holds back waits in the queue instead (see queue.ts).
  */
 export async function moveCard(
   $: EngineInterface,
@@ -96,7 +98,7 @@ export async function moveCard(
 ): Promise<void> {
   // The card is found inside the write: a read here could be an older moment.
   const seen: { from?: KanbanColumn; entry?: KanbanSync } = {}
-  await setBoard($, board => {
+  const moved = await setBoard($, board => {
     const card = board.cards.find(one => one.id === cardId)
     seen.from =
       card === undefined || card.column === to ? undefined : card.column
@@ -114,6 +116,10 @@ export async function moveCard(
   const from = seen.from
   if (from === undefined) return
 
+  // Claude at its limit holds the prompt back: the card waits in the queue.
+  const isHeld = await holdPrompt($, cardId, to, opts?.onConfirm, moved.cards)
+  const { onConfirm: _held, ...unprompted } = opts ?? {}
+
   await updateSync($, sync => {
     seen.entry = retarget(
       sync[cardId],
@@ -121,13 +127,15 @@ export async function moveCard(
       from,
       to,
       inFlight.has(cardId),
-      opts,
+      isHeld ? unprompted : opts,
     )
 
     return seen.entry === undefined
       ? without(sync, cardId)
       : { ...sync, [cardId]: seen.entry }
   })
+  // Cards already waiting go before this one.
+  await releaseQueued($)
 
   debounce.get(cardId)?.cancel()
   debounce.delete(cardId)
@@ -391,18 +399,7 @@ async function settle(
   if (seen.next === 'ok') {
     expireLater($, card.id, settledAt, settledAt)
     if (seen.announce === true) announceHandoff($, card)
-    if (seen.onConfirm !== undefined) {
-      $.prompt
-        .submit({
-          text:
-            seen.onConfirm === 'work'
-              ? S.workPrompt(card.number, card.title)
-              : S.resumePrompt(card.number),
-        })
-        .catch((error: unknown) =>
-          $.ui.log(S.promptFailed(errorMessage(error))),
-        )
-    }
+    if (seen.onConfirm !== undefined) submitPrompt($, card, seen.onConfirm)
   }
 
   if (seen.next === 'undone' && 'reason' in outcome) {
@@ -422,6 +419,9 @@ async function settle(
     // A load restores the card's place in the column it is back in.
     $.clock.after(0, () => detach($, refresh($)))
   }
+
+  // A card that left Claude, or never got there, frees a slot for the queue.
+  await releaseQueued($)
 
   return seen.next === 'more'
 }
