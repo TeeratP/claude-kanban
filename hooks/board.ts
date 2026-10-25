@@ -7,10 +7,11 @@ import type {
   KanbanCard,
   KanbanSync,
 } from '../types'
-import { readBoard, readSync, updateBoard } from './atoms'
+import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
 import { EMPTY_BOARD, PANE, errorMessage, isKanbanFile } from './model'
 import { releaseQueued } from './queue'
+import { pauseLeft } from './rate-limit'
 import { S } from './strings'
 
 const POLL_MS = 45_000
@@ -69,8 +70,19 @@ export async function applyMode(
 
     return seen.isReset ? { ...EMPTY_BOARD, mode } : current
   })
-  if (seen.isReset) updateStatusLine($, board.cards)
+  if (seen.isReset) {
+    // A pause for GitHub's rate limit belongs to the board that is gone.
+    await updatePausedUntil($, () => 0)
+    updateStatusLine($, board.cards)
+  }
 }
+
+// What the person is told about a card that is theirs now: the question Claude asks, or
+// that the card waits on them.
+const waitingText = (card: KanbanCard) =>
+  card.tag === 'question' && card.question !== undefined
+    ? S.claudeAsks(card)
+    : S.handedToYou(card)
 
 /**
  * Toasts each card that is in Human now and was not before. Only a load calls
@@ -90,12 +102,12 @@ function announceHumanChanges(
   )
   for (const card of after.cards)
     if (card.column === 'human' && !known.has(card.id))
-      $.ui.toast(S.handedToYou(card))
+      $.ui.toast(waitingText(card))
 }
 
 /** Tells the person Claude put a card in Human: a toast, and a notification. */
 export function announceHandoff($: EngineInterface, card: KanbanCard): void {
-  const text = S.handedToYou(card)
+  const text = waitingText(card)
   $.ui.toast(text)
   $.ui
     .notify(text)
@@ -139,7 +151,17 @@ export function mergeRemote(
     const own = mine.get(card.id)
 
     return own !== undefined && (isUnsettled(card) || confirmed.has(card.id))
-      ? { ...card, column: own.column, order: own.order }
+      ? {
+          ...card,
+          column: own.column,
+          order: own.order,
+          // The question Claude just asked may not be in the comments this load read.
+          ...(own.column === 'human' &&
+          own.tag === 'question' &&
+          own.question !== undefined
+            ? { tag: own.tag, question: own.question }
+            : {}),
+        }
       : card
   })
   const kept = local.filter(
@@ -331,11 +353,12 @@ export function startPolling($: EngineInterface): void {
 }
 
 // A tick reloads while the pane is open and ends the polling once it is not;
-// opening the pane again starts it.
+// opening the pane again starts it. While the GitHub rate limit pauses polling,
+// ticks pass without a load.
 async function pollOnce($: EngineInterface): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) {
-    await refresh($)
+    if ((await pauseLeft($)) === 0) await refresh($)
 
     return
   }

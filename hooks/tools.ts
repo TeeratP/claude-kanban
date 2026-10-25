@@ -1,15 +1,16 @@
 import type { EngineInterface, ToolSpec } from 'claude-code'
 
-import type {
-  KanbanBackendInfo,
-  KanbanBoard,
-  KanbanCard,
-  KanbanSection,
-} from '../types'
+import type { KanbanBackendInfo, KanbanBoard, KanbanCard } from '../types'
 import { readDetailState, readQueue, updateDetailState } from './atoms'
 import { appendSection, createCard, readDetail } from './backend'
 import { ensureBoard, inBackground, refresh, setBoard } from './board'
-import { formatHandoff, isFilled, isHandoffValid } from './handoff'
+import {
+  formatHandoff,
+  formatQuestion,
+  gistOf,
+  isFilled,
+  isHandoffValid,
+} from './handoff'
 import { sectionList } from './layout'
 import { COLUMNS, errorMessage, isColumn } from './model'
 import { S } from './strings'
@@ -21,6 +22,7 @@ type ToolName =
   | 'kanban_handoff'
   | 'kanban_move'
   | 'kanban_create'
+  | 'kanban_ask'
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -97,6 +99,19 @@ export const TOOL_SPECS: ToolSpec[] = [
       required: ['title', 'spec'],
     },
   },
+  {
+    name: 'kanban_ask',
+    description: S.toolAsk.description,
+    isDeferred: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card: { type: 'integer', description: S.toolAsk.card },
+        question: { type: 'string', description: S.toolAsk.question },
+      },
+      required: ['card', 'question'],
+    },
+  },
 ]
 
 type ToolAnswer = { result: string } | { deny: string }
@@ -167,16 +182,12 @@ async function show(
 
   try {
     const { body, sections } = await readDetail($, found.info, found.card)
-    const heading = (one: KanbanSection) =>
-      one.kind === 'handoff'
-        ? S.handoffHeading(one.date)
-        : S.feedbackHeading(one.date)
 
     return {
       result: [
         S.listLine(found.card),
         body === '' ? S.noSpec : body,
-        ...sections.map(one => `## ${heading(one)}\n${one.text}`),
+        ...sections.map(one => `## ${S.headingOf(one)}\n${one.text}`),
       ].join('\n\n'),
     }
   } catch (error) {
@@ -219,6 +230,45 @@ async function handoff(
   inBackground($, refreshDetail($, found))
 
   return { result: S.handedOff(found.card) }
+}
+
+async function ask(
+  $: EngineInterface,
+  input: Record<string, unknown>,
+): Promise<ToolAnswer> {
+  const question = textOf(input.question)
+  if (question === undefined) return { deny: S.badText('question') }
+  if (question === '') return { deny: S.askEmpty }
+
+  const found = await find($, input)
+  if ('deny' in found) return found
+
+  const { card, info } = found
+  try {
+    const date = new Date(await $.clock.now()).toISOString().slice(0, 10)
+    await appendSection($, info, card, formatQuestion(question, date))
+  } catch (error) {
+    return { deny: S.askFailed(errorMessage(error)) }
+  }
+  inBackground($, refreshDetail($, found))
+
+  // The card is announced as a question once the backend confirms the move.
+  await moveCard(
+    $,
+    card.id,
+    'human',
+    card.column === 'human' ? undefined : { announce: true },
+  )
+  await setBoard($, board => ({
+    ...board,
+    cards: board.cards.map(one =>
+      one.id === card.id && one.column === 'human'
+        ? { ...one, tag: 'question', question: gistOf(question) }
+        : one,
+    ),
+  }))
+
+  return { result: S.asked(card) }
 }
 
 async function move(
@@ -299,5 +349,7 @@ export function runTool(
       return move($, input)
     case 'kanban_create':
       return create($, input)
+    case 'kanban_ask':
+      return ask($, input)
   }
 }

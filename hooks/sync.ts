@@ -1,6 +1,11 @@
 import type { EngineInterface, Timer } from 'claude-code'
 
-import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
+import type {
+  KanbanCard,
+  KanbanColumn,
+  KanbanPrompt,
+  KanbanSync,
+} from '../types'
 import { readBoard, readSync, updateSync, updateTick } from './atoms'
 import { moveRemote } from './backend'
 import {
@@ -16,7 +21,7 @@ import { S } from './strings'
 
 export type MoveOptions = {
   /** A prompt for Claude to submit once the backend has confirmed the move. */
-  onConfirm?: 'work' | 'resume'
+  onConfirm?: KanbanPrompt
   /** Tell the person the card is theirs once the backend has confirmed the move. */
   announce?: boolean
 }
@@ -386,7 +391,7 @@ async function settle(
       if (sent.to === 'human') return merged
 
       // Only a card in Human carries a tag; one leaving it must not keep it.
-      const { tag: _tag, ...untagged } = merged
+      const { tag: _tag, question: _question, ...untagged } = merged
 
       return untagged
     }

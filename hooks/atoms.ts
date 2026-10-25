@@ -34,6 +34,10 @@ const tick = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
 const queue = atom({ plugin: 'kanban', key: 'queue' } as const, EMPTY_QUEUE, {
   shape: 'queue-1',
 })
+// When GitHub loads may resume after the rate limit ran low (0: not paused).
+const pausedUntil = atom({ plugin: 'kanban', key: 'pausedUntil' } as const, 0)
+// The signed-in GitHub login, asked for once ('' until then).
+const viewer = atom({ plugin: 'kanban', key: 'viewer' } as const, '')
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
   return read($, board)
@@ -103,4 +107,26 @@ export function updateQueue(
   change: (value: KanbanQueue) => KanbanQueue,
 ): Promise<KanbanQueue> {
   return update($, queue, change)
+}
+
+export function readPausedUntil($: EngineInterface): Promise<number> {
+  return read($, pausedUntil)
+}
+
+export function updatePausedUntil(
+  $: EngineInterface,
+  change: (value: number) => number,
+): Promise<number> {
+  return update($, pausedUntil, change)
+}
+
+export function readViewer($: EngineInterface): Promise<string> {
+  return read($, viewer)
+}
+
+export function updateViewer(
+  $: EngineInterface,
+  change: (value: string) => string,
+): Promise<string> {
+  return update($, viewer, change)
 }

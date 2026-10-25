@@ -94,6 +94,12 @@ export const register: Register = (on, options) => {
     next.called ? next(e) : { deny: S.toolFailed('kanban_create') },
   )
 
+  on('tool.call', { tool: 'mcp__kanban__kanban_ask' }, ($, e) =>
+    runTool($, 'kanban_ask', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_ask') },
+  )
+
   // A card file Claude wrote or edited shows on the board at once, unless the
   // edit would put a card in Human without a handoff; a guard that breaks lets
   // the edit through.

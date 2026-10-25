@@ -688,3 +688,63 @@ test('kanban_list marks a waiting card, so Claude does not take it up itself', a
   await clock.advance(2500)
   await ui.unmount()
 })
+
+const QUESTION =
+  '## Question (2026-10-25)\nWhich database should the tests use?'
+
+test('an answer to a question respects the limit too: the prompt waits for a slot', async ($, on) => {
+  const files = {
+    [path(1, 'alpha')]: card(
+      1,
+      { status: 'claude', title: 'Alpha' },
+      HANDED_OFF,
+    ),
+    [path(2, 'beta')]: card(
+      2,
+      { status: 'human', title: 'Beta' },
+      `Spec text.\n\n${QUESTION}`,
+    ),
+  }
+  const { clock, ui, prompts, saved: store } = await open($, on, files)
+
+  await click(ui, BETA)
+  await ui.input({ key: 'feedback', text: 'The staging one' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.advance(2500)
+
+  expect(files[path(2, 'beta')]).toContain('## Answer (2026-10-25)')
+  expect(files[path(2, 'beta')]).toContain('status: claude')
+  expect(prompts).toEqual([])
+  expect(await text(ui, BETA)).toContain('queued 1')
+  expect(JSON.parse(store.get(KEY) ?? '{}').held).toEqual({
+    'md:0002-beta': 'answer',
+  })
+
+  await $.tool.call({ ...MOVE, card: 1, to: 'human' })
+  await clock.advance(SYNC_PAUSE)
+  expect(prompts).toEqual([
+    'Resume kanban card #2: the person answered your question; read it with mcp__kanban__kanban_show and continue.',
+  ])
+  await clock.advance(2500)
+  await ui.unmount()
+})
+
+test('a card that asks a question frees its slot for the queue', async ($, on) => {
+  const { clock, ui, prompts } = await open($, on, backlog())
+  await toClaude(ui, ALPHA)
+  await toClaude(ui, BETA)
+  await clock.advance(SYNC_PAUSE)
+  await clock.advance(2500)
+
+  await $.tool.call({
+    tool: 'mcp__kanban__kanban_ask',
+    card: 1,
+    question: 'Which database should the tests use?',
+  })
+  await clock.advance(SYNC_PAUSE)
+
+  expect(prompts).toHaveLength(2)
+  expect(prompts[1]).toMatch(/^Work on kanban card #2 "Beta"/)
+  await clock.advance(2500)
+  await ui.unmount()
+})

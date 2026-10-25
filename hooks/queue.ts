@@ -106,7 +106,8 @@ async function readSaved(
 
     const kept: Held = {}
     for (const [cardId, prompt] of Object.entries(held)) {
-      if (prompt === 'work' || prompt === 'resume') kept[cardId] = prompt
+      if (prompt === 'work' || prompt === 'resume' || prompt === 'answer')
+        kept[cardId] = prompt
     }
 
     return kept
@@ -186,19 +187,25 @@ export async function holdPrompt(
   return seen.isHeld
 }
 
-/** Asks Claude to take up a card: to work on it, or to resume it after feedback. */
+function promptFor(prompt: KanbanPrompt, card: KanbanCard): string {
+  switch (prompt) {
+    case 'work':
+      return S.workPrompt(card.number, card.title)
+    case 'resume':
+      return S.resumePrompt(card.number)
+    case 'answer':
+      return S.answerPrompt(card.number)
+  }
+}
+
+/** Asks Claude to take up a card: to work on it, to resume it after feedback, or to go on after an answer. */
 export function submitPrompt(
   $: EngineInterface,
   card: KanbanCard,
   prompt: KanbanPrompt,
 ): void {
   $.prompt
-    .submit({
-      text:
-        prompt === 'work'
-          ? S.workPrompt(card.number, card.title)
-          : S.resumePrompt(card.number),
-    })
+    .submit({ text: promptFor(prompt, card) })
     .catch((error: unknown) => $.ui.log(S.promptFailed(errorMessage(error))))
 }
 

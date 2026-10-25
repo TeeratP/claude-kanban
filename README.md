@@ -57,7 +57,7 @@ A move shows at once, then syncs in the background: `⟳` pulses while it is sen
 
 The `claudeLimit` setting is a whole number, `1` by default; `0` means no limit. You set it on the settings screen at install and can change it later in the plugin's settings in the config menu (the plugin reloads with the new value). A decimal is rounded down; a negative value or anything but a number counts as unset (`1`).
 
-When Claude is at its limit and you move another card to Claude (the moves that prompt Claude: Backlog to Claude, and Send back), the card goes into the Claude section marked `queued N` and dim, and no prompt is sent. The Claude header reads `Claude 1/1 · 2 queued`. When a card leaves Claude (to Human, Done or Backlog, or its move to Claude is given up), the backend confirms that, and the top queued card starts: its work or resume prompt is sent then, never two at once. Queue order is the order of the section. Moving a queued card out of Claude takes it out of the queue.
+When Claude is at its limit and you move another card to Claude (the moves that prompt Claude: Backlog to Claude, Send back, and answering a question), the card goes into the Claude section marked `queued N` and dim, and no prompt is sent. The Claude header reads `Claude 1/1 · 2 queued`. When a card leaves Claude (to Human, Done or Backlog, or its move to Claude is given up), the backend confirms that, and the top queued card starts: its work or resume prompt is sent then, never two at once. Queue order is the order of the section. Moving a queued card out of Claude takes it out of the queue.
 
 A queued card is in Status In progress on GitHub like any card in Claude: a column means who holds the ball. The queue itself is local, saved per working directory and `backend` setting, so it survives a restart; the waiting cards start at the first load of the board once a slot is free. Lowering the limit stops no card that is already working. Cards Claude moves itself with `kanban_move` are never queued (they carry no prompt), though they use up a slot; `kanban_list` marks a waiting card `(queued)` so Claude leaves it alone.
 
@@ -120,11 +120,15 @@ Moving a card on GitHub:
 | To | What happens |
 |---|---|
 | Backlog | Status becomes Backlog. |
-| Claude | Status becomes In progress; label `ai` is added and `human` is removed if present. |
+| Claude | The label `ai` is added and `human` is removed if present (whatever its case), then Status becomes In progress. If the repo has no `ai` label, it is created first. |
 | Human | Status becomes In review. No label changes. |
 | Done | Status becomes Done and the issue is closed. The close is re-read to make sure it took. |
 
 Moving a closed issue out of Done reopens it first. Handoffs and feedback are posted as issue comments; the Diff tab of a card with a linked pull request shows `gh pr diff`.
+
+Only comments written by the account `gh` is signed in as count toward the handoff rule. Anyone else's Handoff, Feedback, Question or Answer comment is shown on the card, marked with its author, and ignored when deciding whether a card may move to Human.
+
+The board is read with one GraphQL query per 100 items (about 3 points of GitHub's 5000 an hour per page, which includes each issue's newest comments so an open question shows on its row). When the budget runs low or out, polling pauses until it resets and the toolbar says so; the refresh button still works.
 
 ## Claude's tools and the handoff
 
@@ -133,8 +137,9 @@ Claude gets these tools. They work with the pane closed.
 | Tool | Does |
 |---|---|
 | `kanban_list` | Lists cards, one line each: `#number [column] title`. Done lists only its 10 newest. |
-| `kanban_show` | Reads one card: the spec and every handoff and feedback, newest last. |
+| `kanban_show` | Reads one card: the spec and every handoff, feedback, question and answer, newest last. |
 | `kanban_handoff` | Records a handoff on a card. |
+| `kanban_ask` | Asks you a blocking question on a card (see below). |
 | `kanban_move` | Moves a card to `human`, `claude`, `backlog` or `done`. |
 | `kanban_create` | Creates a card (local backend only; on GitHub, Claude is told to use the `/issue` skill). The spec cannot open a handoff or feedback section: marker lines in it are escaped. |
 
@@ -151,6 +156,12 @@ When Claude finishes or needs you, it records a handoff, in this exact shape:
 ```
 
 Handoffs are enforced, not suggested. `kanban_move` to Human is refused unless the card's newest handoff is newer than its newest feedback, and its **Check** and **Need from you** are filled in. The same rule guards direct edits: a `Write` or `Edit` that sets `status: human` in a `.kanban/*.md` file without a valid handoff is denied. The guard fails open, so it never blocks unrelated editing.
+
+### Questions
+
+When Claude cannot go on without a decision only you can make, it calls `kanban_ask` with the card and the question. The question is recorded on the card (a `## Question (date)` section, or an issue comment on GitHub) and the card moves to Human with a `?` tag on its row. A question counts as a handoff for the move, so no Check or Need is required. You get a toast and a notification that say `Claude asks: …`.
+
+In the detail view of a question card the question is shown at the top and the box is labelled **Answer**. Pressing **Answer** records a `## Answer (date)` section, moves the card to Claude and, once that move is confirmed, prompts Claude that you answered. The rule for a card to move to Human is that its newest Question or Handoff comes after its newest Feedback or Answer. Claude is told to use the tool only for decisions it cannot make, not for progress updates.
 
 ## The feedback loop
 
@@ -194,7 +205,7 @@ Your feedback.
 - `status` is one of `human`, `claude`, `backlog`, `done`; anything else counts as `backlog`.
 - `id` is the card number (`#7`); a missing `id` falls back to the filename's number. Titles may contain colons.
 - `order` sorts a section, lowest first. Done sorts by `updated`, newest first.
-- The Handoff and Feedback sections are appended below the spec. The board rewrites `status`, `order` and `updated` when a card moves, and leaves the body alone.
+- The Handoff, Feedback, Question and Answer sections are appended below the spec. The board rewrites `status`, `order` and `updated` when a card moves, and leaves the body alone.
 - Done cards stay as files with `status: done`. The pane never deletes a file.
 - Files Claude writes or edits show on the board straight away.
 
