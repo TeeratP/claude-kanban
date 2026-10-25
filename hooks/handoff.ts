@@ -120,8 +120,12 @@ export function isFilled(text: string): boolean {
   return !PLACEHOLDERS.has(text.trim().toLowerCase())
 }
 
-/** Whether the newest section is a handoff that tells the person what to check and what is needed. */
-export function isHandoffValid(sections: readonly KanbanSection[]): boolean {
+/**
+ * Whether the newest section is a handoff that tells the person what to check and what is
+ * needed. A section someone else wrote on the issue (`byOther`) is not counted.
+ */
+export function isHandoffValid(all: readonly KanbanSection[]): boolean {
+  const sections = all.filter(one => one.byOther === undefined)
   const handoff = sections.findLastIndex(one => one.kind === 'handoff')
   const feedback = sections.findLastIndex(one => one.kind === 'feedback')
   const fields = sections[handoff]?.fields

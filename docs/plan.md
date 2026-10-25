@@ -63,7 +63,7 @@ export type KanbanCard = {
   number: number        // shown as #N; local = frontmatter id, gh = issue number
   title: string
   column: KanbanColumn
-  order: number         // local: frontmatter order; gh: index in item-list
+  order: number         // local: frontmatter order; gh: index among the board's issues
   createdAt: string; updatedAt: string   // ISO
   tag?: KanbanTag
   file?: string         // local: '.kanban/0007-fix-login.md'
@@ -145,12 +145,12 @@ GitHub mapping, pure `columnOf(status, labels, isClosed)`, checked in this order
 
 So a backlog issue labeled `human` stays in Backlog: column = who holds the ball now, not the ownership label.
 
-GitHub moves: pure `planMove(card, to, cfg): string[][]` returns argv lists. Reopen a closed issue first when target ≠ `done`.
+GitHub moves: pure `planMove(card, to, cfg): string[][]` returns argv lists. Reopen a closed issue first when target ≠ `done`. The label edit comes before the Status edit, so a failure leaves the Status as it was. The `human` label is matched case-insensitively and removed under the spelling the card has.
 
 | to | argv sequence |
 |---|---|
 | backlog | `item-edit`→Backlog (skip if already Backlog or Ready) |
-| claude | `item-edit`→In progress; `gh issue edit N --repo R --add-label ai`, plus `--remove-label human` only if the card has it |
+| claude | `gh issue edit N --repo R --add-label ai`, plus `--remove-label <human, as spelled>` only if the card has it; then `item-edit`→In progress. `moveGithub` first creates the `ai` label (`gh label create ai --color 5319e7 --force`) when a read-only `gh label list` shows the repo lacks it and the card does not carry it |
 | human | `item-edit`→In review |
 | done | `item-edit`→Done; `gh issue close N --repo R`; verify `gh issue view N --repo R --json state --jq .state` == `CLOSED` (close can fail silently) |
 
@@ -190,12 +190,12 @@ export async function detectBackend($: EngineInterface): Promise<KanbanBackendIn
 - options: on the status line plus next two lines, ``/(Backlog|Ready|In progress|In review|Done)\s*`([0-9a-f]{6,})`/gi``.
 - owner = repo's owner. Return null when repo or projectNumber is missing.
 
-GitHub `load` — two calls joined by issue number:
-- `gh project item-list N --owner O --format json --limit 500`: use `items[].id`, `.status`, `.content{type,number,title,url,repository}`. Keep `type==='Issue'` and repository == repo (case-insensitive).
-- `gh issue list --repo R --state all --limit 500 --json number,labels,state,updatedAt,createdAt,closedByPullRequestsReferences`. If that field isn't valid in installed gh (2.74.2 — check with `gh issue list --json`), drop it and take PRs from item-list's `"linked pull requests"`.
+GitHub `load` — one `gh api graphql` query per page of 100 board items, `-f query=… -F projectId=<PVT_…>` and `-f cursor=<endCursor>` from the second page on (at most 30 pages; a larger board shows its first 3000 items and says so in the debug log). The query reads `node(id: $projectId) { … on ProjectV2 { items(first: 100, after: $cursor) { pageInfo, nodes { id, fieldValueByName(name: "Status"), content { … on Issue { number title url state createdAt updatedAt repository labels(first: 20) closedByPullRequestsReferences(first: 5) } } } } } }` and `rateLimit { cost remaining resetAt }`. Keep issues whose repository equals the repo (case-insensitive); pull requests and drafts come back without issue fields. Measured live against board #7: `cost` 2 per page, where `gh project item-list` plus `gh issue list` took about 104 per refresh.
+
+Rate limit (`hooks/rate-limit.ts`): a load whose `remaining` is 100 or less, or that fails with a "rate limit" error, pauses polling until `resetAt` (an error's reset time comes from the free `gh api rate_limit`; with none, 5 minutes). Polls skip while paused; the toolbar says `limit low · paused Nm` / `limit hit · paused Nm`. A refresh the person asks for still runs, with a toast.
 
 GitHub `append`: `gh issue comment N --repo R --body-file -` with `init.stdin = markdown` (ProcessRunInit d.ts:8203).
-GitHub `detail`: `gh issue view N --repo R --json body,comments,url,state`; sections = comments whose body starts with `## Handoff (` or `## Feedback (`, createdAt order.
+GitHub `detail`: `gh issue view N --repo R --json body,comments,url,state`; sections = comments whose body starts with `## Handoff (` or `## Feedback (`, createdAt order. A section whose comment was written by anyone but the signed-in user (`gh api user --jq .login`, kept for the session) carries `byOther`: it is shown, labeled, and ignored by `isHandoffValid`.
 GitHub `diff`: `gh pr diff <first prNumber> --repo R`.
 
 Local backend (`hooks/local.ts`):
@@ -410,9 +410,9 @@ Test-kit facts: tests get engine `$` and `on` whose hooks are the bottom. No rea
 | 1 | local.test.ts | parse/serialize round-trip (colon in title, quotes); bad status → backlog; move rewrites status/updated/order, body intact; parseSections splits Handoff/Feedback with fields |
 | 1 | pane.test.tsx | fake fs with 3 cards → `/kanban` → mount → find `#1`; press `hdr:done` expands; press card → detail; press `move:claude` → file has `status: claude`; back → card under Claude |
 | 1 | scroll.test.tsx | 8 backlog cards, bodyRows 30: pointer on backlog card row → `{}`, `↑ 1 more` shown, Human offset unchanged; pointer on toolbar → passed to next; no pointer → passed; detail view → passed; press `more:backlog:down` pages |
-| 2 | github.test.ts | parseClaudeMd on carcast/offr/horo fixtures → exact ids; columnOf precedence; planMove argv per target incl. reopen/close/verify, `--remove-label human` only when present; load joins item-list + issue list and filters other repos |
+| 2 | github.test.ts | parseClaudeMd on carcast/offr/horo fixtures → exact ids; columnOf precedence; planMove argv per target incl. reopen/close/verify, `--remove-label human` only when present; load pages one GraphQL query per 100 items and filters other repos, cost fixture, rate-limit backoff and recovery, `ai` label ensured once, handoff author rule |
 | 2 | sync.test.tsx | success ⟳ → ✓ → gone after 2000 ms; failure ✕ + Retry; 3 retries fail → card back + toast with reason; debounce: 3 moves in 300 ms → one sequence for final target; in-flight: deferred first call, move again → exactly one more sequence; move back to origin before dispatch → no call |
-| 2 | poll.test.tsx | advance 45000 → item-list again; merge keeps a pending card's local column; pane closed → no poll; cached store → cards visible before process.run resolves |
+| 2 | poll.test.tsx | advance 45000 → the board loads again; merge keeps a pending card's local column; pane closed → no poll; cached store → cards visible before process.run resolves |
 | 3 | tools.test.ts | kanban_move human with no handoff → deny; handoff missing Need → deny; valid handoff then newer feedback → deny; valid → moved + toast + status `1 card waiting on you`; kanban_handoff exact format with mock-clock date; Write guard denies `status: human` w/o handoff, allows other edits; Write to `.kanban/x.md` triggers fs.list again |
 | 3 | detail.test.tsx | input feedback + press `sendback` → Feedback appended, card → Claude, after confirm prompt `Resume kanban card #N…`; empty draft → toast, no move; backlog→claude press → `Work on kanban card #N`; Approve on GitHub → close + verify argv; diff tab → `Code` element present |
 | 4 | drag.test.tsx | Client present on terminal/desktop, absent on vscode/mobile; pointer down on card row, move, up on Human header → card moves to Human; click card → detail opens |
