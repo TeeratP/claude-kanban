@@ -33,7 +33,9 @@ export type KanbanGithub = {
   }
 }
 export type KanbanBackendInfo = { kind: 'local' } | KanbanGithub
+export type KanbanBackendMode = 'auto' | 'github' | 'local'
 export type KanbanBoard = {
+  mode: KanbanBackendMode
   backend: KanbanBackendInfo | null
   cards: KanbanCard[]
   fetchedAt: number

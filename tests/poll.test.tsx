@@ -52,7 +52,12 @@ const syncOf = (
 })
 
 const saved = (savedCards: KanbanCard[], key = `cache:${CWD}`) => ({
-  [key]: { shape: 'cache-1', backend: { kind: 'local' }, cards: savedCards },
+  [key]: {
+    shape: 'cache-2',
+    mode: 'auto',
+    backend: { kind: 'local' },
+    cards: savedCards,
+  },
 })
 
 const SAVED_CARD = cardOf(9, 'human', {
@@ -260,7 +265,8 @@ test('a load saves the board for the next time the pane opens', async ($, on) =>
   const entry = JSON.parse(store.get(`cache:${CWD}`) ?? 'null')
 
   expect(entry).toMatchObject({
-    shape: 'cache-1',
+    shape: 'cache-2',
+    mode: 'auto',
     backend: { kind: 'local' },
     cards: expect.arrayContaining([
       expect.objectContaining({ id: 'md:0001-login', column: 'human' }),

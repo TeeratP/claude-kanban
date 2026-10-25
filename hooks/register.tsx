@@ -1,15 +1,25 @@
 import type { Register } from 'claude-code'
 
 import { readUi } from './atoms'
-import { bootstrap, inBackground, openBoard, refreshAfter } from './board'
+import { backendMode } from './backend'
+import {
+  applyMode,
+  bootstrap,
+  inBackground,
+  openBoard,
+  refreshAfter,
+} from './board'
 import { guardEdit, guardWrite } from './guard'
 import { S } from './strings'
 import { TOOL_SPECS, runTool } from './tools'
 import { handleBoardScroll, renderBoard } from './view-board'
 import { renderDetail } from './view-detail'
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const mode = backendMode(options.backend)
+
   on('session.start', async ($, e, next) => {
+    await applyMode($, mode)
     await $.command.register({
       name: 'kanban',
       description: S.commandDescription,

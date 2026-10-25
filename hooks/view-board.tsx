@@ -91,10 +91,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const draw = (row: Row) => {
     switch (row.kind) {
       case 'toolbar': {
-        const label =
-          board.backend?.kind === 'github'
-            ? S.backendGithub(board.backend.repo)
-            : S.backendLocal
+        const label = S.backendLabel(board.mode, board.backend?.kind)
         const status =
           board.error ??
           (board.isLoading

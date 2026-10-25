@@ -5,5 +5,14 @@
   "author": {
     "name": "TeeratP"
   },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "backend": {
+      "type": "string",
+      "title": "Card backend",
+      "description": "Where cards live. auto: GitHub when CLAUDE.md names a repo and project board and gh is signed in, otherwise local .kanban/ files. github: GitHub only, a failing check is shown instead of falling back. local: always .kanban/ files.",
+      "options": ["auto", "github", "local"],
+      "default": "auto"
+    }
+  }
 }
