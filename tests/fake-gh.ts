@@ -68,10 +68,18 @@ export function fakeEngine(
   return { $, calls, logs }
 }
 
-/** Answers the engine's `process.run` event from routes and records each command. */
-export function fakeProcess(on: On, routes: readonly Route[]) {
+/**
+ * Answers the engine's `process.run` event from routes and records each command.
+ * Every answer waits for `hold`, when given: the first load stays unanswered.
+ */
+export function fakeProcess(
+  on: On,
+  routes: readonly Route[],
+  hold?: Promise<void>,
+) {
   const calls: Call[] = []
-  on('process.run', (_, e) => {
+  on('process.run', async (_, e) => {
+    await hold
     const call = {
       argv: e.argv,
       ...(e.init?.stdin === undefined ? {} : { stdin: e.init.stdin }),

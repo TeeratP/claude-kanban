@@ -69,9 +69,9 @@ The `backend` setting picks which. You choose it on the settings screen at insta
 | `github` | GitHub only. If a check fails there is no silent fallback: the toolbar shows the failing check and how to fix it (for example `gh auth login`, or add the board IDs to CLAUDE.md). |
 | `local` | Always `.kanban/*.md`, even when GitHub is available. |
 
-The toolbar names the active backend and, for `auto`, says so: `GitHub (auto)` or `Local`.
+The toolbar names the active backend and, when `auto` chose it, says so: `GitHub (auto)`, `Local (auto)`, or just `GitHub` / `Local` when you set it.
 
-**Switching backends does not migrate cards.** Cards created on GitHub stay on GitHub and `.kanban/` files stay on disk; the board shows only the active backend's cards. When the backend changes, the cached board for the directory is dropped so cards from the old one never show.
+**Switching backends does not migrate cards.** Cards created on GitHub stay on GitHub and `.kanban/` files stay on disk; the board shows only the active backend's cards. When the backend changes, the board and the saved copy of it from the old setting are set aside, so cards from the old one never show.
 
 ### How GitHub is detected
 

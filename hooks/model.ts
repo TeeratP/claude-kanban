@@ -20,6 +20,7 @@ export const COLUMNS: readonly KanbanColumn[] = [
 ]
 
 export const EMPTY_BOARD: KanbanBoard = {
+  mode: 'auto',
   backend: null,
   cards: [],
   fetchedAt: 0,

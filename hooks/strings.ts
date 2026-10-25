@@ -1,4 +1,9 @@
-import type { KanbanCard, KanbanColumn, KanbanTag } from '../types'
+import type {
+  KanbanBackendMode,
+  KanbanCard,
+  KanbanColumn,
+  KanbanTag,
+} from '../types'
 
 const COL = {
   human: 'Human',
@@ -6,6 +11,8 @@ const COL = {
   backlog: 'Backlog',
   done: 'Done',
 } satisfies Record<KanbanColumn, string>
+
+const BACKEND = { github: 'GitHub', local: 'Local' } as const
 
 // Every string the person or the model reads lives here.
 export const S = {
@@ -26,8 +33,6 @@ export const S = {
   more: (dir: 'up' | 'down', n: number) =>
     `  ${dir === 'up' ? '↑' : '↓'} ${n} more`,
 
-  backendLocal: 'local',
-  backendGithub: (repo: string) => repo,
   refresh: '↻',
   loading: 'loading…',
   updated: (age: string) => `updated ${age}`,
@@ -180,4 +185,20 @@ export const S = {
     `Resume kanban card #${n}: read the newest feedback (mcp__kanban__kanban_show) and continue.`,
   promptFailed: (reason: string) =>
     `kanban: could not send the prompt to Claude: ${reason}`,
+
+  // #10
+  backendLabel: (mode: KanbanBackendMode, kind?: 'github' | 'local') => {
+    const name = kind ?? mode
+
+    return name === 'auto'
+      ? ''
+      : `${BACKEND[name]}${mode === 'auto' ? ' (auto)' : ''}`
+  },
+  githubNoProject: 'CLAUDE.md needs a Repo and a Project board line',
+  githubSignedOut: (reason: string) =>
+    `gh auth status failed: run gh auth login (${reason})`,
+  githubNoRemote: (reason: string) =>
+    `no origin remote: run git remote add origin <url> (${reason})`,
+  githubProjectFailed: (reason: string) =>
+    `project board: ${reason}; check the IDs in CLAUDE.md`,
 }

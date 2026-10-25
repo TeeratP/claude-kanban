@@ -2,21 +2,23 @@ import type { EngineInterface, Timer } from 'claude-code'
 
 import type {
   KanbanBackendInfo,
+  KanbanBackendMode,
   KanbanBoard,
   KanbanCard,
   KanbanSync,
 } from '../types'
 import { readBoard, readSync, updateBoard } from './atoms'
-import { detectBackend, loadCards } from './backend'
-import { PANE, errorMessage, isKanbanFile } from './model'
+import { backendMode, detectBackend, loadCards } from './backend'
+import { EMPTY_BOARD, PANE, errorMessage, isKanbanFile } from './model'
 import { S } from './strings'
 
 const POLL_MS = 45_000
-const CACHE_SHAPE = 'cache-1'
+const CACHE_SHAPE = 'cache-2'
 
 // What the pane opens with before the first load of a session answers.
 type BoardCache = {
   shape: typeof CACHE_SHAPE
+  mode: KanbanBackendMode
   backend: KanbanBackendInfo
   cards: KanbanCard[]
 }
@@ -40,6 +42,24 @@ export async function setBoard(
   updateStatusLine($, board.cards)
 
   return board
+}
+
+/**
+ * Makes the board the one for this `backend` setting. A board kept from
+ * another setting (the plugin reloads when the setting changes, the board does
+ * not) is dropped, so its cards never show under the new one.
+ */
+export async function applyMode(
+  $: EngineInterface,
+  mode: KanbanBackendMode,
+): Promise<void> {
+  const seen = { isReset: false }
+  const board = await updateBoard($, current => {
+    seen.isReset = current.mode !== mode
+
+    return seen.isReset ? { ...EMPTY_BOARD, mode } : current
+  })
+  if (seen.isReset) updateStatusLine($, board.cards)
 }
 
 /**
@@ -119,10 +139,11 @@ const cacheKey = (cwd: string) => `cache:${cwd}`
 
 function isBoardCache(value: unknown): value is BoardCache {
   if (typeof value !== 'object' || value === null) return false
-  const { shape, backend, cards } = value as Record<string, unknown>
+  const { shape, mode, backend, cards } = value as Record<string, unknown>
 
   return (
     shape === CACHE_SHAPE &&
+    backendMode(mode) === mode &&
     typeof backend === 'object' &&
     backend !== null &&
     Array.isArray(cards)
@@ -135,6 +156,7 @@ async function saveCache($: EngineInterface, board: KanbanBoard) {
   try {
     const entry: BoardCache = {
       shape: CACHE_SHAPE,
+      mode: board.mode,
       backend: board.backend,
       cards: board.cards,
     }
@@ -147,7 +169,7 @@ async function saveCache($: EngineInterface, board: KanbanBoard) {
 /**
  * Shows the cards saved from the last load while the first load of this session
  * runs. They are not "fetched": a tool must not take them for the board, so
- * `fetchedAt` stays 0.
+ * `fetchedAt` stays 0. Cards saved under another `backend` setting are not shown.
  */
 async function showCached($: EngineInterface) {
   try {
@@ -155,7 +177,9 @@ async function showCached($: EngineInterface) {
     if (!isBoardCache(cached)) return
 
     await setBoard($, board =>
-      board.fetchedAt === 0 && board.cards.length === 0
+      board.fetchedAt === 0 &&
+      board.cards.length === 0 &&
+      board.mode === cached.mode
         ? {
             ...board,
             backend: board.backend ?? cached.backend,
@@ -173,10 +197,10 @@ async function showCached($: EngineInterface) {
 export async function ensureBackend(
   $: EngineInterface,
 ): Promise<KanbanBackendInfo> {
-  const { backend } = await readBoard($)
+  const { backend, mode } = await readBoard($)
   if (backend !== null) return backend
 
-  const info = await detectBackend($)
+  const info = await detectBackend($, mode)
   await setBoard($, board => ({ ...board, backend: info }))
 
   return info
@@ -188,7 +212,6 @@ export async function ensureBackend(
  * from a read of its own.
  */
 export async function ensureBoard($: EngineInterface): Promise<KanbanBoard> {
-  await ensureBackend($)
   const board = await readBoard($)
 
   return board.fetchedAt === 0 ? refresh($) : board

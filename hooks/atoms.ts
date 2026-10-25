@@ -9,7 +9,7 @@ import { EMPTY_BOARD, INITIAL_UI } from './model'
 // file goes through these accessors. Bump a shape tag whenever its value's
 // type changes.
 const board = atom({ plugin: 'kanban', key: 'board' } as const, EMPTY_BOARD, {
-  shape: 'board-1',
+  shape: 'board-2',
 })
 const ui = atom({ plugin: 'kanban', key: 'ui' } as const, INITIAL_UI, {
   shape: 'ui-1',
