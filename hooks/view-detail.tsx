@@ -1,6 +1,12 @@
 import type { EngineInterface, RenderInput } from 'claude-code'
 
-import type { KanbanDetail, KanbanSync, KanbanView } from '../types'
+import type {
+  KanbanCard,
+  KanbanColumn,
+  KanbanDetail,
+  KanbanSync,
+  KanbanView,
+} from '../types'
 import {
   agentsOf,
   colorOf,
@@ -14,13 +20,23 @@ import {
   readDetailState,
   readSync,
   readUi,
+  updateBoard,
   updateDetailState,
   updateUi,
 } from './atoms'
 import { appendSection, readDetail, readDiff } from './backend'
 import { ensureBackend } from './board'
 import { formatAnswer, formatFeedback, questionOf } from './handoff'
-import { COLUMNS, MAX_ATTEMPTS, ageLabel, capDiff, errorMessage } from './model'
+import { queueAfter, queueAt, queueStep } from './layout'
+import {
+  COLUMNS,
+  MAX_ATTEMPTS,
+  PANE,
+  SETTLE_MS,
+  ageLabel,
+  capDiff,
+  errorMessage,
+} from './model'
 import { S } from './strings'
 import { moveCard, moveOptions, retry } from './sync'
 import { renderCheck } from './view-check'
@@ -29,6 +45,17 @@ type DetailView = Extract<KanbanView, { mode: 'detail' }>
 
 // Cards being sent back, so a second Enter or press cannot append twice.
 const sending = new Set<string>()
+
+// The card the review last moved on to by itself, and when.
+let advanced: { cardId: string; at: number } | undefined
+
+// Whether the review moved on to this card just now: its decisions wait.
+async function isSettling($: EngineInterface, cardId: string) {
+  return (
+    advanced?.cardId === cardId &&
+    (await $.clock.now()) - advanced.at < SETTLE_MS
+  )
+}
 
 // A slower read of another card must not land on the one now shown.
 function fillDetail(
@@ -83,6 +110,58 @@ export async function closeDetail($: EngineInterface) {
   const view: KanbanView = { mode: 'board' }
   await updateUi($, ui => ({ ...ui, view }))
   await updateDetailState($, () => null)
+}
+
+// After a decision the review moves on to the next Human card, or back to the
+// board when none is left; not when the person has already gone elsewhere. The
+// queue is read after the move, since cards come and go while the card is open.
+async function advance($: EngineInterface, decided: KanbanCard) {
+  const { view } = await updateUi($, ui => ui)
+  if (view.mode !== 'detail' || view.cardId !== decided.id) return
+
+  const { cards } = await updateBoard($, board => board)
+  const next = queueAfter(cards, decided)
+  if (next === undefined) {
+    await closeDetail($)
+
+    return
+  }
+
+  advanced = { cardId: next, at: await $.clock.now() }
+  await openDetail($, next)
+}
+
+/** Moves a Human card out of Human, then opens the next Human card, or the board when none is left. */
+export async function decide(
+  $: EngineInterface,
+  cardId: string,
+  to: KanbanColumn,
+) {
+  if (await isSettling($, cardId)) return
+
+  const { cards } = await readBoard($)
+  const card = cards.find(one => one.id === cardId)
+  if (card?.column !== 'human') return
+
+  await moveCard($, cardId, to)
+  await advance($, card)
+}
+
+/** Opens the Human card `step` places from this one, wrapping at the ends. */
+export async function stepQueue(
+  $: EngineInterface,
+  cardId: string,
+  step: 1 | -1,
+) {
+  const { cards } = await readBoard($)
+  const next = queueStep(cards, cardId, step)
+  if (next !== undefined) await openDetail($, next)
+}
+
+/** Moves the focus to the feedback field; the surface may refuse. */
+export async function focusFeedback($: EngineInterface) {
+  const { deny } = await $.ui.focus({ requestId: PANE, key: 'feedback' })
+  if (deny !== undefined) $.ui.toast(S.focusFailed(deny))
 }
 
 async function loadDiff($: EngineInterface, cardId: string) {
@@ -143,6 +222,8 @@ export async function sendBack(
   cardId: string,
   text: string,
 ) {
+  if (await isSettling($, cardId)) return
+
   const feedback = text.trim()
   const isAsk =
     (await readBoard($)).cards.find(one => one.id === cardId)?.tag ===
@@ -184,10 +265,10 @@ export async function sendBack(
     }
 
     await updateUi($, ui => ({ ...ui, draft: '' }))
-    await closeDetail($)
     await moveCard($, cardId, 'claude', {
       onConfirm: isAsk ? 'answer' : 'resume',
     })
+    await advance($, card)
   } finally {
     sending.delete(cardId)
   }
@@ -229,18 +310,32 @@ export async function renderDetail(
 
   const entry = sync[card.id]
   const worked = activity.cards[card.id]
+  const isHuman = card.column === 'human'
+  const queue = isHuman ? queueAt(board.cards, card.id) : undefined
+  const canWalk = queue !== undefined && queue.total > 1
   const meta = [
-    S.col[card.column],
+    queue === undefined
+      ? S.col[card.column]
+      : S.queuePosition(queue.index + 1, queue.total),
     ageLabel(card.updatedAt, now),
     entry === undefined ? '' : syncNote(entry),
   ].filter(part => part !== '')
   const isReady = detail?.cardId === card.id && !detail.isLoading
   const hasDiff = (card.prNumbers?.length ?? 0) > 0
   const tab = hasDiff ? view.tab : 'card'
-  const isHuman = card.column === 'human'
   const isAsk = isHuman && card.tag === 'question'
   // The question being asked, once the card's sections are read.
   const asking = isReady && isAsk ? questionOf(detail.sections) : undefined
+  const hint = [
+    S.reviewKeys.approve,
+    ...(Input === undefined
+      ? []
+      : [isAsk ? S.reviewKeys.answer : S.reviewKeys.sendBack]),
+    S.reviewKeys.park,
+    ...(Input === undefined ? [] : [S.reviewKeys.write]),
+    ...(canWalk ? [S.reviewKeys.next, S.reviewKeys.prev] : []),
+    S.reviewKeys.board,
+  ]
 
   const drawDiff = (shown: KanbanDetail) => {
     switch (shown.diffState) {
@@ -269,7 +364,25 @@ export async function renderDetail(
 
   return (
     <Box flexDirection="column">
-      {back}
+      <Box flexDirection="row" gap={1}>
+        {back}
+        {canWalk && (
+          <Button
+            key="prev"
+            hotkey="k"
+            label={S.prevCard}
+            onPress={() => stepQueue($, card.id, -1)}
+          />
+        )}
+        {canWalk && (
+          <Button
+            key="next"
+            hotkey="n"
+            label={S.nextCard}
+            onPress={() => stepQueue($, card.id, 1)}
+          />
+        )}
+      </Box>
       <Text weight="bold">{`#${card.number} ${card.title}`}</Text>
       <Text dimColor>{meta.join(' · ')}</Text>
       {worked !== undefined && (
@@ -312,7 +425,7 @@ export async function renderDetail(
             hotkey="a"
             variant="primary"
             label={S.approve}
-            onPress={() => moveCard($, card.id, 'done')}
+            onPress={() => decide($, card.id, 'done')}
           />
           {Input !== undefined && (
             <Button
@@ -328,12 +441,20 @@ export async function renderDetail(
             key="park"
             hotkey="p"
             label={S.park}
-            onPress={() => moveCard($, card.id, 'backlog')}
+            onPress={() => decide($, card.id, 'backlog')}
           />
         </Box>
       )}
       {isHuman && Input === undefined && (
         <Text dimColor>{isAsk ? S.answerNoField : S.sendBackNoField}</Text>
+      )}
+      {isHuman && Input !== undefined && (
+        <Button
+          key="focus"
+          hotkey="f"
+          label={isAsk ? S.focusAnswer : S.focusFeedback}
+          onPress={() => focusFeedback($)}
+        />
       )}
       {isHuman && Input !== undefined && (
         <Input
@@ -346,6 +467,7 @@ export async function renderDetail(
           onSubmit={value => sendBack($, card.id, value)}
         />
       )}
+      {isHuman && <Text dimColor>{S.reviewHint(hint)}</Text>}
       <Box flexDirection="row" gap={1}>
         <Text dimColor>{S.moveTo}</Text>
         {COLUMNS.filter(column => column !== card.column).map(column => (

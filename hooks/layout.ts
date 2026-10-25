@@ -36,6 +36,45 @@ export function sectionList(
   return inColumn.sort((a, b) => a.order - b.order || a.number - b.number)
 }
 
+/** Where a card stands in the Human queue, which is the section's order; none if it is not in it. */
+export function queueAt(
+  cards: readonly KanbanCard[],
+  cardId: string,
+): { index: number; total: number } | undefined {
+  const list = sectionList(cards, 'human')
+  const index = list.findIndex(card => card.id === cardId)
+
+  return index < 0 ? undefined : { index, total: list.length }
+}
+
+/** The Human card `step` places from a card, wrapping at the ends; none when it has no other. */
+export function queueStep(
+  cards: readonly KanbanCard[],
+  cardId: string,
+  step: 1 | -1,
+): string | undefined {
+  const list = sectionList(cards, 'human')
+  const index = list.findIndex(card => card.id === cardId)
+  if (index < 0 || list.length < 2) return undefined
+
+  return list[(index + step + list.length) % list.length]?.id
+}
+
+/** The Human card after `card` in the queue, wrapping to the first; `card` may have left Human already. */
+export function queueAfter(
+  cards: readonly KanbanCard[],
+  card: KanbanCard,
+): string | undefined {
+  const rest = sectionList(cards, 'human').filter(one => one.id !== card.id)
+  const after = rest.find(
+    one =>
+      one.order > card.order ||
+      (one.order === card.order && one.number > card.number),
+  )
+
+  return (after ?? rest[0])?.id
+}
+
 export function openCount(ui: KanbanUi): number {
   return COLUMNS.filter(column => !ui.collapsed[column]).length
 }

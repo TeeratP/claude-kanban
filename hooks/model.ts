@@ -17,6 +17,9 @@ export const MAX_ATTEMPTS = 4
 // A confirmed move shows a bright tick for this long, a dim one for as long again.
 export const TICK_BRIGHT_MS = 1000
 export const TICK_SHOWN_MS = 2000
+// A card the review has just moved on to ignores decisions for this long, so a
+// key pressed twice, or held, decides one card and not two.
+export const SETTLE_MS = 600
 
 // Top to bottom on the board.
 export const COLUMNS: readonly KanbanColumn[] = [

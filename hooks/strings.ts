@@ -248,6 +248,27 @@ export const S = {
   checkField: { command: 'Command', result: 'Result', output: 'Output' },
   checkLogFailed: (reason: string) => `kanban: a check run failed: ${reason}`,
 
+  // #18
+  queuePosition: (at: number, total: number) =>
+    `${COL.human} ${at} of ${total}`,
+  prevCard: '‹ Prev',
+  nextCard: 'Next ›',
+  focusFeedback: 'Write feedback',
+  focusAnswer: 'Write answer',
+  focusFailed: (reason: string) =>
+    `Could not move to the feedback box: ${reason}`,
+  reviewHint: (keys: readonly string[]) => keys.join(' · '),
+  reviewKeys: {
+    approve: 'a approve',
+    sendBack: 's send back',
+    answer: 's answer',
+    park: 'p park',
+    write: 'f write',
+    next: 'n next',
+    prev: 'k prev',
+    board: 'b board',
+  },
+
   // #15
   // Short: they share a 44-column toolbar with the backend label.
   rateLimitHit: (minutes: number) => `limit hit · paused ${minutes}m`,
