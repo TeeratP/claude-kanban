@@ -1,4 +1,10 @@
-import type { KanbanBoard, KanbanCard, KanbanColumn, KanbanUi } from '../types'
+import type {
+  KanbanActivity,
+  KanbanBoard,
+  KanbanCard,
+  KanbanColumn,
+  KanbanUi,
+} from '../types'
 
 export const PANE = 'kanban'
 export const KANBAN_DIR = '.kanban'
@@ -25,6 +31,12 @@ export const EMPTY_BOARD: KanbanBoard = {
   cards: [],
   fetchedAt: 0,
   isLoading: false,
+}
+
+export const EMPTY_ACTIVITY: KanbanActivity = {
+  cards: {},
+  live: { cardId: '', since: 0, isRunning: false },
+  agents: {},
 }
 
 export const INITIAL_UI: KanbanUi = {

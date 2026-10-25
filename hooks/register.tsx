@@ -1,5 +1,13 @@
 import type { Register } from 'claude-code'
 
+import {
+  restoreActivity,
+  watchSpawn,
+  watchStep,
+  watchTool,
+  watchTurnEnd,
+  watchTurnStart,
+} from './activity'
 import { readUi } from './atoms'
 import { backendMode } from './backend'
 import {
@@ -23,6 +31,16 @@ import { renderDetail } from './view-detail'
 export const register: Register = (on, options) => {
   const mode = backendMode(options.backend)
 
+  // Watching Claude work on a card never alters what it watches. These stand
+  // first, so they wrap the tools below and see their results.
+  on('tool.call', watchTool).catch(($, e, next) => next(e))
+  on('agent.spawn', watchSpawn).catch(($, e, next) => next(e))
+  on('turn.start', watchTurnStart).catch(($, e, next) => next(e))
+  on('turn.step', watchStep).catch(async function* ($, e, next) {
+    return yield* next(e)
+  })
+  on('turn.complete', watchTurnEnd).catch(($, e, next) => next(e))
+
   on('session.start', async ($, e, next) => {
     await applyMode($, mode)
     await $.command.register({
@@ -32,6 +50,7 @@ export const register: Register = (on, options) => {
     for (const spec of TOOL_SPECS) await $.tool.register(spec)
     inBackground($, bootstrap($))
     inBackground($, resumePendingSyncs($))
+    inBackground($, restoreActivity($))
 
     return next(e)
   })

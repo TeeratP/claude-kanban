@@ -2,6 +2,14 @@ import type { EngineInterface, RenderInput } from 'claude-code'
 
 import type { KanbanDetail, KanbanSync, KanbanView } from '../types'
 import {
+  agentsOf,
+  colorOf,
+  liveTotals,
+  roundLabel,
+  totalLabel,
+} from './activity-view'
+import {
+  readActivity,
   readBoard,
   readDetailState,
   readSync,
@@ -180,6 +188,7 @@ export async function renderDetail(
   const ui = await readUi($)
   const detail = await readDetailState($)
   const sync = await readSync($)
+  const activity = await readActivity($)
   const now = await $.clock.now()
   const card = board.cards.find(one => one.id === view.cardId)
 
@@ -201,6 +210,7 @@ export async function renderDetail(
   }
 
   const entry = sync[card.id]
+  const worked = activity.cards[card.id]
   const meta = [
     S.col[card.column],
     ageLabel(card.updatedAt, now),
@@ -236,6 +246,28 @@ export async function renderDetail(
       {back}
       <Text weight="bold">{`#${card.number} ${card.title}`}</Text>
       <Text dimColor>{meta.join(' · ')}</Text>
+      {worked !== undefined && (
+        <Box flexDirection="column">
+          <Text>
+            <Text dimColor>{`${S.agentsHeading}:`}</Text>
+            {agentsOf(worked).map(name => (
+              <Text key={name}>
+                {' '}
+                <Text color={colorOf(name)}>{S.agentDot}</Text>
+                {` ${name}`}
+              </Text>
+            ))}
+          </Text>
+          <Text dimColor>
+            {totalLabel(liveTotals(worked, activity.live, now))}
+          </Text>
+          {worked.rounds.map((round, index) => (
+            <Text key={`round:${index}`} dimColor>
+              {roundLabel(index + 1, round)}
+            </Text>
+          ))}
+        </Box>
+      )}
       {entry?.phase === 'failed' && (
         <Button
           key="retry"

@@ -204,4 +204,20 @@ export const S = {
   // #11
   keyHint: '↑↓ ⏎ open · m move',
   moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
+
+  // #17
+  mainAgent: 'Claude',
+  agentDot: '●',
+  agentsMore: (n: number) => `+${n}`,
+  toolRunning: (tool: string) => `⟳ ${tool}`,
+  working: '⟳ working',
+  idle: (age: string) => (age === 'now' ? 'idle' : `idle ${age}`),
+  statsSep: ' · ',
+  tokens: (label: string) => `${label} tok`,
+  cached: (label: string) => `${label} cached`,
+  agentsHeading: 'Agents',
+  totalHeading: 'Total',
+  roundHeading: (n: number) => `Round ${n}`,
+  activityFailed: (reason: string) =>
+    `kanban: could not record Claude's activity: ${reason}`,
 }

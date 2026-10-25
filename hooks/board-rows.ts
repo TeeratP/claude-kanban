@@ -14,6 +14,8 @@ export type RowViewInput = {
     card: KanbanCard,
   ) => { text: string; color: string; dim: boolean } | undefined
   ageOf: (card: KanbanCard) => string
+  /** The pieces of a Claude card's second row. */
+  detailOf: (card: KanbanCard) => Seg[]
 }
 
 /** A message the board's Client posts, checked: it came from code, not a fact. */
@@ -45,7 +47,7 @@ const moveKeysOf = (column: KanbanColumn) => [
 
 /** The list rows (everything under the toolbar) as the Client draws them. */
 export function toRowViews(input: RowViewInput): RowView[] {
-  const { columns, collapsed, glyphOf, ageOf } = input
+  const { columns, collapsed, glyphOf, ageOf, detailOf } = input
   const views: RowView[] = []
 
   for (const row of input.rows) {
@@ -104,6 +106,14 @@ export function toRowViews(input: RowViewInput): RowView[] {
         })
         break
       }
+
+      case 'detail':
+        views.push({
+          key: `act:${row.card.id}`,
+          kind: 'text',
+          ...view(detailOf(row.card)),
+        })
+        break
 
       case 'empty':
         views.push({
