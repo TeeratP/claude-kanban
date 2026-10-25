@@ -76,13 +76,20 @@ export function queuePlace(
   return index < 0 ? undefined : index + 1
 }
 
-/** The count a section header shows: Claude's load against its limit, when it has one. */
+/**
+ * The count a section header shows: the cards the filter lets through out of
+ * all of them while filtering, else Claude's load against its limit when it
+ * has one.
+ */
 export function headerCount(
   column: KanbanColumn,
   shown: number,
   total: number,
   view: QueueView,
+  isFiltered = false,
 ): string {
+  if (isFiltered) return S.filterCount(shown, total)
+
   return column === 'claude' && view.limit > 0
     ? S.claudeCount(view.running, view.limit, view.waiting.length)
     : S.count(shown, total)

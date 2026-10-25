@@ -70,6 +70,10 @@ export type KanbanUi = {
   offsets: Record<KanbanColumn, number>
   collapsed: Record<KanbanColumn, boolean>
   draft: string
+  /** The filter query applied to the board ('' for none); kept for the session only. */
+  filter: string
+  /** Whether the filter's text field is shown. */
+  isFilterOpen: boolean
 }
 export type KanbanQuickAdd = {
   isOpen: boolean

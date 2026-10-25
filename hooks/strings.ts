@@ -378,4 +378,13 @@ export const S = {
   suggestWhy: (why: string) => `Why: ${why}`,
   suggestionsNotSaved: (reason: string) =>
     `kanban: could not save the suggestions: ${reason}`,
+
+  // #25
+  filter: '🔍',
+  filterLabel: 'Filter',
+  filterPlaceholder: 'words, #12, label:ai, @claude',
+  filterSubmit: 'done',
+  filterClear: '✕',
+  filterCount: (shown: number, total: number) => `${shown}/${total}`,
+  noMatches: '  (no matches)',
 }

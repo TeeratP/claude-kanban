@@ -11,6 +11,8 @@ export type RowViewInput = {
   rows: readonly Row[]
   columns: number
   collapsed: Readonly<Record<KanbanColumn, boolean>>
+  /** Whether a filter is on: headers then count what it lets through. */
+  isFiltered: boolean
   /** The sync mark a card shows, if any. */
   glyphOf: (
     card: KanbanCard,
@@ -55,7 +57,8 @@ const moveKeysOf = (column: KanbanColumn) => [
 
 /** The list rows (everything under the toolbar) as the Client draws them. */
 export function toRowViews(input: RowViewInput): RowView[] {
-  const { columns, collapsed, glyphOf, ageOf, detailOf, queue } = input
+  const { columns, collapsed, isFiltered, glyphOf, ageOf, detailOf, queue } =
+    input
   const views: RowView[] = []
 
   for (const row of input.rows) {
@@ -76,9 +79,10 @@ export function toRowViews(input: RowViewInput): RowView[] {
             seg(`${collapsed[row.column] ? S.expand : S.collapse} `),
             seg(S.col[row.column], { bold: true }),
             seg(' '),
-            seg(headerCount(row.column, row.shown, row.total, queue), {
-              dim: true,
-            }),
+            seg(
+              headerCount(row.column, row.shown, row.total, queue, isFiltered),
+              { dim: true },
+            ),
           ]),
         })
         break
@@ -135,7 +139,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
           key: `empty:${row.column}`,
           kind: 'text',
           column: row.column,
-          ...view([seg(S.empty, { dim: true })]),
+          ...view([seg(isFiltered ? S.noMatches : S.empty, { dim: true })]),
         })
         break
 

@@ -17,7 +17,9 @@ import {
 import { refresh } from './board'
 import type { BoardProps } from './board-client'
 import { parseBoardMessage, toRowViews } from './board-rows'
+import { isFiltering } from './filter'
 import {
+  applyFilter,
   capFor,
   cardLine,
   clampOffset,
@@ -28,7 +30,7 @@ import {
   sectionList,
 } from './layout'
 import type { Row } from './layout'
-import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
+import { TICK_BRIGHT_MS, ageLabel, cellWidth, oneLine, truncate } from './model'
 import { headerCount, queuePlace, queueView } from './queue'
 import { toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
@@ -37,6 +39,7 @@ import { S } from './strings'
 import { stripRows } from './suggest'
 import { retryAll } from './sync'
 import { openDetail } from './view-detail'
+import { clearFilter, renderFilter, toggleFilter } from './view-filter'
 import { renderQuickAdd } from './view-quick-add'
 import { renderSuggestions } from './view-suggest'
 
@@ -76,7 +79,6 @@ async function scrollSection(
   delta: (cap: number) => number,
 ): Promise<boolean> {
   const { cards } = await readBoard($)
-  const len = sectionList(cards, column).length
   const details = detailIds(
     cards,
     await readActivity($),
@@ -85,10 +87,13 @@ async function scrollSection(
 
   const seen = { isMoved: false }
   await updateUi($, ui => {
+    // The window moves over the cards the filter lets through.
+    const view = applyFilter(cards, ui)
+    const len = sectionList(view.cards, column).length
     const cap = capFor(
       bodyRows,
-      openCount(ui),
-      detailReserve(cards, ui, details),
+      openCount(view.ui),
+      detailReserve(view.cards, view.ui, details),
     )
     const shown = clampOffset(ui.offsets[column], len, cap)
     const offset = clampOffset(shown + delta(cap), len, cap)
@@ -108,8 +113,9 @@ async function keepInView(
   column: KanbanColumn,
   at: { index: number; length: number },
 ): Promise<void> {
+  const { cards } = await readBoard($)
   await updateUi($, ui => {
-    const cap = capFor(lastBody.bodyRows, openCount(ui))
+    const cap = capFor(lastBody.bodyRows, openCount(applyFilter(cards, ui).ui))
     const shown = clampOffset(ui.offsets[column], at.length, cap)
     const offset =
       at.index < shown
@@ -134,8 +140,8 @@ export async function handleBoardScroll(
 ): Promise<boolean> {
   const ui = await readUi($)
   if (ui.view.mode !== 'board' || e.pointer === undefined) return false
-  // The open form pushes the list down by rows the layout does not know.
-  if ((await readQuickAdd($)).isOpen) return false
+  // An open form or filter field pushes the list down by rows the layout does not know.
+  if ((await readQuickAdd($)).isOpen || ui.isFilterOpen) return false
 
   const { cards } = await readBoard($)
   const rows = layoutBoard({
@@ -147,7 +153,9 @@ export async function handleBoardScroll(
   // The suggestions sit between the toolbar and the list, outside the layout.
   const strip = stripRows((await readSuggestions($)).length)
   const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
-  if (column === undefined || ui.collapsed[column]) return false
+  if (column === undefined || applyFilter(cards, ui).ui.collapsed[column]) {
+    return false
+  }
 
   const step = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by)))
 
@@ -167,10 +175,21 @@ export async function handleBoardMessage(
       await openDetail($, message.cardId)
       break
     case 'drop':
-      await dropCard($, message.cardId, message.column, message.place)
+      await dropCard(
+        $,
+        message.cardId,
+        message.column,
+        message.place,
+        (await readUi($)).filter,
+      )
       break
     case 'shift': {
-      const moved = await shiftCard($, message.cardId, message.dir)
+      const moved = await shiftCard(
+        $,
+        message.cardId,
+        message.dir,
+        (await readUi($)).filter,
+      )
       if (moved !== undefined) await keepInView($, moved.column, moved)
       break
     }
@@ -201,6 +220,12 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   // Terminal and desktop draw the list through a Client, which takes the keys.
   const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
   const canAdd = e.surface !== 'mobile'
+  // The text fields are the same ones: the mobile app has none.
+  const canFilter = canAdd
+  const isFiltered = isFiltering(ui.filter)
+  // The sections as drawn: a collapsed one with a match is open while filtering.
+  const { ui: shown } = applyFilter(board.cards, ui)
+  const filterField = await renderFilter($, e)
   const quickAdd = await renderQuickAdd($, e)
   const suggested = await renderSuggestions($, e)
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
@@ -231,19 +256,33 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
                 ? ''
                 : S.updated(ageLabel(board.fetchedAt, now)))
         const retryLabel = S.retryAll(failed.length)
-        const room =
+        const spare =
           columns -
           1 -
           (canAdd ? cellWidth(S.add) + 1 : 0) -
+          (canFilter ? cellWidth(S.filter) + 1 : 0) -
+          (isFiltered ? cellWidth(S.filterClear) + 1 : 0) -
           (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1)
+        // The query takes up to half of what is left; the status gets the rest.
+        const query = isFiltered
+          ? ` ${truncate(oneLine(ui.filter), Math.floor(spare / 2))}`
+          : ''
+        const room = spare - cellWidth(query)
         const join = (parts: string[]) =>
           ` ${parts.filter(part => part !== '').join(' · ')}`
         // The key hint shows whole or not at all: a cut hint is noise.
         const withHint = join([label, status, S.keyHint])
+        // A status that fits only without the backend's name is shown whole, not cut.
+        const whole = join([label, status])
+        const bare = join([status])
         const text =
           hasClient && board.error === undefined && cellWidth(withHint) <= room
             ? withHint
-            : truncate(join([label, status]), room)
+            : cellWidth(whole) > room &&
+                status !== '' &&
+                cellWidth(bare) <= room
+              ? bare
+              : truncate(whole, room)
 
         return (
           <Box flexDirection="row">
@@ -259,6 +298,24 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
               >
                 {' '}
                 {S.add}
+              </Button>
+            )}
+            {canFilter && (
+              <Button
+                key="filter"
+                plain
+                hotkey="f"
+                onPress={() => toggleFilter($)}
+              >
+                {' '}
+                {S.filter}
+              </Button>
+            )}
+            {isFiltered && <Text wrap="truncate-end">{query}</Text>}
+            {isFiltered && (
+              <Button key="filter:clear" plain onPress={() => clearFilter($)}>
+                {' '}
+                {S.filterClear}
               </Button>
             )}
             {board.error === undefined ? (
@@ -289,10 +346,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             plain
             onPress={() => toggleSection($, column)}
           >
-            {ui.collapsed[column] ? S.expand : S.collapse}{' '}
+            {shown.collapsed[column] ? S.expand : S.collapse}{' '}
             <Text weight="bold">{S.col[column]}</Text>{' '}
             <Text dimColor>
-              {headerCount(row.column, row.shown, row.total, queue)}
+              {headerCount(row.column, row.shown, row.total, queue, isFiltered)}
             </Text>
           </Button>
         )
@@ -360,7 +417,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       case 'empty':
         return (
           <Text dimColor wrap="truncate-end">
-            {S.empty}
+            {isFiltered ? S.noMatches : S.empty}
           </Text>
         )
 
@@ -380,6 +437,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box flexDirection="column">
         {rows.slice(0, 1).map(draw)}
+        {filterField}
         {quickAdd}
         {suggested}
         {rows.slice(1).map(draw)}
@@ -392,7 +450,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     rows: toRowViews({
       rows,
       columns,
-      collapsed: ui.collapsed,
+      collapsed: shown.collapsed,
+      isFiltered,
       glyphOf: card => {
         const entry = sync[card.id]
 
@@ -408,6 +467,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   return (
     <Box flexDirection="column">
       {draw({ kind: 'toolbar' })}
+      {filterField}
       {quickAdd}
       {suggested}
       <Client

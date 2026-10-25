@@ -1,4 +1,5 @@
 import type { KanbanCard, KanbanColumn, KanbanUi } from '../types'
+import { filterCards, isFiltering } from './filter'
 import { COLUMNS, DONE_LIMIT, cellWidth, padEnd, truncate } from './model'
 import { S } from './strings'
 
@@ -75,6 +76,35 @@ export function queueAfter(
   return (after ?? rest[0])?.id
 }
 
+/**
+ * What the board shows of `cards`: those the filter lets through, and `ui` with
+ * every collapsed section that has a match open. The stored flags stay as they
+ * are, so clearing the filter gives the sections back as they were.
+ */
+export function applyFilter(
+  cards: readonly KanbanCard[],
+  ui: KanbanUi,
+): { cards: readonly KanbanCard[]; ui: KanbanUi } {
+  if (!isFiltering(ui.filter)) return { cards, ui }
+
+  const matched = filterCards(cards, ui.filter)
+  const has = (column: KanbanColumn) =>
+    matched.some(card => card.column === column)
+
+  return {
+    cards: matched,
+    ui: {
+      ...ui,
+      collapsed: {
+        human: ui.collapsed.human && !has('human'),
+        claude: ui.collapsed.claude && !has('claude'),
+        backlog: ui.collapsed.backlog && !has('backlog'),
+        done: ui.collapsed.done && !has('done'),
+      },
+    },
+  }
+}
+
 export function openCount(ui: KanbanUi): number {
   return COLUMNS.filter(column => !ui.collapsed[column]).length
 }
@@ -119,15 +149,20 @@ export function clampOffset(offset: number, len: number, cap: number): number {
 
 export function layoutBoard({
   cards,
-  ui,
+  ui: stored,
   bodyRows,
   details,
 }: LayoutInput): Row[] {
-  const cap = capFor(bodyRows, openCount(ui), detailReserve(cards, ui, details))
+  const { cards: matched, ui } = applyFilter(cards, stored)
+  const cap = capFor(
+    bodyRows,
+    openCount(ui),
+    detailReserve(matched, ui, details),
+  )
   const rows: Row[] = [{ kind: 'toolbar' }]
 
   for (const column of COLUMNS) {
-    const list = sectionList(cards, column)
+    const list = sectionList(matched, column)
     const total = cards.filter(card => card.column === column).length
     rows.push({ kind: 'header', column, shown: list.length, total })
     if (ui.collapsed[column]) continue
