@@ -57,6 +57,8 @@ export function fakeFs(on: On, files: Files) {
     writes: [] as string[],
     denyWrite: undefined as string | undefined,
     denyRead: undefined as string | undefined,
+    // Writes that land before every later one is denied.
+    denyWriteAfter: undefined as number | undefined,
     // While set, a write waits for it: a move stays unsettled for the test to look at.
     hold: undefined as Promise<void> | undefined,
     // While set, a listing waits for it: the first load stays unanswered.
@@ -103,6 +105,11 @@ export function fakeFs(on: On, files: Files) {
   on('fs.write', async (_, e) => {
     await calls.hold
     if (calls.denyWrite !== undefined) return { deny: calls.denyWrite }
+    if (
+      calls.denyWriteAfter !== undefined &&
+      calls.writes.length >= calls.denyWriteAfter
+    )
+      return { deny: 'EIO: disk error' }
 
     const file = relative(e.path)
     files[file] = e.text
@@ -132,6 +139,7 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
   const logs: string[] = []
   const scrolls: { by: number }[] = []
   const registered: string[] = []
+  const prompts: string[] = []
   const world = { panes: [] as string[], opened: [] as string[] }
 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -199,6 +207,11 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
 
     return {}
   })
+  on('prompt.submit', (_, e) => {
+    prompts.push(e.text)
+
+    return { text: e.text }
+  })
   on('tool.call', () => ({ result: {} }))
 
   return {
@@ -210,6 +223,7 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
     logs,
     scrolls,
     registered,
+    prompts,
     world,
     saved,
   }

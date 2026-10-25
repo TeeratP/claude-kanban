@@ -22,7 +22,7 @@ const sync = atom(
   },
 )
 const detail = atom({ plugin: 'kanban', key: 'detail' } as const, null, {
-  shape: 'detail-1',
+  shape: 'detail-2',
 })
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {

@@ -73,6 +73,8 @@ export type KanbanDetail = {
   sections: KanbanSection[]
   diffState: 'none' | 'loading' | 'ready' | 'absent' | 'error'
   diff?: string
+  diffOmitted?: number
+  diffError?: string
   error?: string
 }
 

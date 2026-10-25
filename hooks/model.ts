@@ -3,6 +3,7 @@ import type { KanbanBoard, KanbanCard, KanbanColumn, KanbanUi } from '../types'
 export const PANE = 'kanban'
 export const KANBAN_DIR = '.kanban'
 export const DONE_LIMIT = 10
+export const DIFF_LIMIT = 90_000
 
 // Top to bottom on the board.
 export const COLUMNS: readonly KanbanColumn[] = [
@@ -101,6 +102,24 @@ export function ageLabel(since: string | number, now: number): string {
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h`
 
   return `${Math.floor(minutes / (60 * 24))}d`
+}
+
+/**
+ * Cuts a diff to at most `limit` characters, at the last file boundary so every
+ * kept file is whole (a diff cut mid-hunk does not parse); `omitted` counts
+ * the characters left out.
+ */
+export function capDiff(
+  diff: string,
+  limit = DIFF_LIMIT,
+): { text: string; omitted: number } {
+  if (diff.length <= limit) return { text: diff, omitted: 0 }
+
+  const boundary = diff.lastIndexOf('\ndiff --git', limit)
+  const end = boundary > 0 ? boundary : diff.lastIndexOf('\n', limit)
+  const text = diff.slice(0, Math.max(end, 0))
+
+  return { text, omitted: diff.length - text.length }
 }
 
 export function maxOrder(cards: readonly KanbanCard[], column: KanbanColumn) {
