@@ -7,10 +7,25 @@ import { CWD, PANE, RUN, boot, card, path } from './fakes'
 
 const POLL = 45_000
 
+// Card 3 is moved to Human by these tests, which the handoff rule only allows after a handoff.
+const HANDOFF = [
+  'Spec text.',
+  '',
+  '## Handoff (2026-10-25)',
+  '**Did:** Wrote the docs',
+  '**Check:** Read the README',
+  '**Changed:** README.md',
+  '**Need from you:** Approve',
+].join('\n')
+
 const cards = () => ({
   [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
   [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
+  [path(3, 'docs')]: card(
+    3,
+    { status: 'backlog', title: 'Write docs' },
+    HANDOFF,
+  ),
   [path(4, 'old')]: card(4, { status: 'done', title: 'Old thing' }),
 })
 

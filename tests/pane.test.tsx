@@ -13,12 +13,18 @@ const cards = () => ({
   [path(4, 'old')]: card(4, { status: 'done', title: 'Old thing' }),
 })
 
-test('the session start registers the command and both tools', async ($, on) => {
+test('the session start registers the command and every tool', async ($, on) => {
   const { registered } = boot(on, cards())
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
-  expect(registered).toEqual(['kanban_list', 'kanban_move'])
+  expect(registered).toEqual([
+    'kanban_list',
+    'kanban_show',
+    'kanban_handoff',
+    'kanban_move',
+    'kanban_create',
+  ])
 })
 
 test('/kanban opens the pane and loads the cards', async ($, on) => {

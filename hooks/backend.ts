@@ -6,7 +6,13 @@ import type {
   KanbanColumn,
   KanbanDetail,
 } from '../types'
-import { appendLocal, detailLocal, loadLocal, moveLocal } from './local'
+import {
+  appendLocal,
+  createLocal,
+  detailLocal,
+  loadLocal,
+  moveLocal,
+} from './local'
 import { S } from './strings'
 
 // A backend is a set of plain functions per kind: `$` may only be handed to
@@ -53,6 +59,19 @@ export async function readDetail(
   if (info.kind === 'local') return detailLocal($, card)
 
   throw new Error(S.githubUnavailable)
+}
+
+/** Creates a card and returns it; only the local backend does, GitHub cards come from issues. */
+export async function createCard(
+  $: EngineInterface,
+  info: KanbanBackendInfo,
+  title: string,
+  spec: string,
+  column: KanbanColumn,
+): Promise<KanbanCard> {
+  if (info.kind === 'local') return createLocal($, title, spec, column)
+
+  throw new Error(S.createViaIssueSkill)
 }
 
 /** Picks the backend for this directory; local until the GitHub backend lands. */
