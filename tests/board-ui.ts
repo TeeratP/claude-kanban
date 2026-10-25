@@ -89,3 +89,21 @@ export async function click(ui: BoardUi, key: string): Promise<void> {
   await pointer({ type: 'down', x: 2, y, button: 'left' })
   await pointer({ type: 'up', x: 2, y, button: 'left' })
 }
+
+type Key = Mounted<'terminal'>['key']
+
+/** Sends keys to the Client, one after another, as a person typing them does. */
+export async function keys(ui: BoardUi, ...names: string[]): Promise<void> {
+  const send = (ui as unknown as { key: Key }).key
+  for (const key of names) await send({ key })
+}
+
+/** The keys of the list rows drawn inverse: the cursor, or a drag's target. */
+export async function litRows(ui: BoardUi): Promise<string[]> {
+  const lit: string[] = []
+  for (const key of await rowKeys(ui)) {
+    if ((await rowStyle(ui, key)).inverse === true) lit.push(key)
+  }
+
+  return lit
+}

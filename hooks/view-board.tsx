@@ -130,6 +130,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const now = await $.clock.now()
   const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
+  // Terminal and desktop draw the list through a Client, which takes the keys.
+  const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
 
   const rows = layoutBoard({
@@ -149,9 +151,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             : board.fetchedAt === 0
               ? ''
               : S.updated(ageLabel(board.fetchedAt, now)))
+        const hint = hasClient && board.error === undefined ? S.keyHint : ''
         const retryLabel = S.retryAll(failed.length)
         const text = truncate(
-          ` ${[label, status].filter(part => part !== '').join(' · ')}`,
+          ` ${[label, status, hint].filter(part => part !== '').join(' · ')}`,
           columns - 1 - (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1),
         )
 
@@ -260,10 +263,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     }
   }
 
-  // Terminal and desktop draw the list through a Client, which takes the
-  // pointer for drag and drop; the toolbar stays Buttons above it. (The table
-  // names a Client on every surface, so the surface decides.)
-  if (e.surface !== 'terminal' && e.surface !== 'desktop') {
+  // The Client takes the pointer for drag and drop; the toolbar stays Buttons
+  // above it. (The table names a Client on every surface, so the surface
+  // decides.)
+  if (!hasClient) {
     return <Box flexDirection="column">{rows.map(draw)}</Box>
   }
 

@@ -2,7 +2,7 @@ import type { KanbanCard, KanbanColumn } from '../types'
 import type { RowView, Seg } from './board-client'
 import { cardLine } from './layout'
 import type { Row } from './layout'
-import { cellWidth, isColumn, truncate } from './model'
+import { COLUMNS, cellWidth, isColumn, truncate } from './model'
 import { S } from './strings'
 
 export type RowViewInput = {
@@ -36,6 +36,13 @@ const view = (segs: Seg[]) => ({
   width: cellWidth(segs.map(one => one.text).join('')),
 })
 
+// The keys that send the card under the cursor to a section: its place from
+// the top (1-4) and its initial (h, c, b, d).
+const moveKeysOf = (column: KanbanColumn) => [
+  String(COLUMNS.indexOf(column) + 1),
+  column.charAt(0),
+]
+
 /** The list rows (everything under the toolbar) as the Client draws them. */
 export function toRowViews(input: RowViewInput): RowView[] {
   const { columns, collapsed, glyphOf, ageOf } = input
@@ -46,11 +53,14 @@ export function toRowViews(input: RowViewInput): RowView[] {
       case 'toolbar':
         break
 
-      case 'header':
+      case 'header': {
+        const moveKeys = moveKeysOf(row.column)
         views.push({
           key: `hdr:${row.column}`,
           kind: 'header',
           column: row.column,
+          moveKeys,
+          hint: S.moveKeys(moveKeys),
           ...view([
             seg(`${collapsed[row.column] ? S.expand : S.collapse} `),
             seg(S.col[row.column], { bold: true }),
@@ -59,6 +69,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
           ]),
         })
         break
+      }
 
       case 'more':
         views.push({

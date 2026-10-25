@@ -201,4 +201,7 @@ export const S = {
     `no origin remote: run git remote add origin <url> (${reason})`,
   githubProjectFailed: (reason: string) =>
     `project board: ${reason}; check the IDs in CLAUDE.md`,
+  // #11
+  keyHint: '↑↓ ⏎ open · m move',
+  moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
 }
