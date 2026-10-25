@@ -68,3 +68,38 @@ export function parseSections(markdown: string): {
 
   return { body: body.join('\n').trim(), sections }
 }
+
+/** The Handoff section Claude writes when it hands a card to the person. */
+export function formatHandoff(fields: Fields, date: string): string {
+  const line = (label: string, text: string) =>
+    `**${label}:** ${text}`.trimEnd()
+
+  return [
+    `## Handoff (${date})`,
+    line('Did', fields.did),
+    line('Check', fields.check),
+    line('Changed', fields.changed),
+    line('Need from you', fields.need),
+  ].join('\n')
+}
+
+const PLACEHOLDERS = new Set(['', '…', '...', 'n/a'])
+
+/** Whether a handoff field says something: not empty and not a placeholder. */
+export function isFilled(text: string): boolean {
+  return !PLACEHOLDERS.has(text.trim().toLowerCase())
+}
+
+/** Whether the newest section is a handoff that tells the person what to check and what is needed. */
+export function isHandoffValid(sections: readonly KanbanSection[]): boolean {
+  const handoff = sections.findLastIndex(one => one.kind === 'handoff')
+  const feedback = sections.findLastIndex(one => one.kind === 'feedback')
+  const fields = sections[handoff]?.fields
+
+  return (
+    handoff > feedback &&
+    fields !== undefined &&
+    isFilled(fields.check) &&
+    isFilled(fields.need)
+  )
+}

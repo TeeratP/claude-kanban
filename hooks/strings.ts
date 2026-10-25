@@ -77,4 +77,46 @@ export const S = {
     `"${String(to)}" is not a column; use human, claude, backlog or done.`,
   badCard: 'card must be a whole number.',
   toolFailed: (name: string) => `${name} failed; see the debug log.`,
+
+  // #6
+  toolShow: {
+    description:
+      'Show one kanban card in full: its spec, then every Handoff and Feedback section, newest last.',
+    card: 'The card number, as shown by kanban_list.',
+  },
+  toolHandoff: {
+    description:
+      'Record a handoff on a kanban card before giving it to the person: what you did, how they can check it, what changed and what you need from them. A card can only move to Human after a handoff newer than the latest feedback.',
+    card: 'The card number, as shown by kanban_list.',
+    did: 'What you did, briefly.',
+    check: 'How the person can check the work; required.',
+    changed: 'The files or things that changed.',
+    need: 'What you need from the person: a review, a decision, an answer; required.',
+  },
+  toolCreate: {
+    description:
+      'Create a kanban card in the local .kanban folder. Not for GitHub boards: use the /issue skill there.',
+    title: 'A short title for the card.',
+    spec: 'The card text: what is to be done and how to tell it is done.',
+    column:
+      'The column to create the card in (claude, backlog or done); backlog if omitted.',
+  },
+  handoffFailed: (reason: string) => `Could not record the handoff: ${reason}`,
+  handedOff: (card: KanbanCard) =>
+    `Recorded a handoff on #${card.number}. Move it to human with kanban_move when it is ready for the person.`,
+  badText: (name: string) => `${name} must be text.`,
+  handoffIncomplete:
+    'A handoff needs a real check and a real need: say how the person can verify the work and what you need from them.',
+  needHandoff: (card: KanbanCard) =>
+    `Card #${card.number} cannot move to Human yet: record a handoff with kanban_handoff (with a check and what you need from the person), newer than any feedback.`,
+  useKanbanMove:
+    'A card goes to Human through a handoff, not a file edit: record one with kanban_handoff, then use kanban_move.',
+  badTitle: 'title must be text that is not empty.',
+  createNotHuman:
+    'A new card cannot start in Human: create it in claude or backlog, record a handoff with kanban_handoff, then use kanban_move.',
+  created: (card: KanbanCard) =>
+    `Created #${card.number} [${card.column}] ${card.title} in ${card.file ?? 'the board'}.`,
+  createFailed: (reason: string) => `Could not create the card: ${reason}`,
+  createViaIssueSkill:
+    'GitHub boards are made of issues; create the card with the /issue skill instead.',
 }

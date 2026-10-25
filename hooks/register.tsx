@@ -2,6 +2,7 @@ import type { Register } from 'claude-code'
 
 import { readUi } from './atoms'
 import { bootstrap, inBackground, openBoard, refreshAfter } from './board'
+import { guardEdit, guardWrite } from './guard'
 import { S } from './strings'
 import { TOOL_SPECS, runTool } from './tools'
 import { handleBoardScroll, renderBoard } from './view-board'
@@ -51,12 +52,33 @@ export const register: Register = on => {
   ).catch(($, e, next) =>
     next.called ? next(e) : { deny: S.toolFailed('kanban_move') },
   )
+  on('tool.call', { tool: 'mcp__kanban__kanban_show' }, ($, e) =>
+    runTool($, 'kanban_show', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_show') },
+  )
+  on('tool.call', { tool: 'mcp__kanban__kanban_handoff' }, ($, e) =>
+    runTool($, 'kanban_handoff', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_handoff') },
+  )
+  on('tool.call', { tool: 'mcp__kanban__kanban_create' }, ($, e) =>
+    runTool($, 'kanban_create', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_create') },
+  )
 
-  // A card file Claude wrote or edited shows on the board at once.
-  on('tool.call', { tool: 'Write' }, ($, e, next) =>
-    refreshAfter($, e.file_path, next(e)),
-  ).catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Edit' }, ($, e, next) =>
-    refreshAfter($, e.file_path, next(e)),
-  ).catch(($, e, next) => next(e))
+  // A card file Claude wrote or edited shows on the board at once, unless the
+  // edit would put a card in Human without a handoff; a guard that breaks lets
+  // the edit through.
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    const deny = await guardWrite($, e)
+
+    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
+  }).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    const deny = await guardEdit($, e)
+
+    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
+  }).catch(($, e, next) => next(e))
 }
