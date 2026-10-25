@@ -1,5 +1,5 @@
 export type KanbanColumn = 'human' | 'claude' | 'backlog' | 'done'
-export type KanbanTag = 'review' | 'human'
+export type KanbanTag = 'review' | 'human' | 'question'
 export type KanbanCard = {
   id: string
   number: number
@@ -9,6 +9,7 @@ export type KanbanCard = {
   createdAt: string
   updatedAt: string
   tag?: KanbanTag
+  question?: string
   file?: string
   itemId?: string
   status?: string
@@ -33,7 +34,9 @@ export type KanbanGithub = {
   }
 }
 export type KanbanBackendInfo = { kind: 'local' } | KanbanGithub
+export type KanbanBackendMode = 'auto' | 'github' | 'local'
 export type KanbanBoard = {
+  mode: KanbanBackendMode
   backend: KanbanBackendInfo | null
   cards: KanbanCard[]
   fetchedAt: number
@@ -46,11 +49,19 @@ export type KanbanSync = {
   from: KanbanColumn
   to: KanbanColumn
   queued?: KanbanColumn
+  after?: string | null
+  queuedAfter?: string | null
   phase: KanbanSyncPhase
   attempts: number
   error?: string
   settledAt?: number
-  onConfirm?: 'work' | 'resume'
+  onConfirm?: 'work' | 'resume' | 'answer'
+  announce?: boolean
+}
+export type KanbanPrompt = 'work' | 'resume' | 'answer'
+export type KanbanQueue = {
+  limit: number
+  held: Record<string, KanbanPrompt>
 }
 export type KanbanView =
   { mode: 'board' } | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
@@ -59,12 +70,31 @@ export type KanbanUi = {
   offsets: Record<KanbanColumn, number>
   collapsed: Record<KanbanColumn, boolean>
   draft: string
+  /** The filter query applied to the board ('' for none); kept for the session only. */
+  filter: string
+  /** Whether the filter's text field is shown. */
+  isFilterOpen: boolean
+  /** Sections the person collapsed or opened by a header press while filtering; dropped when the filter changes. */
+  filterCollapsed: Partial<Record<KanbanColumn, boolean>>
+}
+export type KanbanQuickAdd = {
+  isOpen: boolean
+  hasDetails: boolean
+  title: string
+  spec: string
+}
+export type KanbanSuggestion = {
+  id: number
+  title: string
+  spec: string
+  why?: string
 }
 export type KanbanSection = {
-  kind: 'handoff' | 'feedback'
+  kind: 'handoff' | 'feedback' | 'question' | 'answer' | 'check'
   date: string
   text: string
   fields?: { did: string; check: string; changed: string; need: string }
+  byOther?: string
 }
 export type KanbanDetail = {
   cardId: string
@@ -73,7 +103,52 @@ export type KanbanDetail = {
   sections: KanbanSection[]
   diffState: 'none' | 'loading' | 'ready' | 'absent' | 'error'
   diff?: string
+  diffOmitted?: number
+  diffError?: string
   error?: string
+}
+export type KanbanCheckOutcome =
+  'running' | 'passed' | 'failed' | 'timeout' | 'error'
+export type KanbanCheckRun = {
+  cardId: string
+  command: string
+  outcome: KanbanCheckOutcome
+  startedAt: number
+  durationMs: number
+  exitCode: number
+  output: string
+  omitted: number
+  isCut: boolean
+  record: 'none' | 'saving' | 'saved' | 'failed'
+  error: string
+}
+/** One Claude -> Human -> Claude round on a card: time and tokens spent, and who worked in it. */
+export type KanbanRound = {
+  startedAt: number
+  ms: number
+  input: number
+  output: number
+  cacheRead: number
+  agents: string[]
+  isOpen: boolean
+}
+/** What Claude has done on one card: its rounds, and the tool it is on now. */
+export type KanbanCardActivity = {
+  cardId: string
+  rounds: KanbanRound[]
+  lastAt: number
+  lastAgent: string
+  tool: string
+  target: string
+  toolId: string
+  isToolRunning: boolean
+}
+export type KanbanActivity = {
+  cards: Record<string, KanbanCardActivity>
+  /** The card the running main turn belongs to ('' for none) and where its time is counted from. */
+  live: { cardId: string; since: number; isRunning: boolean }
+  /** Each subagent seen, by its id: its name and the card it inherited. */
+  agents: Record<string, { name: string; cardId: string }>
 }
 
 declare module 'claude-code' {
@@ -83,6 +158,14 @@ declare module 'claude-code' {
       ui: Shaped<KanbanUi>
       sync: Shaped<Record<string, KanbanSync>>
       detail: Shaped<KanbanDetail | null>
+      check: Shaped<Record<string, KanbanCheckRun>>
+      tick: number
+      queue: Shaped<KanbanQueue>
+      pausedUntil: number
+      viewer: string
+      activity: Shaped<KanbanActivity>
+      quickAdd: Shaped<KanbanQuickAdd>
+      suggestions: Shaped<KanbanSuggestion[]>
     }
   }
 }

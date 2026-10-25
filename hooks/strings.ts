@@ -1,4 +1,10 @@
-import type { KanbanCard, KanbanColumn, KanbanTag } from '../types'
+import type {
+  KanbanBackendMode,
+  KanbanCard,
+  KanbanColumn,
+  KanbanSection,
+  KanbanTag,
+} from '../types'
 
 const COL = {
   human: 'Human',
@@ -6,6 +12,20 @@ const COL = {
   backlog: 'Backlog',
   done: 'Done',
 } satisfies Record<KanbanColumn, string>
+
+const SECTION_NAME = {
+  handoff: 'Handoff',
+  feedback: 'Feedback',
+  question: 'Question',
+  answer: 'Answer',
+  check: 'Check run',
+} satisfies Record<KanbanSection['kind'], string>
+
+const BACKEND = { github: 'GitHub', local: 'Local' } as const
+
+// A section someone else wrote on the issue is shown, but never counts.
+const fromOther = (login?: string) =>
+  login === undefined ? '' : ` from @${login}, not counted`
 
 // Every string the person or the model reads lives here.
 export const S = {
@@ -18,7 +38,11 @@ export const S = {
     `kanban: could not refresh the board: ${reason}`,
 
   col: COL,
-  tagShort: { review: 'rev', human: 'hum' } satisfies Record<KanbanTag, string>,
+  tagShort: {
+    review: 'rev',
+    human: 'hum',
+    question: '?',
+  } satisfies Record<KanbanTag, string>,
   count: (shown: number, total: number) =>
     shown === total ? String(total) : `${shown} of ${total}`,
   empty: '  (empty)',
@@ -26,8 +50,6 @@ export const S = {
   more: (dir: 'up' | 'down', n: number) =>
     `  ${dir === 'up' ? '↑' : '↓'} ${n} more`,
 
-  backendLocal: 'local',
-  backendGithub: (repo: string) => repo,
   refresh: '↻',
   loading: 'loading…',
   updated: (age: string) => `updated ${age}`,
@@ -37,9 +59,6 @@ export const S = {
   failedGlyph: '✕',
   confirmed: '✓',
 
-  moveFailed: (card: KanbanCard, to: KanbanColumn, reason: string) =>
-    `Could not move #${card.number} to ${COL[to]}: ${reason}`,
-  githubUnavailable: 'The GitHub backend is not available in this build.',
   unreadableCard: (path: string) => `${path} is not a kanban card file.`,
   cardHasNoFile: (card: KanbanCard) => `Card #${card.number} has no file.`,
 
@@ -51,8 +70,10 @@ export const S = {
   detailFailed: (reason: string) => `Could not read the card: ${reason}`,
   metaColumn: (column: KanbanColumn) => COL[column],
   syncPending: (to: KanbanColumn) => `⟳ syncing to ${COL[to]}`,
-  handoffHeading: (date: string) => `Handoff (${date})`,
-  feedbackHeading: (date: string) => `Feedback (${date})`,
+  handoffHeading: (date: string, byOther?: string) =>
+    `Handoff (${date})${fromOther(byOther)}`,
+  feedbackHeading: (date: string, byOther?: string) =>
+    `Feedback (${date})${fromOther(byOther)}`,
 
   toolList: {
     description:
@@ -65,16 +86,309 @@ export const S = {
     card: 'The card number, as shown by kanban_list.',
     to: 'The column to move the card to.',
   },
-  listLine: (card: KanbanCard) =>
-    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''} updated ${card.updatedAt.slice(0, 10)}`,
+  listLine: (card: KanbanCard, isQueued = false) =>
+    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''}${isQueued ? ' (queued)' : ''} updated ${card.updatedAt.slice(0, 10)}`,
   boardUnavailable: (reason?: string) =>
     `The kanban board could not be loaded${reason === undefined ? '' : `: ${reason}`}.`,
   listEmpty: 'No cards on the board.',
   moved: (card: KanbanCard, to: KanbanColumn) =>
-    `Moved #${card.number} to ${COL[to]}.`,
+    `Moved #${card.number} to ${COL[to]} (syncing).`,
   noSuchCard: (n: unknown) => `There is no kanban card #${String(n)}.`,
   badColumn: (to: unknown) =>
     `"${String(to)}" is not a column; use human, claude, backlog or done.`,
   badCard: 'card must be a whole number.',
   toolFailed: (name: string) => `${name} failed; see the debug log.`,
+
+  // #5
+  waiting: (n: number) =>
+    n === 1 ? '1 card waiting on you' : `${n} cards waiting on you`,
+  handedToYou: (card: KanbanCard) =>
+    `Waiting on you: #${card.number} ${card.title}`,
+  cacheFailed: (reason: string) =>
+    `kanban: could not use the saved board: ${reason}`,
+  notifyFailed: (reason: string) =>
+    `kanban: could not send the notification: ${reason}`,
+
+  // #6
+  toolShow: {
+    description:
+      'Show one kanban card in full: its spec, then every Handoff, Feedback, Question and Answer section, newest last.',
+    card: 'The card number, as shown by kanban_list.',
+  },
+  toolHandoff: {
+    description:
+      'Record a handoff on a kanban card before giving it to the person: what you did, how they can check it, what changed and what you need from them. A card can only move to Human after a handoff newer than the latest feedback.',
+    card: 'The card number, as shown by kanban_list.',
+    did: 'What you did, briefly.',
+    check: 'How the person can check the work; required.',
+    changed: 'The files or things that changed.',
+    need: 'What you need from the person: a review, a decision, an answer; required.',
+  },
+  toolCreate: {
+    description:
+      'Create a kanban card: a file in the local .kanban folder, or on a GitHub board an issue labeled triage, which the person grooms later.',
+    title: 'A short title for the card.',
+    spec: 'The card text: what is to be done and how to tell it is done.',
+    column:
+      'The column to create the card in (claude, backlog or done); backlog if omitted.',
+  },
+  handoffFailed: (reason: string) => `Could not record the handoff: ${reason}`,
+  handedOff: (card: KanbanCard) =>
+    `Recorded a handoff on #${card.number}. Move it to human with kanban_move when it is ready for the person.`,
+  badText: (name: string) => `${name} must be text.`,
+  handoffIncomplete:
+    'A handoff needs a real check and a real need: say how the person can verify the work and what you need from them.',
+  needHandoff: (card: KanbanCard) =>
+    `Card #${card.number} cannot move to Human yet: record a handoff with kanban_handoff (with a check and what you need from the person), newer than any feedback.`,
+  useKanbanMove:
+    'A card goes to Human through a handoff, not a file edit: record one with kanban_handoff, then use kanban_move.',
+  badTitle: 'title must be text that is not empty.',
+  createNotHuman:
+    'A new card cannot start in Human: create it in claude or backlog, record a handoff with kanban_handoff, then use kanban_move.',
+  created: (card: KanbanCard) =>
+    `Created #${card.number} [${card.column}] ${card.title} in ${card.file ?? card.url ?? 'the board'}.`,
+  createFailed: (reason: string) => `Could not create the card: ${reason}`,
+
+  // #3
+  githubDetectFailed: (reason: string) =>
+    `kanban: using local cards, GitHub is not usable here: ${reason}`,
+  commandExited: (command: string, code: number) => `${command} exited ${code}`,
+  ghBadJson: (what: string, reason?: string) =>
+    `gh returned ${what} that could not be read${reason ? `: ${reason}` : ''}.`,
+  noBoardItem: (card: KanbanCard) =>
+    `#${card.number} is not on the project board.`,
+  closeNotVerified: (card: KanbanCard) =>
+    `#${card.number} is still open after gh issue close.`,
+  noStatusField: (projectNumber: string) =>
+    `Project #${projectNumber} has no Status field.`,
+  missingStatusOption: (name: string) =>
+    `The project's Status field has no "${name}" option.`,
+
+  // #7
+  approve: 'Approve',
+  sendBack: 'Send back',
+  park: 'Park',
+  feedbackLabel: 'Feedback',
+  feedbackPlaceholder: 'What should Claude change?',
+  feedbackFirst: 'Write the feedback first, then send the card back.',
+  feedbackFailed: (reason: string) => `Could not save the feedback: ${reason}`,
+  sendBackNoField:
+    'Send back is unavailable here: this screen has no text field. Use the terminal or desktop.',
+  tabCard: 'Card',
+  tabDiff: 'Diff',
+  noDiff: 'No diff for this card.',
+  diffFailed: (reason: string) => `Could not read the diff: ${reason}`,
+  diffCut: (omitted: number) =>
+    `… diff cut, ${omitted} more characters not shown.`,
+
+  // #4
+  movedBack: (
+    card: KanbanCard,
+    to: KanbanColumn,
+    from: KanbanColumn,
+    reason: string,
+  ) =>
+    `Could not move #${card.number} to ${COL[to]}, so it is back in ${COL[from]}: ${reason}`,
+  syncFailed: (reason: string) =>
+    `kanban: a card move could not be synced: ${reason}`,
+  retry: 'Retry',
+  retryAll: (n: number) => `✕${n} retry`,
+  syncSaved: '✓ saved',
+  syncFailedNote: (reason: string, attempt: number, max: number) =>
+    `✕ ${reason} (attempt ${attempt}/${max})`,
+  workPrompt: (n: number, title: string) =>
+    `Work on kanban card #${n} "${title}": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it to human with mcp__kanban__kanban_move.`,
+  resumePrompt: (n: number) =>
+    `Resume kanban card #${n}: read the newest feedback (mcp__kanban__kanban_show) and continue.`,
+  promptFailed: (reason: string) =>
+    `kanban: could not send the prompt to Claude: ${reason}`,
+
+  // #10
+  backendLabel: (mode: KanbanBackendMode, kind?: 'github' | 'local') => {
+    const name = kind ?? mode
+
+    return name === 'auto'
+      ? ''
+      : `${BACKEND[name]}${mode === 'auto' ? ' (auto)' : ''}`
+  },
+  githubNoProject: 'CLAUDE.md needs a Repo and a Project board line',
+  githubSignedOut: (reason: string) =>
+    `gh auth status failed: run gh auth login (${reason})`,
+  githubNoRemote: (reason: string) =>
+    `no origin remote: run git remote add origin <url> (${reason})`,
+  githubProjectFailed: (reason: string) =>
+    `project board: ${reason}; check the IDs in CLAUDE.md`,
+  // #11
+  keyHint: '↑↓ ⏎ open · m move',
+  moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
+
+  // #19
+  checkHeading: 'Check',
+  runCheck: (command: string) => `Run check: ${command}`,
+  checkRunning: (command: string, elapsed: string) =>
+    `⟳ Running ${command} · ${elapsed}`,
+  checkPassed: (code: number, took: string) =>
+    `✓ Passed · exit ${code} · ${took}`,
+  checkFailed: (code: number, took: string) =>
+    `✕ Failed · exit ${code} · ${took}`,
+  checkTimedOut: (minutes: number) => `✕ Timed out after ${minutes} min`,
+  checkNotRun: (reason: string) => `✕ Could not run: ${reason}`,
+  checkLost: '✕ The run was lost when the plugin reloaded. Run it again.',
+  checkRan: (age: string) => (age === 'now' ? 'just now' : `${age} ago`),
+  checkEarlier: (n: number) =>
+    `… ${n} earlier ${n === 1 ? 'line' : 'lines'} not shown`,
+  checkCapped: '… the output was cut at 4 MiB; its end is not shown',
+  attachToCard: 'Attach to card',
+  checkSaving: 'Saving to the card…',
+  checkSaved: '✓ Saved on the card',
+  checkSaveFailed: (reason: string) =>
+    `Could not save the run on the card: ${reason}`,
+  checkField: { command: 'Command', result: 'Result', output: 'Output' },
+  checkLogFailed: (reason: string) => `kanban: a check run failed: ${reason}`,
+
+  // #18
+  queuePosition: (at: number, total: number) =>
+    `${COL.human} ${at} of ${total}`,
+  prevCard: '‹ Prev',
+  nextCard: 'Next ›',
+  focusFeedback: 'Write feedback',
+  focusAnswer: 'Write answer',
+  focusFailed: (reason: string) =>
+    `Could not move to the feedback box: ${reason}`,
+  reviewHint: (keys: readonly string[]) => keys.join(' · '),
+  reviewKeys: {
+    approve: 'a approve',
+    sendBack: 's send back',
+    answer: 's answer',
+    park: 'p park',
+    write: 'f write',
+    next: 'n next',
+    prev: 'k prev',
+    board: 'b board',
+  },
+
+  // #15
+  // Short: they share a 44-column toolbar with the backend label.
+  rateLimitHit: (minutes: number) => `limit hit · paused ${minutes}m`,
+  rateLimitLow: (minutes: number) => `limit low · paused ${minutes}m`,
+  refreshWhilePaused: (minutes: number) =>
+    `GitHub rate limit is low and polling is paused for ${minutes}m. Refreshing anyway.`,
+  rateLimitLookupFailed: (reason: string) =>
+    `kanban: could not read when the GitHub rate limit resets: ${reason}`,
+  pageLimitReached: (items: number) =>
+    `kanban: the board has more than ${items} items; only the first ${items} are shown.`,
+  aiLabelDescription: 'agent can do end-to-end',
+  unknownAuthor: 'unknown',
+  // #21
+  headingOf: (section: KanbanSection) =>
+    `${SECTION_NAME[section.kind]} (${section.date})${fromOther(section.byOther)}`,
+  toolAsk: {
+    description:
+      'Ask the person a blocking question on a kanban card when you cannot go on without a decision only they can make. Records the question and moves the card to Human; you are asked to resume once they answer. Not for progress updates or for questions you can settle yourself: record a handoff with kanban_handoff when the work is done.',
+    card: 'The card number, as shown by kanban_list.',
+    question:
+      'The question, with what you need decided and the options you see.',
+  },
+  askEmpty: 'question must be text that is not empty.',
+  askFailed: (reason: string) => `Could not record the question: ${reason}`,
+  asked: (card: KanbanCard) =>
+    `Recorded your question on #${card.number} and moved it to Human (syncing). Stop here: you are asked to resume once the person answers.`,
+  claudeAsks: (card: KanbanCard) =>
+    `Claude asks: ${card.question ?? card.title} (#${card.number})`,
+  askBlock: 'Claude asks',
+  answerButton: 'Answer',
+  answerLabel: 'Answer',
+  answerPlaceholder: 'Your answer to Claude',
+  answerFirst: 'Write the answer first, then send it to Claude.',
+  answerFailed: (reason: string) => `Could not save the answer: ${reason}`,
+  answerNoField:
+    'Answering is unavailable here: this screen has no text field. Use the terminal or desktop.',
+  answerPrompt: (n: number) =>
+    `Resume kanban card #${n}: the person answered your question; read it with mcp__kanban__kanban_show and continue.`,
+
+  // #17
+  mainAgent: 'Claude',
+  agentDot: '●',
+  agentsMore: (n: number) => `+${n}`,
+  toolRunning: (tool: string) => `⟳ ${tool}`,
+  working: '⟳ working',
+  idle: (age: string) => (age === 'now' ? 'idle' : `idle ${age}`),
+  statsSep: ' · ',
+  tokens: (label: string) => `${label} tok`,
+  cached: (label: string) => `${label} cached`,
+  agentsHeading: 'Agents',
+  totalHeading: 'Total',
+  roundHeading: (n: number) => `Round ${n}`,
+  activityFailed: (reason: string) =>
+    `kanban: could not record Claude's activity: ${reason}`,
+
+  // #20
+  claudeCount: (running: number, limit: number, queued: number) =>
+    `${running}/${limit}${queued === 0 ? '' : ` · ${queued} queued`}`,
+  queuedMark: (place: number) => `queued ${place}`,
+  queueSaveFailed: (reason: string) =>
+    `kanban: could not save the queue: ${reason}`,
+  queueRestoreFailed: (reason: string) =>
+    `kanban: could not read the saved queue: ${reason}`,
+
+  // #22
+  positionFailed: (reason: string) =>
+    reason === ''
+      ? "GitHub did not accept the card's new position."
+      : `GitHub did not accept the card's new position: ${reason}`,
+  reorderUndone: (card: KanbanCard, reason: string) =>
+    `Could not reorder #${card.number} in ${COL[card.column]}, so it is back where it was: ${reason}`,
+  reorderUp: '↑',
+  reorderDown: '↓',
+  reorderLabel: 'Move in section:',
+
+  // #23
+  add: '+',
+  addTitleLabel: 'New card',
+  addTitlePlaceholder: 'New card title',
+  addDetailsLabel: 'Details',
+  addDetailsPlaceholder: 'What is to be done, and how to tell it is done',
+  addSubmit: 'add',
+  addDetails: 'Add details',
+  addCancel: 'Cancel',
+  addNeedsTitle: 'Give the card a title first.',
+  addFailed: (reason: string) => `Could not add the card: ${reason}`,
+  triageLabelDescription: 'needs grooming',
+  createdPartly: (url: string, reason: string) =>
+    `Created ${url} but could not finish adding it: ${reason}`,
+  // #24
+  toolSuggest: {
+    description:
+      'Suggest a kanban card for a follow-up, a deferred item or out-of-scope work you notice. This creates nothing: the person sees the suggestion on the board and presses Add or Dismiss.',
+    title: 'A short title for the card.',
+    spec: 'The card text: what is to be done and how to tell it is done.',
+    why: 'Why it is worth doing, in a sentence.',
+  },
+  suggestPrompt:
+    'When you notice a follow-up, a deferred item or out-of-scope work, call mcp__kanban__kanban_suggest (title, spec, why) instead of only mentioning it in text. It only proposes a card: the person presses Add. Do not create cards with kanban_create unless asked.',
+  suggested: (title: string) => `Claude suggests a card: ${title}`,
+  suggestedResult: (title: string) =>
+    `Suggested "${title}". The person decides whether to add it; do not create it yourself unless asked.`,
+  suggestFolded: (title: string) =>
+    `"${title}" is already a card or a suggestion; nothing was added.`,
+  suggestedHeader: (n: number) => `Suggested (${n})`,
+  suggestMore: (n: number) => `  +${n} more`,
+  suggestAdd: 'Add',
+  suggestDismiss: '✕',
+  suggestWhy: (why: string) => `Why: ${why}`,
+  suggestionsNotSaved: (reason: string) =>
+    `kanban: could not save the suggestions: ${reason}`,
+
+  // #25
+  filter: '🔍',
+  filterLabel: 'Filter',
+  filterPlaceholder: 'words, #12, label:ai, @claude',
+  filterSubmit: 'done',
+  filterClear: '✕',
+  filterCount: (shown: number, total: number) => `${shown}/${total}`,
+  noMatches: '  (no matches)',
+
+  // #31
+  positionSkipped: (card: KanbanCard, reason: string) =>
+    `kanban: left #${card.number} where GitHub put it, its position was not set: ${reason}`,
 }

@@ -2,6 +2,9 @@ import type { On } from 'claude-code'
 import { mock } from 'claude-code/testing'
 
 export const NOW = Date.parse('2026-10-25T12:00:00Z')
+export const CWD = '/work'
+// A move reaches the backend this long after it is made, so a test looks at the files after it.
+export const SYNC_PAUSE = 300
 
 export type Files = Record<string, string>
 
@@ -31,13 +34,31 @@ export function card(
   ].join('\n')
 }
 
+/** A card body with a valid handoff, which a card needs before it can move to Human. */
+export const HANDED_OFF = [
+  'Spec text.',
+  '',
+  '## Handoff (2026-10-25)',
+  '**Did:** Wrote the docs',
+  '**Check:** Read the README',
+  '**Changed:** README.md',
+  '**Need from you:** Approve',
+].join('\n')
+
 export const path = (id: number, slug = 'card') =>
   `.kanban/${String(id).padStart(4, '0')}-${slug}.md`
 
 // The engine resolves a relative path against the session's directory before
 // `fs.*` is raised, so the fake maps it back to the path the plugin spelled.
-const relative = (file: string) =>
-  file.includes('.kanban') ? file.slice(file.indexOf('.kanban')) : file
+const relative = (file: string) => {
+  const config = /(\.claude\/)?CLAUDE\.md$/.exec(file)
+
+  return config !== null
+    ? config[0]
+    : file.includes('.kanban')
+      ? file.slice(file.indexOf('.kanban'))
+      : file
+}
 
 /** Answers `fs.*` from a map of path to text; a write bumps the file's mtime. */
 export function fakeFs(on: On, files: Files) {
@@ -49,8 +70,15 @@ export function fakeFs(on: On, files: Files) {
     writes: [] as string[],
     denyWrite: undefined as string | undefined,
     denyRead: undefined as string | undefined,
+    // Writes that land before every later one is denied.
+    denyWriteAfter: undefined as number | undefined,
     // While set, a write waits for it: a move stays unsettled for the test to look at.
     hold: undefined as Promise<void> | undefined,
+    // While set, a listing waits for it: the first load stays unanswered.
+    holdList: undefined as Promise<void> | undefined,
+    // The next read is answered only once this settles: a load that is slow on one file
+    // while it has already taken the others as they stand. Later reads are not held.
+    lateRead: undefined as Promise<void> | undefined,
     // A change made outside the plugin, as Claude's Write or the person's editor does.
     edit: (file: string, text: string) => {
       files[file] = text
@@ -68,9 +96,10 @@ export function fakeFs(on: On, files: Files) {
 
     return { value: file in files || under(file).length > 0 }
   })
-  on('fs.list', (_, e) => {
+  on('fs.list', async (_, e) => {
     const dir = relative(e.path)
     calls.lists += 1
+    await calls.holdList
 
     return {
       value: under(dir).map(file => ({
@@ -82,16 +111,24 @@ export function fakeFs(on: On, files: Files) {
       })),
     }
   })
-  on('fs.read', (_, e) => {
+  on('fs.read', async (_, e) => {
     if (calls.denyRead !== undefined) return { deny: calls.denyRead }
 
     const text = files[relative(e.path)]
+    const late = calls.lateRead
+    calls.lateRead = undefined
+    await late
 
     return text === undefined ? { deny: `ENOENT: ${e.path}` } : { value: text }
   })
   on('fs.write', async (_, e) => {
     await calls.hold
     if (calls.denyWrite !== undefined) return { deny: calls.denyWrite }
+    if (
+      calls.denyWriteAfter !== undefined &&
+      calls.writes.length >= calls.denyWriteAfter
+    )
+      return { deny: 'EIO: disk error' }
 
     const file = relative(e.path)
     files[file] = e.text
@@ -105,16 +142,55 @@ export function fakeFs(on: On, files: Files) {
 }
 
 /** The engine beneath the plugin: a clock, files, and the registration calls. */
-export function boot(on: On, files: Files) {
+export function boot(on: On, files: Files, store?: Record<string, unknown>) {
   const clock = mock.clock(on, { now: NOW })
+  // Kept as JSON text, as the engine keeps it, so a test can read what was saved.
+  const saved = new Map(
+    Object.entries(store ?? {}).map(([key, value]) => [
+      key,
+      JSON.stringify(value),
+    ]),
+  )
   const calls = fakeFs(on, files)
   const toasts: string[] = []
+  const notices: string[] = []
+  const statuses: (string | undefined)[] = []
   const logs: string[] = []
   const scrolls: { by: number }[] = []
   const registered: string[] = []
+  const prompts: string[] = []
   const world = { panes: [] as string[], opened: [] as string[] }
 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: CWD }))
+  on('store.get', (_, e) => {
+    const text = saved.get(e.key)
+
+    return { value: text === undefined ? undefined : JSON.parse(text) }
+  })
+  on('store.set', (_, e) => {
+    saved.set(e.key, JSON.stringify(e.value))
+
+    return { value: undefined }
+  })
+  on('store.delete', (_, e) => {
+    saved.delete(e.key)
+
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: [...saved.keys()] }))
+  on('ui.status', (_, e) => {
+    statuses.push(e.text)
+
+    return { value: undefined }
+  })
+  on('ui.notify', (_, e) => {
+    notices.push(e.text)
+
+    return {
+      value: { isSent: true as const, channel: 'terminal_bell' as const },
+    }
+  })
   on('command.register', () => ({ value: { command: 'kanban' } }))
   on('tool.register', (_, e) => {
     registered.push(e.name)
@@ -150,9 +226,26 @@ export function boot(on: On, files: Files) {
 
     return {}
   })
+  on('prompt.submit', (_, e) => {
+    prompts.push(e.text)
+
+    return { text: e.text }
+  })
   on('tool.call', () => ({ result: {} }))
 
-  return { clock, calls, toasts, logs, scrolls, registered, world }
+  return {
+    clock,
+    calls,
+    toasts,
+    notices,
+    statuses,
+    logs,
+    scrolls,
+    registered,
+    prompts,
+    world,
+    saved,
+  }
 }
 
 export const PANE = {

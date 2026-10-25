@@ -1,11 +1,22 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { KanbanCard, KanbanColumn, KanbanDetail } from '../types'
-import { parseSections } from './handoff'
+import { escapeMarkers, gistOf, parseSections, questionOf } from './handoff'
 import { KANBAN_DIR, isColumn, maxOrder } from './model'
+import { placeIn } from './order'
 import { S } from './strings'
 
-type Parsed = { card: KanbanCard; body: string }
+// Frontmatter lines this module does not own, kept so a rewrite loses nothing.
+type Parsed = { card: KanbanCard; body: string; extras?: string[] }
+
+const OWNED_KEYS = new Set([
+  'id',
+  'title',
+  'status',
+  'order',
+  'created',
+  'updated',
+])
 
 function toInt(value: string | undefined): number | undefined {
   return value !== undefined && /^\d+$/.test(value) ? Number(value) : undefined
@@ -32,15 +43,20 @@ export function parseCardFile(
   if (end < 0) return null
 
   const fields = new Map<string, string>()
+  const extras: string[] = []
+  let isOwned = false
   for (const line of lines.slice(1, end)) {
     const split = line.indexOf(': ')
-    if (split > 0) {
-      fields.set(
-        line.slice(0, split).trim(),
-        unquote(line.slice(split + 2).trim()),
-      )
-    } else if (line.trimEnd().endsWith(':')) {
-      fields.set(line.trimEnd().slice(0, -1), '')
+    const isIndented = /^\s/.test(line)
+    if (!isIndented && (split > 0 || line.trimEnd().endsWith(':'))) {
+      const key =
+        split > 0 ? line.slice(0, split).trim() : line.trimEnd().slice(0, -1)
+      fields.set(key, split > 0 ? unquote(line.slice(split + 2).trim()) : '')
+      isOwned = OWNED_KEYS.has(key)
+      if (!isOwned) extras.push(line)
+    } else if (line.trim() !== '' && !(isOwned && isIndented)) {
+      // A nested value, a list item or a comment stays with what it follows.
+      extras.push(line)
     }
   }
 
@@ -67,6 +83,7 @@ export function parseCardFile(
       .slice(end + 1)
       .join('\n')
       .trim(),
+    ...(extras.length > 0 && { extras }),
   }
 }
 
@@ -77,7 +94,11 @@ function quoteTitle(title: string): string {
 }
 
 /** Writes a card back as a `.kanban/*.md` file; the inverse of `parseCardFile`. */
-export function serializeCardFile(card: KanbanCard, body: string): string {
+export function serializeCardFile(
+  card: KanbanCard,
+  body: string,
+  extras: readonly string[] = [],
+): string {
   return [
     '---',
     `id: ${card.number}`,
@@ -86,6 +107,7 @@ export function serializeCardFile(card: KanbanCard, body: string): string {
     `order: ${card.order}`,
     `created: ${card.createdAt}`,
     `updated: ${card.updatedAt}`,
+    ...extras,
     '---',
     body === '' ? '' : `${body}\n`,
   ].join('\n')
@@ -124,6 +146,17 @@ async function readCard($: EngineInterface, card: KanbanCard): Promise<Parsed> {
   return parsed
 }
 
+// A card in Human whose newest section is an unanswered question carries it.
+function withQuestion({ card, body }: Parsed): KanbanCard {
+  if (card.column !== 'human') return card
+
+  const ask = questionOf(parseSections(body).sections)
+
+  return ask === undefined
+    ? card
+    : { ...card, tag: 'question', question: gistOf(ask.text) }
+}
+
 export async function loadLocal($: EngineInterface): Promise<KanbanCard[]> {
   if (!(await $.fs.exists(KANBAN_DIR))) return []
 
@@ -134,32 +167,109 @@ export async function loadLocal($: EngineInterface): Promise<KanbanCard[]> {
       .map(entry => readParsed($, entry.name, entry.mtimeMs)),
   )
 
-  return parsed.flatMap(one => (one === null ? [] : [one.card]))
+  return parsed.flatMap(one => (one === null ? [] : [withQuestion(one)]))
 }
 
-export async function moveLocal(
+// Writes that read the cards and then write some of them take turns: two at
+// once would read the same state (the same highest number, the same gap in a
+// section's order), and the later write would undo the earlier.
+let writing: Promise<unknown> = Promise.resolve()
+
+function inTurn<T>(work: () => Promise<T>): Promise<T> {
+  const made = writing.then(work)
+  writing = made.then(
+    () => undefined,
+    () => undefined,
+  )
+
+  return made
+}
+
+/**
+ * Moves the card to `to`, after the card `after` (first when null) or last
+ * when none is given. Neighbours that have to change their order to make room
+ * are rewritten first, the moved card last.
+ */
+export function moveLocal(
   $: EngineInterface,
   card: KanbanCard,
   to: KanbanColumn,
+  after?: KanbanCard | null,
+): Promise<Partial<KanbanCard>> {
+  return inTurn(() => writeMove($, card, to, after))
+}
+
+async function writeMove(
+  $: EngineInterface,
+  card: KanbanCard,
+  to: KanbanColumn,
+  after?: KanbanCard | null,
 ): Promise<Partial<KanbanCard>> {
   const current = await readCard($, card)
-  const others = (await loadLocal($)).filter(other => other.id !== card.id)
+  const all = await loadLocal($)
+  const placed =
+    after === undefined
+      ? undefined
+      : placeIn(all, card.id, to, after === null ? null : after.id)
+  // Already in place: another write got there first.
+  if (after !== undefined && placed === undefined) return {}
+
+  const isReorder = current.card.column === to && after !== undefined
   const patch = {
     column: to,
-    order: maxOrder(others, to) + 1,
-    updatedAt: new Date(await $.clock.now()).toISOString(),
+    order:
+      placed?.order ??
+      maxOrder(
+        all.filter(other => other.id !== card.id),
+        to,
+      ) + 1,
+    ...(isReorder
+      ? {}
+      : { updatedAt: new Date(await $.clock.now()).toISOString() }),
   }
+
+  for (const other of all) {
+    const order = placed?.shifted[other.id]
+    if (order === undefined) continue
+
+    const neighbour = await readCard($, other)
+    const file = `${KANBAN_DIR}/${nameOf(other)}`
+    await $.fs.write(
+      file,
+      serializeCardFile(
+        { ...neighbour.card, order },
+        neighbour.body,
+        neighbour.extras,
+      ),
+    )
+    cache.delete(file)
+  }
+
   const path = `${KANBAN_DIR}/${nameOf(card)}`
   await $.fs.write(
     path,
-    serializeCardFile({ ...current.card, ...patch }, current.body),
+    serializeCardFile(
+      { ...current.card, ...patch },
+      current.body,
+      current.extras,
+    ),
   )
   cache.delete(path)
 
   return patch
 }
 
-export async function appendLocal(
+// Appends go through the same turn as moves and creates: an append rewrites the
+// whole file, so overlapping a renumber of that card would undo it.
+export function appendLocal(
+  $: EngineInterface,
+  card: KanbanCard,
+  markdown: string,
+): Promise<void> {
+  return inTurn(() => writeAppend($, card, markdown))
+}
+
+async function writeAppend(
   $: EngineInterface,
   card: KanbanCard,
   markdown: string,
@@ -167,8 +277,55 @@ export async function appendLocal(
   const current = await readCard($, card)
   const path = `${KANBAN_DIR}/${nameOf(card)}`
   const body = current.body === '' ? markdown : `${current.body}\n\n${markdown}`
-  await $.fs.write(path, serializeCardFile(current.card, body))
+  await $.fs.write(path, serializeCardFile(current.card, body, current.extras))
   cache.delete(path)
+}
+
+function slugOf(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+/, '')
+    .slice(0, 40)
+    .replace(/-+$/, '')
+
+  return slug === '' ? 'card' : slug
+}
+
+async function writeNew(
+  $: EngineInterface,
+  title: string,
+  spec: string,
+  column: KanbanColumn,
+): Promise<KanbanCard> {
+  const cards = await loadLocal($)
+  const number = cards.reduce((max, one) => Math.max(max, one.number), 0) + 1
+  const name = `${String(number).padStart(4, '0')}-${slugOf(title)}.md`
+  const file = `${KANBAN_DIR}/${name}`
+  const now = new Date(await $.clock.now()).toISOString()
+  const card: KanbanCard = {
+    id: `md:${name.replace(/\.md$/, '')}`,
+    number,
+    title,
+    column,
+    order: maxOrder(cards, column) + 1,
+    createdAt: now,
+    updatedAt: now,
+    file,
+  }
+  await $.fs.write(file, serializeCardFile(card, escapeMarkers(spec)))
+
+  return card
+}
+
+/** Writes a new card file numbered after the highest one; resolves the card. */
+export function createLocal(
+  $: EngineInterface,
+  title: string,
+  spec: string,
+  column: KanbanColumn,
+): Promise<KanbanCard> {
+  return inTurn(() => writeNew($, title, spec, column))
 }
 
 export async function detailLocal(

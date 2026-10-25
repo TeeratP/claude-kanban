@@ -1,76 +1,221 @@
 import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
 
-import type { KanbanColumn, KanbanSyncPhase } from '../types'
-import { readBoard, readSync, readUi, updateUi } from './atoms'
-import { refresh } from './board'
+import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
+import { detailIds, detailSegs, segProps } from './activity-view'
 import {
+  readActivity,
+  readBoard,
+  readQueue,
+  readPausedUntil,
+  readQuickAdd,
+  readSuggestions,
+  readSync,
+  readTick,
+  readUi,
+  updateUi,
+} from './atoms'
+import { refresh } from './board'
+import type { BoardProps } from './board-client'
+import { parseBoardMessage, toRowViews } from './board-rows'
+import { isFiltering } from './filter'
+import {
+  applyFilter,
   capFor,
   cardLine,
   clampOffset,
+  detailReserve,
   hitTest,
   layoutBoard,
   openCount,
   sectionList,
 } from './layout'
 import type { Row } from './layout'
-import { ageLabel, truncate } from './model'
+import { TICK_BRIGHT_MS, ageLabel, cellWidth, oneLine, truncate } from './model'
+import { headerCount, queuePlace, queueView } from './queue'
+import { toggleQuickAdd } from './quick-add'
+import { minutesLeft } from './rate-limit'
+import { dropCard, shiftCard } from './reorder'
 import { S } from './strings'
+import { stripRows } from './suggest'
+import { retryAll } from './sync'
 import { openDetail } from './view-detail'
+import { clearFilter, renderFilter, toggleFilter } from './view-filter'
+import { renderQuickAdd } from './view-quick-add'
+import { renderSuggestions } from './view-suggest'
 
 // Where the pane's window sat at the last draw; a wheel row is relative to it.
-let lastBody = { offset: 0 }
+let lastBody = { offset: 0, bodyRows: 0 }
 
-const GLYPH: Record<KanbanSyncPhase, { text: string; color: string }> = {
-  pending: { text: S.syncing, color: 'warning' },
-  ok: { text: S.confirmed, color: 'success' },
-  failed: { text: S.failedGlyph, color: 'error' },
+// A terminal cell cannot spin or fade, so a pending mark pulses with the
+// ticker and a confirmed one dims after its first second.
+function glyphOf(entry: KanbanSync, tick: number, now: number) {
+  switch (entry.phase) {
+    case 'pending':
+      return { text: S.syncing, color: 'warning', dim: tick % 2 === 1 }
+    case 'ok':
+      return {
+        text: S.confirmed,
+        color: 'success',
+        dim: now - (entry.settledAt ?? now) >= TICK_BRIGHT_MS,
+      }
+    case 'failed':
+      return { text: S.failedGlyph, color: 'error', dim: false }
+  }
 }
 
-function toggleSection($: EngineInterface, column: KanbanColumn) {
-  return updateUi($, ui => ({
-    ...ui,
-    collapsed: { ...ui.collapsed, [column]: !ui.collapsed[column] },
-  }))
+// Under a filter the press turns the section as drawn, which the filter may have
+// opened, and leaves the stored flag for when the filter is gone.
+async function toggleSection($: EngineInterface, column: KanbanColumn) {
+  const { cards } = await readBoard($)
+
+  return updateUi($, ui =>
+    isFiltering(ui.filter)
+      ? {
+          ...ui,
+          filterCollapsed: {
+            ...ui.filterCollapsed,
+            [column]: !applyFilter(cards, ui).ui.collapsed[column],
+          },
+        }
+      : {
+          ...ui,
+          collapsed: { ...ui.collapsed, [column]: !ui.collapsed[column] },
+        },
+  )
 }
 
-// Moves a section's window by `delta(cap)` cards, kept within its list.
+// Moves a section's window by `delta(cap)` cards, kept within its list; resolves
+// whether the window shown moved.
 async function scrollSection(
   $: EngineInterface,
   column: KanbanColumn,
   bodyRows: number,
   delta: (cap: number) => number,
-) {
+): Promise<boolean> {
   const { cards } = await readBoard($)
-  const len = sectionList(cards, column).length
+  const details = detailIds(
+    cards,
+    await readActivity($),
+    (await readQueue($)).held,
+  )
 
+  const seen = { isMoved: false }
   await updateUi($, ui => {
-    const cap = capFor(bodyRows, openCount(ui))
+    // The window moves over the cards the filter lets through.
+    const view = applyFilter(cards, ui)
+    const len = sectionList(view.cards, column).length
+    const cap = capFor(
+      bodyRows,
+      openCount(view.ui),
+      detailReserve(view.cards, view.ui, details),
+    )
     const shown = clampOffset(ui.offsets[column], len, cap)
     const offset = clampOffset(shown + delta(cap), len, cap)
+    seen.isMoved = offset !== shown
 
     return offset === ui.offsets[column]
       ? ui
       : { ...ui, offsets: { ...ui.offsets, [column]: offset } }
   })
+
+  return seen.isMoved
 }
 
-/** Scrolls the section under the wheel; false leaves the move to the engine. */
+// Scrolls the section the card is in just far enough to keep it in sight.
+async function keepInView(
+  $: EngineInterface,
+  column: KanbanColumn,
+  at: { index: number; length: number },
+): Promise<void> {
+  const { cards } = await readBoard($)
+  await updateUi($, ui => {
+    const cap = capFor(lastBody.bodyRows, openCount(applyFilter(cards, ui).ui))
+    const shown = clampOffset(ui.offsets[column], at.length, cap)
+    const offset =
+      at.index < shown
+        ? at.index
+        : at.index >= shown + cap
+          ? at.index - cap + 1
+          : shown
+
+    return offset === shown
+      ? ui
+      : { ...ui, offsets: { ...ui.offsets, [column]: offset } }
+  })
+}
+
+/**
+ * Scrolls the section under the wheel; false leaves the move to the engine, as it
+ * does for a section already at the end the wheel points to.
+ */
 export async function handleBoardScroll(
   $: EngineInterface,
   e: UiScrollInput,
 ): Promise<boolean> {
   const ui = await readUi($)
   if (ui.view.mode !== 'board' || e.pointer === undefined) return false
+  // An open form or filter field pushes the list down by rows the layout does not know.
+  if ((await readQuickAdd($)).isOpen || ui.isFilterOpen) return false
 
   const { cards } = await readBoard($)
-  const rows = layoutBoard({ cards, ui, bodyRows: e.bodyRows })
-  const column = hitTest(rows, e.pointer.row + lastBody.offset)
-  if (column === undefined || ui.collapsed[column]) return false
+  const rows = layoutBoard({
+    cards,
+    ui,
+    bodyRows: e.bodyRows,
+    details: detailIds(cards, await readActivity($), (await readQueue($)).held),
+  })
+  // The suggestions sit between the toolbar and the list, outside the layout.
+  const strip = stripRows((await readSuggestions($)).length)
+  const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
+  if (column === undefined || applyFilter(cards, ui).ui.collapsed[column]) {
+    return false
+  }
 
   const step = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by)))
-  await scrollSection($, column, e.bodyRows, () => step)
 
-  return true
+  return scrollSection($, column, e.bodyRows, () => step)
+}
+
+/** Acts on what the board's Client posted: a click on a row, a card dropped or a card moved a place. */
+export async function handleBoardMessage(
+  $: EngineInterface,
+  data: unknown,
+): Promise<void> {
+  const message = parseBoardMessage(data)
+  if (message === undefined) return
+
+  switch (message.type) {
+    case 'open':
+      await openDetail($, message.cardId)
+      break
+    case 'drop':
+      await dropCard(
+        $,
+        message.cardId,
+        message.column,
+        message.place,
+        (await readUi($)).filter,
+      )
+      break
+    case 'shift': {
+      const moved = await shiftCard(
+        $,
+        message.cardId,
+        message.dir,
+        (await readUi($)).filter,
+      )
+      if (moved !== undefined) await keepInView($, moved.column, moved)
+      break
+    }
+    case 'toggle':
+      await toggleSection($, message.column)
+      break
+    case 'page':
+      await scrollSection($, message.column, lastBody.bodyRows, cap =>
+        message.dir === 'up' ? -cap : cap,
+      )
+      break
+  }
 }
 
 export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
@@ -78,40 +223,115 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const board = await readBoard($)
   const ui = await readUi($)
   const sync = await readSync($)
+  const tick = await readTick($)
+  const queued = await readQueue($)
+  const queue = queueView(queued, board.cards, sync)
+  const pausedUntil = await readPausedUntil($)
+  const activity = await readActivity($)
   const now = await $.clock.now()
+  const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
-  lastBody = { offset: scroll.offset }
+  // Terminal and desktop draw the list through a Client, which takes the keys.
+  const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
+  const canAdd = e.surface !== 'mobile'
+  // The text fields are the same ones: the mobile app has none.
+  const canFilter = canAdd
+  const isFiltered = isFiltering(ui.filter)
+  // The sections as drawn: a collapsed one with a match is open while filtering.
+  const { ui: shown } = applyFilter(board.cards, ui)
+  const filterField = await renderFilter($, e)
+  const quickAdd = await renderQuickAdd($, e)
+  const suggested = await renderSuggestions($, e)
+  lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
 
   const rows = layoutBoard({
     cards: board.cards,
     ui,
     bodyRows: scroll.bodyRows,
+    details: detailIds(board.cards, activity, queued.held),
   })
+  const detailOf = (card: KanbanCard) => {
+    const one = activity.cards[card.id]
+
+    return one === undefined ? [] : detailSegs(columns, one, activity.live, now)
+  }
 
   const draw = (row: Row) => {
     switch (row.kind) {
       case 'toolbar': {
-        const label =
-          board.backend?.kind === 'github'
-            ? S.backendGithub(board.backend.repo)
-            : S.backendLocal
+        const label = S.backendLabel(board.mode, board.backend?.kind)
         const status =
           board.error ??
           (board.isLoading
             ? S.loading
-            : board.fetchedAt === 0
-              ? ''
-              : S.updated(ageLabel(board.fetchedAt, now)))
-        const text = truncate(
-          ` ${[label, status].filter(part => part !== '').join(' · ')}`,
-          columns - 1,
-        )
+            : pausedUntil > now
+              ? S.rateLimitLow(minutesLeft(pausedUntil - now))
+              : board.fetchedAt === 0
+                ? ''
+                : S.updated(ageLabel(board.fetchedAt, now)))
+        const retryLabel = S.retryAll(failed.length)
+        const spare =
+          columns -
+          1 -
+          (canAdd ? cellWidth(S.add) + 1 : 0) -
+          (canFilter ? cellWidth(S.filter) + 1 : 0) -
+          (isFiltered ? cellWidth(S.filterClear) + 1 : 0) -
+          (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1)
+        // The query takes up to half of what is left; the status gets the rest.
+        const query = isFiltered
+          ? ` ${truncate(oneLine(ui.filter), Math.floor(spare / 2))}`
+          : ''
+        const room = spare - cellWidth(query)
+        const join = (parts: string[]) =>
+          ` ${parts.filter(part => part !== '').join(' · ')}`
+        // The key hint shows whole or not at all: a cut hint is noise.
+        const withHint = join([label, status, S.keyHint])
+        // A status that fits only without the backend's name is shown whole, not cut.
+        const whole = join([label, status])
+        const bare = join([status])
+        const text =
+          hasClient && board.error === undefined && cellWidth(withHint) <= room
+            ? withHint
+            : cellWidth(whole) > room &&
+                status !== '' &&
+                cellWidth(bare) <= room
+              ? bare
+              : truncate(whole, room)
 
         return (
           <Box flexDirection="row">
             <Button key="refresh" plain onPress={() => refresh($)}>
               {S.refresh}
             </Button>
+            {canAdd && (
+              <Button
+                key="add"
+                plain
+                hotkey="n"
+                onPress={() => toggleQuickAdd($)}
+              >
+                {' '}
+                {S.add}
+              </Button>
+            )}
+            {canFilter && (
+              <Button
+                key="filter"
+                plain
+                hotkey="f"
+                onPress={() => toggleFilter($)}
+              >
+                {' '}
+                {S.filter}
+              </Button>
+            )}
+            {isFiltered && <Text wrap="truncate-end">{query}</Text>}
+            {isFiltered && (
+              <Button key="filter:clear" plain onPress={() => clearFilter($)}>
+                {' '}
+                {S.filterClear}
+              </Button>
+            )}
             {board.error === undefined ? (
               <Text dimColor wrap="truncate-end">
                 {text}
@@ -120,6 +340,12 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
               <Text color="error" wrap="truncate-end">
                 {text}
               </Text>
+            )}
+            {failed.length > 0 && (
+              <Button key="retry-all" plain onPress={() => retryAll($)}>
+                {' '}
+                <Text color="error">{retryLabel}</Text>
+              </Button>
             )}
           </Box>
         )
@@ -134,9 +360,11 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             plain
             onPress={() => toggleSection($, column)}
           >
-            {ui.collapsed[column] ? S.expand : S.collapse}{' '}
+            {shown.collapsed[column] ? S.expand : S.collapse}{' '}
             <Text weight="bold">{S.col[column]}</Text>{' '}
-            <Text dimColor>{S.count(row.shown, row.total)}</Text>
+            <Text dimColor>
+              {headerCount(row.column, row.shown, row.total, queue, isFiltered)}
+            </Text>
           </Button>
         )
       }
@@ -164,20 +392,23 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       case 'card': {
         const { card } = row
         const entry = sync[card.id]
-        const glyph = entry === undefined ? undefined : GLYPH[entry.phase]
+        const glyph =
+          entry === undefined ? undefined : glyphOf(entry, tick, now)
+        const place = queuePlace(queue, card.id)
         const line = cardLine(
           card,
           columns,
-          glyph?.text ?? ' ',
+          glyph?.text ?? (place === undefined ? ' ' : S.queuedMark(place)),
           ageLabel(card.updatedAt, now),
         )
-        const tint = glyph === undefined ? {} : { color: glyph.color }
+        const tint =
+          glyph === undefined ? {} : { color: glyph.color, dimColor: glyph.dim }
 
         return (
           <Button
             key={`card:${card.id}`}
             plain
-            dimColor={card.column === 'done'}
+            dimColor={card.column === 'done' || place !== undefined}
             onPress={() => openDetail($, card.id)}
           >
             {line.left}
@@ -188,10 +419,19 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         )
       }
 
+      case 'detail':
+        return (
+          <Text wrap="truncate-end">
+            {detailOf(row.card).map(part => (
+              <Text {...segProps(part)}>{part.text}</Text>
+            ))}
+          </Text>
+        )
+
       case 'empty':
         return (
           <Text dimColor wrap="truncate-end">
-            {S.empty}
+            {isFiltered ? S.noMatches : S.empty}
           </Text>
         )
 
@@ -204,5 +444,53 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     }
   }
 
-  return <Box flexDirection="column">{rows.map(draw)}</Box>
+  // The Client takes the pointer for drag and drop; the toolbar stays Buttons
+  // above it. (The table names a Client on every surface, so the surface
+  // decides.)
+  if (!hasClient) {
+    return (
+      <Box flexDirection="column">
+        {rows.slice(0, 1).map(draw)}
+        {filterField}
+        {quickAdd}
+        {suggested}
+        {rows.slice(1).map(draw)}
+      </Box>
+    )
+  }
+
+  const { Client } = $.ui.resolve(e)
+  const props: BoardProps = {
+    rows: toRowViews({
+      rows,
+      columns,
+      collapsed: shown.collapsed,
+      isFiltered,
+      glyphOf: card => {
+        const entry = sync[card.id]
+
+        return entry === undefined ? undefined : glyphOf(entry, tick, now)
+      },
+      ageOf: card => ageLabel(card.updatedAt, now),
+      detailOf,
+      queue,
+    }),
+    columns,
+  }
+
+  return (
+    <Box flexDirection="column">
+      {draw({ kind: 'toolbar' })}
+      {filterField}
+      {quickAdd}
+      {suggested}
+      <Client
+        key="board"
+        module="./board-client.tsx"
+        props={props}
+        width="100%"
+        height={props.rows.length}
+      />
+    </Box>
+  )
 }

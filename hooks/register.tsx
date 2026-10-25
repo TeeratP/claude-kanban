@@ -1,20 +1,63 @@
 import type { Register } from 'claude-code'
 
+import {
+  restoreActivity,
+  watchSpawn,
+  watchStep,
+  watchTool,
+  watchTurnEnd,
+  watchTurnStart,
+} from './activity'
 import { readUi } from './atoms'
-import { bootstrap, inBackground, openBoard, refreshAfter } from './board'
+import { backendMode } from './backend'
+import {
+  applyMode,
+  bootstrap,
+  inBackground,
+  openBoard,
+  refreshAfter,
+} from './board'
+import { guardEdit, guardWrite } from './guard'
+import { applyQueue, claudeLimit } from './queue'
+import { dropUnfinishedAdds } from './quick-add'
 import { S } from './strings'
+import { restoreSuggestions, withSuggestSection } from './suggest'
+import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
-import { handleBoardScroll, renderBoard } from './view-board'
+import {
+  handleBoardMessage,
+  handleBoardScroll,
+  renderBoard,
+} from './view-board'
 import { renderDetail } from './view-detail'
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const mode = backendMode(options.backend)
+  const limit = claudeLimit(options.claudeLimit)
+
+  // Watching Claude work on a card never alters what it watches. These stand
+  // first, so they wrap the tools below and see their results.
+  on('tool.call', watchTool).catch(($, e, next) => next(e))
+  on('agent.spawn', watchSpawn).catch(($, e, next) => next(e))
+  on('turn.start', watchTurnStart).catch(($, e, next) => next(e))
+  on('turn.step', watchStep).catch(async function* ($, e, next) {
+    return yield* next(e)
+  })
+  on('turn.complete', watchTurnEnd).catch(($, e, next) => next(e))
+
   on('session.start', async ($, e, next) => {
+    await applyMode($, mode)
+    await applyQueue($, mode, limit)
+    await dropUnfinishedAdds($)
     await $.command.register({
       name: 'kanban',
       description: S.commandDescription,
     })
     for (const spec of TOOL_SPECS) await $.tool.register(spec)
     inBackground($, bootstrap($))
+    inBackground($, resumePendingSyncs($))
+    inBackground($, restoreActivity($))
+    inBackground($, restoreSuggestions($))
 
     return next(e)
   })
@@ -41,6 +84,13 @@ export const register: Register = on => {
     (await handleBoardScroll($, e)) ? {} : next(e),
   ).catch(($, e, next) => next(e))
 
+  // A click on a row, or a card dropped on a section or moved a place, posted by the board's Client.
+  on('ui.message', { requestId: 'kanban', element: 'board' }, async ($, e) => {
+    await handleBoardMessage($, e.data)
+
+    return {}
+  }).catch(($, e, next) => next(e))
+
   on('tool.call', { tool: 'mcp__kanban__kanban_list' }, ($, e) =>
     runTool($, 'kanban_list', e),
   ).catch(($, e, next) =>
@@ -51,12 +101,52 @@ export const register: Register = on => {
   ).catch(($, e, next) =>
     next.called ? next(e) : { deny: S.toolFailed('kanban_move') },
   )
+  on('tool.call', { tool: 'mcp__kanban__kanban_show' }, ($, e) =>
+    runTool($, 'kanban_show', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_show') },
+  )
+  on('tool.call', { tool: 'mcp__kanban__kanban_handoff' }, ($, e) =>
+    runTool($, 'kanban_handoff', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_handoff') },
+  )
+  on('tool.call', { tool: 'mcp__kanban__kanban_create' }, ($, e) =>
+    runTool($, 'kanban_create', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_create') },
+  )
 
-  // A card file Claude wrote or edited shows on the board at once.
-  on('tool.call', { tool: 'Write' }, ($, e, next) =>
-    refreshAfter($, e.file_path, next(e)),
-  ).catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Edit' }, ($, e, next) =>
-    refreshAfter($, e.file_path, next(e)),
-  ).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'mcp__kanban__kanban_ask' }, ($, e) =>
+    runTool($, 'kanban_ask', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_ask') },
+  )
+
+  on('tool.call', { tool: 'mcp__kanban__kanban_suggest' }, ($, e) =>
+    runTool($, 'kanban_suggest', e),
+  ).catch(($, e, next) =>
+    next.called ? next(e) : { deny: S.toolFailed('kanban_suggest') },
+  )
+
+  // Asks Claude to suggest follow-ups as cards, in one short section.
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+
+    return { sections: withSuggestSection(composed.sections, e.traits) }
+  }).catch(($, e, next) => next(e))
+
+  // A card file Claude wrote or edited shows on the board at once, unless the
+  // edit would put a card in Human without a handoff; a guard that breaks lets
+  // the edit through.
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    const deny = await guardWrite($, e)
+
+    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
+  }).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    const deny = await guardEdit($, e)
+
+    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
+  }).catch(($, e, next) => next(e))
 }
