@@ -259,7 +259,17 @@ async function writeMove(
   return patch
 }
 
-export async function appendLocal(
+// Appends go through the same turn as moves and creates: an append rewrites the
+// whole file, so overlapping a renumber of that card would undo it.
+export function appendLocal(
+  $: EngineInterface,
+  card: KanbanCard,
+  markdown: string,
+): Promise<void> {
+  return inTurn(() => writeAppend($, card, markdown))
+}
+
+async function writeAppend(
   $: EngineInterface,
   card: KanbanCard,
   markdown: string,
