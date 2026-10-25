@@ -170,12 +170,36 @@ export async function loadLocal($: EngineInterface): Promise<KanbanCard[]> {
   return parsed.flatMap(one => (one === null ? [] : [withQuestion(one)]))
 }
 
+// Writes that read the cards and then write some of them take turns: two at
+// once would read the same state (the same highest number, the same gap in a
+// section's order), and the later write would undo the earlier.
+let writing: Promise<unknown> = Promise.resolve()
+
+function inTurn<T>(work: () => Promise<T>): Promise<T> {
+  const made = writing.then(work)
+  writing = made.then(
+    () => undefined,
+    () => undefined,
+  )
+
+  return made
+}
+
 /**
  * Moves the card to `to`, after the card `after` (first when null) or last
  * when none is given. Neighbours that have to change their order to make room
  * are rewritten first, the moved card last.
  */
-export async function moveLocal(
+export function moveLocal(
+  $: EngineInterface,
+  card: KanbanCard,
+  to: KanbanColumn,
+  after?: KanbanCard | null,
+): Promise<Partial<KanbanCard>> {
+  return inTurn(() => writeMove($, card, to, after))
+}
+
+async function writeMove(
   $: EngineInterface,
   card: KanbanCard,
   to: KanbanColumn,
@@ -284,9 +308,6 @@ async function writeNew(
   return card
 }
 
-// Creations take turns: two at once would read the same highest number.
-let creating: Promise<unknown> = Promise.resolve()
-
 /** Writes a new card file numbered after the highest one; resolves the card. */
 export function createLocal(
   $: EngineInterface,
@@ -294,13 +315,7 @@ export function createLocal(
   spec: string,
   column: KanbanColumn,
 ): Promise<KanbanCard> {
-  const made = creating.then(() => writeNew($, title, spec, column))
-  creating = made.then(
-    () => undefined,
-    () => undefined,
-  )
-
-  return made
+  return inTurn(() => writeNew($, title, spec, column))
 }
 
 export async function detailLocal(

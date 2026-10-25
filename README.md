@@ -224,7 +224,7 @@ Your feedback.
 
 - `status` is one of `human`, `claude`, `backlog`, `done`; anything else counts as `backlog`.
 - `id` is the card number (`#7`); a missing `id` falls back to the filename's number. Titles may contain colons.
-- `order` sorts a section, lowest first. Done sorts by `updated`, newest first. Reordering a card writes only its `order`, between its neighbours' when there is a gap and otherwise renumbering the section by tens (10, 20, 30, …), rewriting only the cards whose number changed. On GitHub the order is the project item's position (`updateProjectV2ItemPosition`).
+- `order` sorts a section, lowest first. Done sorts by `updated`, newest first. Reordering a card writes only its `order`, between its neighbours' when there is a gap and otherwise renumbering the section by tens (10, 20, 30, …), rewriting only the cards whose number changed. On GitHub the order is the project item's position (`updateProjectV2ItemPosition`); a card moved to another section with no place asked is positioned after the last card there, so a reload keeps the order it arrived in.
 - The Handoff, Feedback, Question, Answer and Check run sections are appended below the spec. The board rewrites `status`, `order` and `updated` when a card moves, and leaves the body alone.
 - Done cards stay as files with `status: done`. The pane never deletes a file.
 - Files Claude writes or edits show on the board straight away.

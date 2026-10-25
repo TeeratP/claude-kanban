@@ -38,7 +38,8 @@ export function claudeLimit(value: unknown): number {
 }
 
 // A card has Claude's attention while it sits in Claude and is not waiting, or
-// while its move out of Claude is yet to be confirmed (it may still snap back).
+// while its move out of Claude is yet to be confirmed: pending, or refused
+// (`failed`), either of which may still snap back.
 function holdsSlot(
   card: KanbanCard,
   entry: KanbanSync | undefined,
@@ -47,7 +48,7 @@ function holdsSlot(
   if (held[card.id] !== undefined) return false
   if (card.column === 'claude') return true
 
-  return entry?.phase === 'pending' && entry.from === 'claude'
+  return entry !== undefined && entry.phase !== 'ok' && entry.from === 'claude'
 }
 
 /** The queue as the board draws it. */
