@@ -1,9 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
 import { cellWidth } from '../hooks/model'
+import { click, listRows, row, rowKeys } from './board-ui'
 import { PANE, RUN, boot, card, path } from './fakes'
 
-const SURFACES = ['terminal', 'desktop'] as const
 const EVERY_SURFACE = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 const cards = () => ({
@@ -56,7 +56,7 @@ test('a pane left open across a reload is refreshed at the session start', async
   expect(calls.lists).toBe(1)
 })
 
-for (const surface of SURFACES) {
+for (const surface of EVERY_SURFACE) {
   test(`the board lists, opens and moves a card on the ${surface}`, async ($, on) => {
     const files = cards()
     const { clock } = boot(on, files)
@@ -66,19 +66,17 @@ for (const surface of SURFACES) {
 
     const ui = await $.ui.mount({ ...PANE, surface })
 
-    expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
+    expect((await row(ui, 'card:md:0001-login'))?.text).toContain(
       '#1 Fix login',
     )
-    expect((await ui.find({ key: 'hdr:done' }))?.text).toBe('▸ Done 1')
-    expect(await ui.find({ key: 'card:md:0004-old' })).toBeUndefined()
+    expect((await row(ui, 'hdr:done'))?.text).toBe('▸ Done 1')
+    expect(await row(ui, 'card:md:0004-old')).toBeUndefined()
 
-    await ui.press({ key: 'hdr:done' })
-    expect((await ui.find({ key: 'hdr:done' }))?.text).toBe('▾ Done 1')
-    expect((await ui.find({ key: 'card:md:0004-old' }))?.text).toContain(
-      '#4 Old thing',
-    )
+    await click(ui, 'hdr:done')
+    expect((await row(ui, 'hdr:done'))?.text).toBe('▾ Done 1')
+    expect((await row(ui, 'card:md:0004-old'))?.text).toContain('#4 Old thing')
 
-    await ui.press({ key: 'card:md:0003-docs' })
+    await click(ui, 'card:md:0003-docs')
     expect((await ui.find({ type: 'Text', text: '#3 Write docs' }))?.text).toBe(
       '#3 Write docs',
     )
@@ -93,9 +91,7 @@ for (const surface of SURFACES) {
     )
 
     await ui.press({ key: 'back' })
-    const keys = (await ui.findAll({ type: 'Button' })).map(
-      button => button.key,
-    )
+    const keys = await rowKeys(ui)
     expect(
       keys.slice(keys.indexOf('hdr:claude'), keys.indexOf('hdr:backlog')),
     ).toEqual(['hdr:claude', 'card:md:0002-api', 'card:md:0003-docs'])
@@ -110,9 +106,7 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const under = async (header: string, next: string) => {
-    const keys = (await ui.findAll({ type: 'Button' })).map(
-      button => button.key,
-    )
+    const keys = await rowKeys(ui)
 
     return keys.slice(keys.indexOf(header) + 1, keys.indexOf(next))
   }
@@ -132,7 +126,7 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
     'card:md:0002-api',
     'card:md:0003-docs',
   ])
-  expect((await ui.find({ key: 'card:md:0003-docs' }))?.text).toContain('⟳')
+  expect((await row(ui, 'card:md:0003-docs'))?.text).toContain('⟳')
 
   await ui.press({ key: 'refresh' })
   expect(await under('hdr:claude', 'hdr:backlog')).toEqual([
@@ -142,7 +136,7 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
 
   release()
   expect(await moving).toMatchObject({ result: 'Moved #3 to Claude.' })
-  expect((await ui.find({ key: 'card:md:0003-docs' }))?.text).not.toContain('⟳')
+  expect((await row(ui, 'card:md:0003-docs'))?.text).not.toContain('⟳')
   expect(await under('hdr:claude', 'hdr:backlog')).toEqual([
     'card:md:0002-api',
     'card:md:0003-docs',
@@ -158,7 +152,7 @@ test('a refused move puts the card back on the board', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   calls.denyWrite = 'EACCES: read-only'
 
-  await ui.press({ key: 'card:md:0003-docs' })
+  await click(ui, 'card:md:0003-docs')
   await ui.press({ key: 'move:claude' })
 
   expect(toasts).toHaveLength(1)
@@ -168,7 +162,7 @@ test('a refused move puts the card back on the board', async ($, on) => {
     /^Backlog/,
   )
   await ui.press({ key: 'back' })
-  const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key)
+  const keys = await rowKeys(ui)
   expect(keys.slice(keys.indexOf('hdr:backlog'))).toEqual([
     'hdr:backlog',
     'card:md:0003-docs',
@@ -183,13 +177,13 @@ test('the toolbar refresh button reloads the cards from disk', async ($, on) => 
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ key: 'card:md:0005-new' })).toBeUndefined()
+  expect(await row(ui, 'card:md:0005-new')).toBeUndefined()
 
   calls.edit(path(5, 'new'), card(5, { status: 'human', title: 'Fresh' }))
   await ui.press({ key: 'refresh' })
 
   expect(calls.lists).toBe(2)
-  expect((await ui.find({ key: 'card:md:0005-new' }))?.text).toContain('Fresh')
+  expect((await row(ui, 'card:md:0005-new'))?.text).toContain('Fresh')
   await ui.unmount()
 })
 
@@ -217,7 +211,7 @@ test('a card file Claude writes shows on the board, any other write does not', a
   })
   await clock.settle()
   expect(calls.lists).toBe(before + 1)
-  expect((await ui.find({ key: 'card:md:0005-new' }))?.text).toContain('Fresh')
+  expect((await row(ui, 'card:md:0005-new'))?.text).toContain('Fresh')
 
   await $.tool.call({
     tool: 'Edit',
@@ -238,10 +232,10 @@ test('an empty board explains where cards go', async ($, on) => {
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
+  expect((await row(ui, 'note'))?.text).toContain('.kanban/0001-title.md')
   expect(
-    (await ui.find({ type: 'Text', text: /No cards yet/ }))?.text,
-  ).toContain('.kanban/0001-title.md')
-  expect(await ui.findAll({ type: 'Text', text: '  (empty)' })).toHaveLength(3)
+    (await rowKeys(ui)).filter(key => key.startsWith('empty:')),
+  ).toHaveLength(3)
   await ui.unmount()
 })
 
@@ -252,13 +246,13 @@ test('a card whose file is gone leaves the board on refresh', async ($, on) => {
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ key: 'card:md:0002-api' })).toBeDefined()
+  expect(await row(ui, 'card:md:0002-api')).toBeDefined()
 
   delete files[path(2, 'api')]
   await ui.press({ key: 'refresh' })
 
-  expect(await ui.find({ key: 'card:md:0002-api' })).toBeUndefined()
-  expect(await ui.find({ key: 'card:md:0001-login' })).toBeDefined()
+  expect(await row(ui, 'card:md:0002-api')).toBeUndefined()
+  expect(await row(ui, 'card:md:0001-login')).toBeDefined()
   await ui.unmount()
 })
 
@@ -276,15 +270,11 @@ test('a read that fails shows its reason in the toolbar and keeps the cards', as
 
   const toolbar = await ui.find({ type: 'Text', text: /EIO/ })
   expect(toolbar?.props.color).toBe('error')
-  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
-    'Fix login',
-  )
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('Fix login')
 
   calls.denyRead = undefined
   await ui.press({ key: 'refresh' })
-  expect((await ui.find({ key: 'card:md:0001-login' }))?.text).toContain(
-    'Edited',
-  )
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('Edited')
   expect(await ui.find({ type: 'Text', text: /EIO/ })).toBeUndefined()
   await ui.unmount()
 })
@@ -312,13 +302,14 @@ for (const surface of EVERY_SURFACE) {
     const rows = [
       ...(await ui.findAll({ type: 'Button' })),
       ...(await ui.findAll({ type: 'Text' })),
+      ...(await listRows(ui)),
     ]
 
     expect(rows.length).toBeGreaterThan(8)
-    for (const row of rows) {
-      expect(cellWidth(row.text)).toBeLessThanOrEqual(PANE.props.bodyColumns)
+    for (const one of rows) {
+      expect(cellWidth(one.text)).toBeLessThanOrEqual(PANE.props.bodyColumns)
     }
-    expect((await ui.find({ key: 'card:md:0005-jp' }))?.text).toContain('…')
+    expect((await row(ui, 'card:md:0005-jp'))?.text).toContain('…')
     await ui.unmount()
   })
 }
