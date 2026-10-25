@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { KanbanCard, KanbanColumn, KanbanDetail } from '../types'
-import { parseSections } from './handoff'
+import { escapeMarkers, parseSections } from './handoff'
 import { KANBAN_DIR, isColumn, maxOrder } from './model'
 import { S } from './strings'
 
@@ -228,7 +228,7 @@ async function writeNew(
     updatedAt: now,
     file,
   }
-  await $.fs.write(file, serializeCardFile(card, spec))
+  await $.fs.write(file, serializeCardFile(card, escapeMarkers(spec)))
 
   return card
 }

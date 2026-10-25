@@ -3,7 +3,13 @@ import type { EngineInterface, Timer } from 'claude-code'
 import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
 import { readBoard, readSync, updateSync, updateTick } from './atoms'
 import { moveRemote } from './backend'
-import { announceHandoff, ensureBackend, refresh, setBoard } from './board'
+import {
+  announceHandoff,
+  ensureBackend,
+  noteConfirmed,
+  refresh,
+  setBoard,
+} from './board'
 import { MAX_ATTEMPTS, TICK_SHOWN_MS, errorMessage, maxOrder } from './model'
 import { S } from './strings'
 
@@ -193,12 +199,13 @@ export function ensureTicker($: EngineInterface): void {
   ticker = $.clock.every(TICK_MS, () => detach($, tick($)))
 }
 
-async function tick($: EngineInterface): Promise<void> {
-  const sync = await readSync($)
-  const isShowing = Object.values(sync).some(
+const isShowing = (sync: Sync) =>
+  Object.values(sync).some(
     entry => entry.phase === 'pending' || entry.phase === 'ok',
   )
-  if (isShowing) {
+
+async function tick($: EngineInterface): Promise<void> {
+  if (isShowing(await readSync($))) {
     await updateTick($, count => count + 1)
 
     return
@@ -206,6 +213,9 @@ async function tick($: EngineInterface): Promise<void> {
 
   ticker?.cancel()
   ticker = undefined
+  // A move in another dispatch may have landed after that read and found this
+  // ticker still running, so it started none: look again, at the state as it is.
+  if (isShowing(await updateSync($, sync => sync))) ensureTicker($)
 }
 
 function expireLater(
@@ -282,6 +292,8 @@ async function settle(
   sent: KanbanSync,
   outcome: Outcome,
 ): Promise<boolean> {
+  // Before any await: a load that lands in between must already know.
+  if ('patch' in outcome) noteConfirmed(card.id)
   const settledAt = await $.clock.now()
   const seen: {
     next: 'ok' | 'more' | 'failed' | 'undone' | 'gone'

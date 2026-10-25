@@ -8,12 +8,12 @@ A Claude Code mod that puts a kanban board in a side pane: four sections that sh
 
 | Section | Who holds the ball | What it means |
 |---|---|---|
-| Human | You | Claude handed the card over and is waiting on your review or answer. Always on top, so it never scrolls out of sight. |
+| Human | You | Claude handed the card over and is waiting on your review or answer. Always the first section. |
 | Claude | Claude | Claude is working on it. |
 | Backlog | Nobody yet | Parked or not started. |
 | Done | Nobody | Finished. Collapsed by default; shows the 10 most recent (`Done 10 of 57`). |
 
-Each section shows at most 5 cards and scrolls on its own with the mouse wheel; clickable `↑ N more` / `↓ N more` rows page through the rest. Click a section header to collapse or expand it. A card row shows `#number`, the title, a sync glyph and its age.
+Each section shows at most 5 cards (fewer in a short pane, so the board fits it) and scrolls on its own with the mouse wheel; clickable `↑ N more` / `↓ N more` rows page through the rest. When a section's list is already at the end the wheel points to, the wheel scrolls the pane instead. Click a section header to collapse or expand it. A card row shows `#number`, the title, a sync glyph and its age.
 
 A card moves between sections when you move it in the pane, when Claude moves it with its tools, or (GitHub) when its board status changes elsewhere.
 
@@ -43,7 +43,7 @@ Type `/kanban` to open the board in a side pane. Click a card to open its detail
 
 Claude can work the board without the pane open (see [Claude's tools](#claudes-tools-and-the-handoff)).
 
-The toolbar shows the refresh button, the active backend, when the board was last updated, and any error. While the pane is open the board refreshes every 45 seconds. The status line shows `N cards waiting on you`, and a toast appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
+The toolbar shows the refresh button, the active backend, when the board was last updated, and any error. When a move has failed it also shows `✕N retry`, and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). While the pane is open the board refreshes every 45 seconds. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
 
 ### Moving cards
 
@@ -51,7 +51,7 @@ The toolbar shows the refresh button, the active backend, when the board was las
 - **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, fold a section, page a section), and `m` followed by `1`-`4` or `h`/`c`/`b`/`d` moves the card under the cursor to Human, Claude, Backlog or Done. Any other key cancels the move.
 - **VS Code and mobile:** there is no drag. Open the card and press a `Move to:` button.
 
-A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure with a Retry button (on the card and as `✕N retry` in the toolbar). Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.
+A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure on the card's row; open the card for the reason and a Retry button, or press `✕N retry` in the toolbar to send every failed move again. Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.
 
 ## Backends
 
@@ -103,9 +103,9 @@ The board maps onto your existing Projects board without restructuring it. The S
 | Section | A card is there when |
 |---|---|
 | Done | Status is Done, or the issue is closed. |
-| Backlog | Status is Backlog, Ready or empty, even if the issue has the `human` label. |
-| Human | Status is In review (tagged `rev`), or Status is In progress and the issue has the `human` label (tagged `hum`). |
-| Claude | Status is In progress. |
+| Backlog | Status is Backlog, Ready or empty, even if the issue has the `human` label. Any other Status the board does not know goes here too, unless the issue has the `human` label. |
+| Human | Status is In review (tagged `rev`), or Status is In progress (or one the board does not know) and the issue has the `human` label (tagged `hum`). |
+| Claude | Status is In progress and the issue has no `human` label. |
 
 Moving a card on GitHub:
 
@@ -128,7 +128,7 @@ Claude gets these tools. They work with the pane closed.
 | `kanban_show` | Reads one card: the spec and every handoff and feedback, newest last. |
 | `kanban_handoff` | Records a handoff on a card. |
 | `kanban_move` | Moves a card to `human`, `claude`, `backlog` or `done`. |
-| `kanban_create` | Creates a card (local backend only; on GitHub, Claude is told to use the `/issue` skill). |
+| `kanban_create` | Creates a card (local backend only; on GitHub, Claude is told to use the `/issue` skill). The spec cannot open a handoff or feedback section: marker lines in it are escaped. |
 
 ### Handoff format
 
@@ -154,7 +154,7 @@ Open a card in Human to review it. The detail view has:
 
 Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
 
-On mobile there is no text box, so Send back is disabled with a hint.
+On mobile there is no text box, so Send back is not shown; the detail view says to use the terminal or desktop.
 
 The loop: Claude works a card, writes a handoff, and moves it to Human; you review, then Approve, Send back or Park; Send back returns it to Claude with your feedback.
 

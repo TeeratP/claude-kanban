@@ -16,6 +16,7 @@ import {
 } from './fakes'
 
 const POLL = 45_000
+const NONE = new Set<string>()
 
 const cards = () => ({
   [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
@@ -74,23 +75,23 @@ test('a load takes the remote board', () => {
   const remote = [cardOf(1, 'claude', { order: 7 }), cardOf(3, 'human')]
   const local = [cardOf(1, 'backlog'), cardOf(2, 'done')]
 
-  expect(mergeRemote(remote, local, {})).toEqual(remote)
+  expect(mergeRemote(remote, local, {}, NONE)).toEqual(remote)
 })
 
 test('a card whose move is pending keeps its column and order here', () => {
   const mine = cardOf(1, 'claude', { order: 9 })
   const remote = [cardOf(1, 'backlog', { title: 'Renamed' })]
 
-  expect(mergeRemote(remote, [mine], syncOf(mine.id, 'pending'))).toEqual([
-    { ...remote[0], column: 'claude', order: 9 },
-  ])
+  expect(mergeRemote(remote, [mine], syncOf(mine.id, 'pending'), NONE)).toEqual(
+    [{ ...remote[0], column: 'claude', order: 9 }],
+  )
 })
 
 test('a card whose move failed keeps its column and order here', () => {
   const mine = cardOf(1, 'claude', { order: 9 })
   const remote = [cardOf(1, 'backlog')]
 
-  expect(mergeRemote(remote, [mine], syncOf(mine.id, 'failed'))).toEqual([
+  expect(mergeRemote(remote, [mine], syncOf(mine.id, 'failed'), NONE)).toEqual([
     { ...remote[0], column: 'claude', order: 9 },
   ])
 })
@@ -99,7 +100,23 @@ test('a move that has settled no longer outranks the remote', () => {
   const mine = cardOf(1, 'claude', { order: 9 })
   const remote = [cardOf(1, 'human')]
 
-  expect(mergeRemote(remote, [mine], syncOf(mine.id, 'ok'))).toEqual(remote)
+  expect(mergeRemote(remote, [mine], syncOf(mine.id, 'ok'), NONE)).toEqual(
+    remote,
+  )
+})
+
+test('a card whose move was confirmed while the load was reading keeps its column and order here', () => {
+  const mine = cardOf(1, 'human', { order: 9 })
+  const remote = [cardOf(1, 'backlog', { title: 'Renamed' })]
+  const confirmed = new Set([mine.id])
+
+  expect(mergeRemote(remote, [mine], {}, confirmed)).toEqual([
+    { ...remote[0], column: 'human', order: 9 },
+  ])
+  expect(mergeRemote(remote, [mine], syncOf(mine.id, 'ok'), confirmed)).toEqual(
+    [{ ...remote[0], column: 'human', order: 9 }],
+  )
+  expect(mergeRemote(remote, [mine], {}, new Set(['md:other']))).toEqual(remote)
 })
 
 test('a card gone from the remote stays only while its move is pending', () => {
@@ -107,9 +124,9 @@ test('a card gone from the remote stays only while its move is pending', () => {
   const other = cardOf(2, 'backlog')
 
   expect(
-    mergeRemote([], [moving, other], syncOf(moving.id, 'pending')),
+    mergeRemote([], [moving, other], syncOf(moving.id, 'pending'), NONE),
   ).toEqual([moving])
-  expect(mergeRemote([], [moving, other], {})).toEqual([])
+  expect(mergeRemote([], [moving, other], {}, NONE)).toEqual([])
 })
 
 test('the board reloads every 45 seconds while the pane is open', async ($, on) => {
@@ -207,6 +224,71 @@ test('a poll does not undo a move that is still pending', async ($, on) => {
   })
   release()
   await moving
+})
+
+// A poll starts its load, which has taken the cards as they stand but waits on a new file.
+// Card 3 then moves to Human and the backend confirms; only then does the load land.
+async function moveDuringLoad($: Engine, on: Parameters<typeof boot>[0]) {
+  const files = cards()
+  const kit = boot(on, files)
+  await open($)
+  await kit.clock.settle()
+  kit.world.panes = ['kanban']
+  kit.calls.edit(path(5, 'new'), card(5, { status: 'backlog', title: 'Fresh' }))
+  let release = () => {}
+  kit.calls.lateRead = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  await kit.clock.advance(POLL)
+  await kit.clock.settle()
+  await $.tool.call({
+    tool: 'mcp__kanban__kanban_move',
+    card: 3,
+    to: 'human',
+  })
+  await kit.clock.advance(SYNC_PAUSE)
+  expect(files[path(3, 'docs')]).toContain('status: human')
+
+  return { ...kit, release }
+}
+
+test('a load that read before a move was confirmed does not undo it', async ($, on) => {
+  const { clock, toasts, statuses, release } = await moveDuringLoad($, on)
+  expect(toasts).toEqual(['Waiting on you: #3 Write docs'])
+
+  release()
+  await clock.settle()
+
+  // The load landed: the new file is on the board.
+  expect(
+    await $.tool.call({ tool: 'mcp__kanban__kanban_list', column: 'backlog' }),
+  ).toMatchObject({ result: expect.stringContaining('#5 [backlog] Fresh') })
+  expect(
+    await $.tool.call({ tool: 'mcp__kanban__kanban_list', column: 'human' }),
+  ).toMatchObject({
+    result: expect.stringContaining('#3 [human] Write docs'),
+  })
+  expect(statuses.at(-1)).toBe('2 cards waiting on you')
+
+  await clock.advance(POLL)
+  expect(toasts).toEqual(['Waiting on you: #3 Write docs'])
+})
+
+test('a slow load does not undo a move whose mark is already gone', async ($, on) => {
+  const { clock, toasts, release } = await moveDuringLoad($, on)
+
+  await clock.advance(5000)
+  release()
+  await clock.settle()
+
+  expect(
+    await $.tool.call({ tool: 'mcp__kanban__kanban_list', column: 'human' }),
+  ).toMatchObject({
+    result: expect.stringContaining('#3 [human] Write docs'),
+  })
+  await clock.advance(POLL)
+  expect(toasts).toEqual(['Waiting on you: #3 Write docs'])
 })
 
 test('the pane opens from the saved board while the first load runs', async ($, on) => {

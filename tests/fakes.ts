@@ -76,6 +76,9 @@ export function fakeFs(on: On, files: Files) {
     hold: undefined as Promise<void> | undefined,
     // While set, a listing waits for it: the first load stays unanswered.
     holdList: undefined as Promise<void> | undefined,
+    // The next read is answered only once this settles: a load that is slow on one file
+    // while it has already taken the others as they stand. Later reads are not held.
+    lateRead: undefined as Promise<void> | undefined,
     // A change made outside the plugin, as Claude's Write or the person's editor does.
     edit: (file: string, text: string) => {
       files[file] = text
@@ -108,10 +111,13 @@ export function fakeFs(on: On, files: Files) {
       })),
     }
   })
-  on('fs.read', (_, e) => {
+  on('fs.read', async (_, e) => {
     if (calls.denyRead !== undefined) return { deny: calls.denyRead }
 
     const text = files[relative(e.path)]
+    const late = calls.lateRead
+    calls.lateRead = undefined
+    await late
 
     return text === undefined ? { deny: `ENOENT: ${e.path}` } : { value: text }
   })

@@ -26,6 +26,15 @@ type BoardCache = {
 let loading: Promise<KanbanBoard> | undefined
 let isStale = false
 let pollTimer: Timer | undefined
+// Cards whose move the backend confirmed while a load was reading: it may have read them
+// from before the move. Not the sync entries, which are gone two seconds after a confirm,
+// sooner than a slow load can land.
+let confirmedDuringLoad: Set<string> | undefined
+
+/** Notes that the backend confirmed a card's move, so a load reading now does not undo it. */
+export function noteConfirmed(cardId: string): void {
+  confirmedDuringLoad?.add(cardId)
+}
 
 /** The status line: how many cards sit in Human, or nothing when none do. */
 function updateStatusLine($: EngineInterface, cards: readonly KanbanCard[]) {
@@ -109,11 +118,15 @@ export async function refreshAfter<R extends { deny?: string }>(
   return ran
 }
 
-/** Remote is authoritative, except for a card whose move is still unsettled. */
+/**
+ * Remote is authoritative, except for a card whose move is still unsettled or was
+ * confirmed while the load was reading (`confirmed`): that load may be older than the move.
+ */
 export function mergeRemote(
   remote: readonly KanbanCard[],
   local: readonly KanbanCard[],
   sync: Readonly<Record<string, KanbanSync>>,
+  confirmed: ReadonlySet<string>,
 ): KanbanCard[] {
   const isUnsettled = (card: KanbanCard) => {
     const phase = sync[card.id]?.phase
@@ -124,7 +137,7 @@ export function mergeRemote(
   const merged = remote.map(card => {
     const own = mine.get(card.id)
 
-    return own !== undefined && isUnsettled(card)
+    return own !== undefined && (isUnsettled(card) || confirmed.has(card.id))
       ? { ...card, column: own.column, order: own.order }
       : card
   })
@@ -254,6 +267,8 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
 
   try {
     const info = await ensureBackend($)
+    const confirmed = new Set<string>()
+    confirmedDuringLoad = confirmed
     const remote = await loadCards($, info)
     const sync = await readSync($)
     const fetchedAt = await $.clock.now()
@@ -264,7 +279,7 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
 
       return {
         ...current,
-        cards: mergeRemote(remote, current.cards, sync),
+        cards: mergeRemote(remote, current.cards, sync, confirmed),
         fetchedAt,
         isLoading: false,
       }
@@ -278,6 +293,8 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     $.ui.log(S.refreshFailed(reason), { to: 'debug' })
 
     return setBoard($, board => ({ ...board, isLoading: false, error: reason }))
+  } finally {
+    confirmedDuringLoad = undefined
   }
 }
 

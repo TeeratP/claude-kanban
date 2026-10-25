@@ -147,3 +147,43 @@ test('a smaller pane shows fewer cards per section', async ($, on) => {
   expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 7 more')
   await ui.unmount()
 })
+
+test("at the end of a section the wheel is the engine's, so a short pane can scroll", async ($, on) => {
+  const { clock, scrolls } = boot(on, board())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({
+    ...PANE,
+    props: { ...PANE.props, scroll: { offset: 0, bodyRows: 16 } },
+    surface: 'terminal',
+  })
+  // Every section open, one card each: the tree is taller than the pane.
+  await click(ui, 'hdr:done')
+  expect((await rowKeys(ui)).filter(key => key.startsWith('card:'))).toEqual([
+    'card:md:0001-h',
+    'card:md:0011-b',
+  ])
+  // 0 toolbar, 1 Human, 2 its card, 3 its more row, 4 Claude, 5 (empty), 6 Backlog.
+  const pointer = { column: 3, row: 6 }
+  const wheel = (by: number) =>
+    $.ui.scroll({ ...SCROLL, bodyRows: 16, by, pointer })
+
+  await wheel(-1)
+  expect(scrolls).toHaveLength(1)
+  expect(await row(ui, 'more:backlog:up')).toBeUndefined()
+
+  await wheel(1)
+  expect(scrolls).toHaveLength(1)
+  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+
+  await wheel(40)
+  expect(scrolls).toHaveLength(1)
+  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 7 more')
+  expect(await row(ui, 'more:backlog:down')).toBeUndefined()
+
+  await wheel(1)
+  expect(scrolls).toHaveLength(2)
+  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 7 more')
+  await ui.unmount()
+})
