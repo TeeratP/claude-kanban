@@ -152,6 +152,8 @@ Open a card in Human to review it. The detail view has:
 - **Send back:** type feedback in the box first, then press the button. The feedback is appended to the card (a `## Feedback (date)` section, or an issue comment on GitHub), the card moves to Claude, and once that move is confirmed Claude is prompted to resume the card: read the newest feedback and continue. An empty box shows a toast and moves nothing.
 - **Park:** moves the card to Backlog.
 
+The Human queue can be reviewed from the keyboard: `a` approve, `s` send back, `p` park, `f` write feedback (moves the cursor to the box), `n` / `k` next / previous Human card (wrapping), `b` back to the board. The line under the title reads `Human 2 of 5`, and a dim line lists the keys. After Approve, Send back or Park the next Human card opens by itself, or the board when none is left. The keys work while the pane has the keyboard; `Esc` is the engine's and hands the keyboard back to the prompt.
+
 Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
 
 On mobile there is no text box, so Send back is not shown; the detail view says to use the terminal or desktop.

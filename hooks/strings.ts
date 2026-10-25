@@ -204,4 +204,23 @@ export const S = {
   // #11
   keyHint: '↑↓ ⏎ open · m move',
   moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
+
+  // #18
+  queuePosition: (at: number, total: number) =>
+    `${COL.human} ${at} of ${total}`,
+  prevCard: '‹ Prev',
+  nextCard: 'Next ›',
+  focusFeedback: 'Write feedback',
+  focusFailed: (reason: string) =>
+    `Could not move to the feedback box: ${reason}`,
+  reviewHint: (keys: readonly string[]) => keys.join(' · '),
+  reviewKeys: {
+    approve: 'a approve',
+    sendBack: 's send back',
+    park: 'p park',
+    feedback: 'f feedback',
+    next: 'n next',
+    prev: 'k prev',
+    board: 'b board',
+  },
 }

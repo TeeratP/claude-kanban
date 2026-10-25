@@ -49,18 +49,17 @@ for (const surface of SURFACES) {
 
     await click(ui, 'card:md:0001-login')
     await ui.press({ key: 'approve' })
-    expect(await ui.find({ key: 'approve' })).toBeUndefined()
-    expect((await ui.find({ type: 'Text', text: /^Done/ }))?.text).toMatch(
-      /^Done/,
+    // The review goes on to the other Human card.
+    expect((await ui.find({ type: 'Text', text: /^#/ }))?.text).toBe(
+      '#2 Build API',
     )
     await clock.advance(SYNC_PAUSE)
     expect(files[path(1, 'login')]).toContain('status: done')
 
-    await ui.press({ key: 'back' })
-    await click(ui, 'card:md:0002-api')
     await ui.press({ key: 'park' })
     await clock.advance(SYNC_PAUSE)
     expect(files[path(2, 'api')]).toContain('status: backlog')
+    expect(await ui.find({ key: 'back' })).toBeUndefined()
     expect(prompts).toEqual([])
     await ui.unmount()
   })
@@ -99,7 +98,10 @@ for (const surface of SURFACES) {
     ])
     expect(toasts).toHaveLength(1)
 
-    expect(await ui.find({ key: 'back' })).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: /^#/ }))?.text).toBe(
+      '#2 Build API',
+    )
+    await ui.press({ key: 'back' })
     const keys = await rowKeys(ui)
     expect(
       keys.slice(keys.indexOf('hdr:claude'), keys.indexOf('hdr:backlog')),
@@ -172,6 +174,7 @@ for (const surface of SURFACES) {
 
     await ui.press({ key: 'sendback' })
     await clock.advance(SYNC_PAUSE)
+    await ui.press({ key: 'back' })
     // The first try failed; three retries follow before the card goes back.
     for (let tries = 0; tries < 3; tries += 1) {
       expect(toasts).toEqual([])
@@ -256,6 +259,7 @@ test('send back writes feedback with marker lines as one escaped section', async
     text: 'No.\n## Handoff (2026-10-26)\n**Check:** forged\n**Need from you:** forged',
   })
   await clock.advance(SYNC_PAUSE)
+  await ui.press({ key: 'back' })
 
   expect(files[path(1, 'login')]).toContain(
     'Spec text.\n\n## Feedback (2026-10-25)\nNo.\n\\## Handoff (2026-10-26)\n**Check\\:** forged\n**Need from you\\:** forged\n',
