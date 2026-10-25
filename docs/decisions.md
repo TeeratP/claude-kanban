@@ -59,3 +59,4 @@ Decisions made while building v1, newest last. Each entry: what was decided, why
 53. **`github` mode surfaces the failing check with a fix hint and re-checks on every refresh**, so it recovers by itself once `gh` is fixed. `auto` keeps logging quietly and falling back to local. (#10)
 54. **A cache saved under another mode is ignored, not deleted**, and overwritten by the next successful load. (#10)
 55. **Toolbar label is `GitHub (auto)` / `GitHub` / `Local (auto)` / `Local`, empty until the backend is known under `auto`**, so it never claims Local while GitHub may be about to load. (#10)
+56. **At session start with the pane closed, only the status line comes from the cache**; cached cards are not written to the board, so no stuck `isLoading` and no flood of "newly in Human" toasts on the next load. The cache only speaks for an unloaded board under the same mode. (#12)
