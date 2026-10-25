@@ -2,6 +2,7 @@ import type {
   KanbanBackendMode,
   KanbanCard,
   KanbanColumn,
+  KanbanSection,
   KanbanTag,
 } from '../types'
 
@@ -12,7 +13,18 @@ const COL = {
   done: 'Done',
 } satisfies Record<KanbanColumn, string>
 
+const SECTION_NAME = {
+  handoff: 'Handoff',
+  feedback: 'Feedback',
+  question: 'Question',
+  answer: 'Answer',
+} satisfies Record<KanbanSection['kind'], string>
+
 const BACKEND = { github: 'GitHub', local: 'Local' } as const
+
+// A section someone else wrote on the issue is shown, but never counts.
+const fromOther = (login?: string) =>
+  login === undefined ? '' : ` from @${login}, not counted`
 
 // Every string the person or the model reads lives here.
 export const S = {
@@ -25,7 +37,11 @@ export const S = {
     `kanban: could not refresh the board: ${reason}`,
 
   col: COL,
-  tagShort: { review: 'rev', human: 'hum' } satisfies Record<KanbanTag, string>,
+  tagShort: {
+    review: 'rev',
+    human: 'hum',
+    question: '?',
+  } satisfies Record<KanbanTag, string>,
   count: (shown: number, total: number) =>
     shown === total ? String(total) : `${shown} of ${total}`,
   empty: '  (empty)',
@@ -53,8 +69,10 @@ export const S = {
   detailFailed: (reason: string) => `Could not read the card: ${reason}`,
   metaColumn: (column: KanbanColumn) => COL[column],
   syncPending: (to: KanbanColumn) => `⟳ syncing to ${COL[to]}`,
-  handoffHeading: (date: string) => `Handoff (${date})`,
-  feedbackHeading: (date: string) => `Feedback (${date})`,
+  handoffHeading: (date: string, byOther?: string) =>
+    `Handoff (${date})${fromOther(byOther)}`,
+  feedbackHeading: (date: string, byOther?: string) =>
+    `Feedback (${date})${fromOther(byOther)}`,
 
   toolList: {
     description:
@@ -93,7 +111,7 @@ export const S = {
   // #6
   toolShow: {
     description:
-      'Show one kanban card in full: its spec, then every Handoff and Feedback section, newest last.',
+      'Show one kanban card in full: its spec, then every Handoff, Feedback, Question and Answer section, newest last.',
     card: 'The card number, as shown by kanban_list.',
   },
   toolHandoff: {
@@ -211,16 +229,57 @@ export const S = {
   prevCard: '‹ Prev',
   nextCard: 'Next ›',
   focusFeedback: 'Write feedback',
+  focusAnswer: 'Write answer',
   focusFailed: (reason: string) =>
     `Could not move to the feedback box: ${reason}`,
   reviewHint: (keys: readonly string[]) => keys.join(' · '),
   reviewKeys: {
     approve: 'a approve',
     sendBack: 's send back',
+    answer: 's answer',
     park: 'p park',
-    feedback: 'f feedback',
+    write: 'f write',
     next: 'n next',
     prev: 'k prev',
     board: 'b board',
   },
+
+  // #15
+  // Short: they share a 44-column toolbar with the backend label.
+  rateLimitHit: (minutes: number) => `limit hit · paused ${minutes}m`,
+  rateLimitLow: (minutes: number) => `limit low · paused ${minutes}m`,
+  refreshWhilePaused: (minutes: number) =>
+    `GitHub rate limit is low and polling is paused for ${minutes}m. Refreshing anyway.`,
+  rateLimitLookupFailed: (reason: string) =>
+    `kanban: could not read when the GitHub rate limit resets: ${reason}`,
+  pageLimitReached: (items: number) =>
+    `kanban: the board has more than ${items} items; only the first ${items} are shown.`,
+  aiLabelDescription: 'agent can do end-to-end',
+  unknownAuthor: 'unknown',
+  // #21
+  headingOf: (section: KanbanSection) =>
+    `${SECTION_NAME[section.kind]} (${section.date})${fromOther(section.byOther)}`,
+  toolAsk: {
+    description:
+      'Ask the person a blocking question on a kanban card when you cannot go on without a decision only they can make. Records the question and moves the card to Human; you are asked to resume once they answer. Not for progress updates or for questions you can settle yourself: record a handoff with kanban_handoff when the work is done.',
+    card: 'The card number, as shown by kanban_list.',
+    question:
+      'The question, with what you need decided and the options you see.',
+  },
+  askEmpty: 'question must be text that is not empty.',
+  askFailed: (reason: string) => `Could not record the question: ${reason}`,
+  asked: (card: KanbanCard) =>
+    `Recorded your question on #${card.number} and moved it to Human (syncing). Stop here: you are asked to resume once the person answers.`,
+  claudeAsks: (card: KanbanCard) =>
+    `Claude asks: ${card.question ?? card.title} (#${card.number})`,
+  askBlock: 'Claude asks',
+  answerButton: 'Answer',
+  answerLabel: 'Answer',
+  answerPlaceholder: 'Your answer to Claude',
+  answerFirst: 'Write the answer first, then send it to Claude.',
+  answerFailed: (reason: string) => `Could not save the answer: ${reason}`,
+  answerNoField:
+    'Answering is unavailable here: this screen has no text field. Use the terminal or desktop.',
+  answerPrompt: (n: number) =>
+    `Resume kanban card #${n}: the person answered your question; read it with mcp__kanban__kanban_show and continue.`,
 }

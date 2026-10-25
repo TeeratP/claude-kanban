@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 
 import type { KanbanCard, KanbanGithub } from '../types'
 import { detectBackend, readDiff } from '../hooks/backend'
@@ -7,13 +8,25 @@ import {
   columnOf,
   detailGithub,
   diffGithub,
+  isRateLimited,
   loadGithub,
   moveGithub,
   parseClaudeMd,
   planMove,
 } from '../hooks/github'
-import { SYNC_PAUSE, boot } from './fakes'
-import { fakeEngine, fakeProcess } from './fake-gh'
+import { isHandoffValid } from '../hooks/handoff'
+import { click } from './board-ui'
+import { NOW, PANE, RUN, SYNC_PAUSE, boot } from './fakes'
+import {
+  LIVE_RATE_LIMIT,
+  boardReply,
+  boardRoute,
+  cursorOf,
+  fakeEngine,
+  fakeProcess,
+  issueNode,
+  queryOf,
+} from './fake-gh'
 import type { Route } from './fake-gh'
 
 // Lines copied from the CLAUDE.md files this plugin is meant to read.
@@ -293,10 +306,10 @@ const VERIFY = [
 ]
 const EDIT = ['gh', 'issue', 'edit', '12', '--repo', 'TeeratP/claude-kanban']
 
-test('planMove to Claude sets In progress and adds the ai label', () => {
+test('planMove to Claude edits the labels first, then sets In progress', () => {
   expect(planMove(ghCard({ labels: [] }), 'claude', CFG)).toEqual([
-    itemEdit('o-progress'),
     [...EDIT, '--add-label', 'ai'],
+    itemEdit('o-progress'),
   ])
 })
 
@@ -308,15 +321,23 @@ test('planMove to Claude removes the human label only when the card has it', () 
       CFG,
     ),
   ).toEqual([
-    itemEdit('o-progress'),
     [...EDIT, '--add-label', 'ai', '--remove-label', 'human'],
+    itemEdit('o-progress'),
   ])
-  expect(planMove(ghCard({ labels: ['ai'] }), 'claude', CFG)[1]).not.toContain(
+  expect(planMove(ghCard({ labels: ['ai'] }), 'claude', CFG)[0]).not.toContain(
     '--remove-label',
   )
   expect(
-    planMove(ghCard({ labels: undefined }), 'claude', CFG)[1],
+    planMove(ghCard({ labels: undefined }), 'claude', CFG)[0],
   ).not.toContain('--remove-label')
+})
+
+test('planMove to Claude removes the human label under the spelling the card has it', () => {
+  for (const spelling of ['Human', 'HUMAN']) {
+    expect(
+      planMove(ghCard({ labels: ['ai', spelling] }), 'claude', CFG)[0],
+    ).toEqual([...EDIT, '--add-label', 'ai', '--remove-label', spelling])
+  }
 })
 
 test('planMove to Human sets In review and touches no label', () => {
@@ -364,102 +385,160 @@ test('planMove needs the card to be on the board', () => {
   )
 })
 
-// What gh 2.74 prints, bodies and all.
-const ITEM_LIST = JSON.stringify({
-  items: [
-    item('PVTI_1', 1, 'In progress', 'TeeratP/claude-kanban'),
-    item('PVTI_2', 2, 'Done', 'TeeratP/claude-kanban'),
-    item('PVTI_3', 3, 'In review', 'TeeratP/claude-kanban'),
-    item('PVTI_4', 4, 'Backlog', 'TeeratP/claude-kanban'),
-    item('PVTI_5', 5, 'In progress', 'TeeratP/claude-kanban'),
-    item('PVTI_o', 1, 'In progress', 'TeeratP/someone-else'),
-    {
-      id: 'PVTI_pr',
-      title: 'A pull request',
-      status: 'In progress',
-      content: {
-        type: 'PullRequest',
-        number: 30,
-        repository: 'TeeratP/claude-kanban',
+// What `gh api graphql` printed for the board query against board #7 on
+// 2026-10-25, three of its sixteen items. `rateLimit.cost` was 2.
+const LIVE_PAGE = JSON.stringify({
+  data: {
+    node: {
+      items: {
+        pageInfo: {
+          hasNextPage: false,
+          endCursor: 'Y3Vyc29yOnYyOpKtMDAwMDAwMDAuMDYyNc4Q2eon',
+        },
+        nodes: [
+          {
+            id: 'PVTI_lAHOAcCsLc4BorgLzhDZWwk',
+            fieldValueByName: { name: 'In progress', optionId: 'b15c285e' },
+            content: {
+              number: 1,
+              title: '[KANB-UIX] Kanban mod v1 (epic)',
+              url: 'https://github.com/TeeratP/claude-kanban/issues/1',
+              state: 'OPEN',
+              createdAt: '2026-10-25T16:44:28Z',
+              updatedAt: '2026-10-25T16:44:28Z',
+              repository: { nameWithOwner: 'TeeratP/claude-kanban' },
+              labels: { nodes: [{ name: 'feature' }, { name: 'ai' }] },
+              closedByPullRequestsReferences: { nodes: [] },
+            },
+          },
+          {
+            id: 'PVTI_lAHOAcCsLc4BorgLzhDZWxo',
+            fieldValueByName: { name: 'Done', optionId: '201b4a64' },
+            content: {
+              number: 2,
+              title: '[KANB-UIX] Foundation: pane, sections, scroll',
+              url: 'https://github.com/TeeratP/claude-kanban/issues/2',
+              state: 'CLOSED',
+              createdAt: '2026-10-25T16:44:30Z',
+              updatedAt: '2026-10-25T17:09:15Z',
+              repository: { nameWithOwner: 'TeeratP/claude-kanban' },
+              labels: { nodes: [{ name: 'feature' }, { name: 'ai' }] },
+              closedByPullRequestsReferences: { nodes: [] },
+            },
+          },
+          {
+            id: 'PVTI_lAHOAcCsLc4BorgLzhDZWyM',
+            fieldValueByName: { name: 'In review', optionId: '5f34c9ff' },
+            content: {
+              number: 3,
+              title: '[KANB-INT] GitHub Issues + Projects backend',
+              url: 'https://github.com/TeeratP/claude-kanban/issues/3',
+              state: 'OPEN',
+              createdAt: '2026-10-25T16:44:32Z',
+              updatedAt: '2026-10-25T17:21:16Z',
+              repository: { nameWithOwner: 'TeeratP/claude-kanban' },
+              labels: { nodes: [{ name: 'feature' }, { name: 'ai' }] },
+              closedByPullRequestsReferences: { nodes: [] },
+            },
+          },
+        ],
       },
     },
-    { id: 'PVTI_draft', title: 'Just a note', content: { type: 'DraftIssue' } },
-    item('PVTI_9', 9, 'In progress', 'teeratp/Claude-Kanban'),
-    item('PVTI_10', 10, undefined, 'TeeratP/claude-kanban'),
-    item('PVTI_11', 11, 'In progress', 'TeeratP/claude-kanban'),
-    item('PVTI_12', 12, 'In progress', 'TeeratP/claude-kanban'),
-  ],
-  totalCount: 12,
+    rateLimit: LIVE_RATE_LIMIT,
+  },
 })
 
-function item(
-  id: string,
-  number: number,
-  status: string | undefined,
-  repository: string,
-) {
-  return {
-    id,
-    title: `Item ${number}`,
-    ...(status === undefined ? {} : { status }),
-    labels: ['stale', 'labels'],
-    repository: `https://github.com/${repository}`,
-    content: {
-      type: 'Issue',
-      number,
-      title: `Issue ${number}`,
-      body: 'A long body that must not matter.',
-      url: `https://github.com/${repository}/issues/${number}`,
-      repository,
-    },
-  }
-}
+const GRAPHQL: readonly string[] = ['gh', 'api', 'graphql']
 
-function issue(
-  number: number,
-  fields: { state?: string; labels?: string[]; prs?: unknown[] } = {},
-) {
-  return {
-    number,
-    state: fields.state ?? 'OPEN',
-    labels: (fields.labels ?? []).map(name => ({
-      id: `L_${name}`,
-      name,
-      color: 'fff',
-    })),
-    createdAt: `2026-10-0${number % 9}T10:00:00Z`,
-    updatedAt: `2026-10-1${number % 9}T10:00:00Z`,
-    closedByPullRequestsReferences: fields.prs ?? [],
-  }
-}
+test('load asks for the board in one GraphQL query and records what it cost', async () => {
+  const { $, calls } = fakeEngine([
+    { match: GRAPHQL, reply: { stdout: LIVE_PAGE } },
+  ])
 
-const PR = (number: number, owner = 'TeeratP', name = 'claude-kanban') => ({
-  id: `PR_${number}`,
-  number,
-  url: `https://github.com/${owner}/${name}/pull/${number}`,
-  repository: { id: 'R', name, owner: { id: 'O', login: owner } },
+  const load = await loadGithub($, CFG)
+
+  expect(calls).toHaveLength(1)
+  expect(calls[0]?.argv).toEqual([
+    ...GRAPHQL,
+    '-f',
+    queryOf(calls[0]?.argv ?? []),
+    '-F',
+    'projectId=PVT_proj',
+  ])
+  const query = queryOf(calls[0]?.argv ?? [])
+  expect(query).toContain('node(id: $projectId)')
+  expect(query).toContain('items(first: 100, after: $cursor)')
+  expect(query).toContain('rateLimit { cost remaining resetAt }')
+  // The query names no field a card does not show; the only text it reads is the
+  // newest comments, for an open question.
+  expect(query).toContain('comments(last: 5)')
+  expect(query).toContain('viewer { login }')
+  expect(query.replace(/comments\(last: 5\) \{[^}]*\}\s*\}/, '')).not.toContain(
+    'body',
+  )
+
+  // The reply is the one captured before the comments joined the query. Measured live
+  // with them (2026-10-26): 3 points a page, 2 without; `gh project item-list` cost about 100.
+  expect(load.rateLimit).toEqual({
+    cost: 2,
+    remaining: 4998,
+    resetAt: Date.parse('2026-10-25T18:57:38Z'),
+  })
+  expect(load.rateLimit?.cost).toBeLessThanOrEqual(3)
+  expect(load.cards.map(card => [card.id, card.column, card.tag])).toEqual([
+    ['gh:1', 'claude', undefined],
+    ['gh:2', 'done', undefined],
+    ['gh:3', 'human', 'review'],
+  ])
+  expect(load.cards[2]).toEqual({
+    id: 'gh:3',
+    number: 3,
+    title: '[KANB-INT] GitHub Issues + Projects backend',
+    column: 'human',
+    order: 2,
+    createdAt: '2026-10-25T16:44:32Z',
+    updatedAt: '2026-10-25T17:21:16Z',
+    tag: 'review',
+    itemId: 'PVTI_lAHOAcCsLc4BorgLzhDZWyM',
+    status: 'In review',
+    labels: ['feature', 'ai'],
+    isClosed: false,
+    url: 'https://github.com/TeeratP/claude-kanban/issues/3',
+  })
+  expect(load.cards[1]?.isClosed).toBe(true)
 })
 
-const ISSUE_LIST = JSON.stringify([
-  issue(1, { labels: ['ai'] }),
-  issue(2, { state: 'CLOSED', labels: ['ai'] }),
-  issue(3, { labels: ['ai'], prs: [PR(21), PR(22, 'TeeratP', 'elsewhere')] }),
-  issue(4, { labels: ['human'] }),
-  issue(5, { labels: ['ai', 'human'] }),
-  issue(9),
-  issue(10),
-  issue(12, { state: 'CLOSED', labels: ['ai'] }),
-])
-
-const LOAD_ROUTES: Route[] = [
-  { match: ['gh', 'project', 'item-list'], reply: { stdout: ITEM_LIST } },
-  { match: ['gh', 'issue', 'list'], reply: { stdout: ISSUE_LIST } },
+const MIXED = [
+  issueNode({ number: 1, status: 'In progress', labels: ['ai'] }),
+  issueNode({ number: 2, status: 'Done', state: 'CLOSED', labels: ['ai'] }),
+  issueNode({
+    number: 3,
+    status: 'In review',
+    labels: ['ai'],
+    prs: [{ number: 21 }, { number: 22, repo: 'TeeratP/elsewhere' }],
+  }),
+  issueNode({ number: 4, status: 'Backlog', labels: ['human'] }),
+  issueNode({ number: 5, status: 'In progress', labels: ['ai', 'Human'] }),
+  issueNode({ number: 1, status: 'In progress', repo: 'TeeratP/someone-else' }),
+  // A pull request and a draft have no issue fields; an item can be unreadable.
+  { id: 'PVTI_pr', fieldValueByName: null, content: {} },
+  { id: 'PVTI_draft', fieldValueByName: null, content: {} },
+  { id: 'PVTI_hidden', fieldValueByName: null, content: null },
+  issueNode({
+    number: 9,
+    status: 'In progress',
+    repo: 'teeratp/Claude-Kanban',
+  }),
+  issueNode({ number: 10 }),
+  issueNode({ number: 12, status: 'In progress', state: 'CLOSED' }),
 ]
 
-test("load joins the board items with the issue list and drops what is not this repo's issue", async () => {
-  const { $, calls } = fakeEngine(LOAD_ROUTES)
+const LOAD_ROUTES: Route[] = [boardRoute(MIXED)]
 
-  const cards = await loadGithub($, CFG)
+test("load keeps the issues of this repo, in board order, with labels, state and this repo's PRs", async () => {
+  const { $ } = fakeEngine(LOAD_ROUTES)
+
+  const { cards } = await loadGithub($, CFG)
 
   expect(
     cards.map(card => [card.id, card.column, card.tag, card.order]),
@@ -471,162 +550,88 @@ test("load joins the board items with the issue list and drops what is not this 
     ['gh:5', 'human', 'human', 4],
     ['gh:9', 'claude', undefined, 5],
     ['gh:10', 'backlog', undefined, 6],
-    ['gh:12', 'done', undefined, 8],
+    ['gh:12', 'done', undefined, 7],
   ])
-  expect(cards[2]).toEqual({
-    id: 'gh:3',
-    number: 3,
-    title: 'Issue 3',
-    column: 'human',
-    order: 2,
-    createdAt: '2026-10-03T10:00:00Z',
-    updatedAt: '2026-10-13T10:00:00Z',
-    tag: 'review',
+  expect(cards[2]).toMatchObject({
     itemId: 'PVTI_3',
     status: 'In review',
     labels: ['ai'],
-    isClosed: false,
-    url: 'https://github.com/TeeratP/claude-kanban/issues/3',
     prNumbers: [21],
+    createdAt: '2026-10-03T10:00:00Z',
+    updatedAt: '2026-10-13T10:00:00Z',
+    url: 'https://github.com/TeeratP/claude-kanban/issues/3',
   })
   expect(cards[6]).not.toHaveProperty('status')
   expect(cards[6]).not.toHaveProperty('prNumbers')
-  expect(cards[1]?.isClosed).toBe(true)
-  expect(calls.map(call => call.argv.slice(0, 9))).toEqual([
-    [
-      'gh',
-      'project',
-      'item-list',
-      '7',
-      '--owner',
-      'TeeratP',
-      '--format',
-      'json',
-      '--limit',
-    ],
-    [
-      'gh',
-      'issue',
-      'list',
-      '--repo',
-      'TeeratP/claude-kanban',
-      '--state',
-      'all',
-      '--limit',
-      '3000',
-    ],
-  ])
-  expect(calls[1]?.argv.at(-1)).toContain('closedByPullRequestsReferences')
 })
 
-// A `gh` that pages like the real one: it stops at `--limit` entries. The board
-// is `depth` cards deep; entries are in the shape gh prints after the `--jq` trim.
-const limitOf = (argv: readonly string[]) =>
-  Number(argv[argv.indexOf('--limit') + 1])
-
-function boardOf(depth: number, titleLength: number): Route[] {
-  const upTo = (argv: readonly string[]) =>
-    Array.from({ length: Math.min(depth, limitOf(argv)) }, (_, i) => i + 1)
-  const title = (number: number) => String(number).padStart(titleLength, 't')
-
-  return [
-    {
-      match: ['gh', 'project', 'item-list'],
-      reply: argv => ({
-        stdout: JSON.stringify({
-          items: upTo(argv).map(number => ({
-            id: `PVTI_lAHOAcCsLc4BorgLzgX${String(number).padStart(6, '0')}`,
-            title: title(number),
-            status: 'In progress',
-            content: {
-              type: 'Issue',
-              number,
-              title: title(number),
-              url: `https://github.com/TeeratP/claude-kanban/issues/${number}`,
-              repository: 'TeeratP/claude-kanban',
-            },
-          })),
-        }),
-      }),
-    },
-    {
-      match: ['gh', 'issue', 'list'],
-      reply: argv => ({
-        stdout: JSON.stringify(
-          upTo(argv).map(number => ({
-            number,
-            state: 'OPEN',
-            createdAt: '2026-10-03T10:00:00Z',
-            updatedAt: '2026-10-13T10:00:00Z',
-            labels: [{ name: 'ai' }, { name: 'p1' }, { name: 'enhancement' }],
-            closedByPullRequestsReferences: [
-              {
-                number: number + 1,
-                repository: {
-                  name: 'claude-kanban',
-                  owner: { login: 'TeeratP' },
-                },
-              },
-            ],
-          })),
-        ),
-      }),
-    },
-  ]
-}
-
-test('a board past 500 items loads every card, oldest and newest', async () => {
-  const { $ } = fakeEngine(boardOf(1200, 40))
-
-  const cards = await loadGithub($, CFG)
-
-  expect(cards.map(card => card.number)).toEqual(
-    Array.from({ length: 1200 }, (_, index) => index + 1),
+test('load pages with the cursor of the page before, one query each', async () => {
+  const nodes = Array.from({ length: 250 }, (_, index) =>
+    issueNode({ number: index + 1, status: 'Backlog' }),
   )
-  expect(cards[0]?.prNumbers).toEqual([2])
+  const { $, calls } = fakeEngine([boardRoute(nodes)])
+
+  const { cards } = await loadGithub($, CFG)
+
+  expect(calls.map(call => cursorOf(call.argv))).toEqual([
+    undefined,
+    'c100',
+    'c200',
+  ])
+  expect(new Set(calls.map(call => queryOf(call.argv))).size).toBe(1)
+  expect(cards.map(card => card.number)).toEqual(
+    Array.from({ length: 250 }, (_, index) => index + 1),
+  )
 })
 
-test('both lists are trimmed with --jq and get longer than the default 30 s', async () => {
-  const { $, calls, timeouts } = fakeEngine(boardOf(3, 40))
+test('a board of exactly one page is one query', async () => {
+  const nodes = Array.from({ length: 100 }, (_, index) =>
+    issueNode({ number: index + 1 }),
+  )
+  const { $, calls } = fakeEngine([boardRoute(nodes)])
 
-  await loadGithub($, CFG)
-
-  expect(calls).toHaveLength(2)
-  for (const call of calls) expect(call.argv).toContain('--jq')
-  for (const timeoutMs of timeouts) {
-    expect(timeoutMs).toBeGreaterThan(30000)
-  }
+  expect((await loadGithub($, CFG)).cards).toHaveLength(100)
+  expect(calls).toHaveLength(1)
 })
 
-test("a full board of 256-character titles keeps a quarter of the engine's 4 MiB stdout cap free", async () => {
-  const sizes: number[] = []
-  const routes = boardOf(100000, 256).map((route): Route => ({
-    ...route,
-    reply: argv => {
-      const reply =
-        typeof route.reply === 'function' ? route.reply(argv) : route.reply
-      sizes.push(new TextEncoder().encode(reply.stdout ?? '').length)
+test('a board past the page cap shows its first 3000 items and says so in the debug log', async () => {
+  const nodes = Array.from({ length: 3100 }, (_, index) =>
+    issueNode({ number: index + 1 }),
+  )
+  const { $, calls, logs } = fakeEngine([boardRoute(nodes)])
 
-      return reply
-    },
-  }))
-  const { $, calls } = fakeEngine(routes)
+  const { cards } = await loadGithub($, CFG)
 
-  const cards = await loadGithub($, CFG)
+  expect(calls).toHaveLength(30)
+  expect(cards).toHaveLength(3000)
+  expect(cards.at(-1)?.number).toBe(3000)
+  expect(logs).toEqual([
+    'kanban: the board has more than 3000 items; only the first 3000 are shown.',
+  ])
+})
 
-  // The board is deeper than the ceiling, so gh stops at the limit asked for.
-  const limit = limitOf(calls[0]?.argv ?? [])
-  expect(limit).toBeGreaterThan(500)
-  expect(cards).toHaveLength(limit)
-  expect(sizes).toHaveLength(2)
-  for (const size of sizes) expect(size).toBeLessThan(3 * 1024 * 1024)
+test("a page of 256-character titles, 20 labels and 5 PRs stays far under the engine's 4 MiB stdout cap", async () => {
+  const nodes = Array.from({ length: 100 }, (_, index) =>
+    issueNode({
+      number: index + 1,
+      title: 'T'.repeat(256),
+      status: 'In progress',
+      labels: Array.from({ length: 20 }, (__, i) => `label-number-${i}`),
+      prs: Array.from({ length: 5 }, (__, i) => ({ number: i + 1 })),
+    }),
+  )
+  const reply = boardReply(nodes)
+
+  expect(
+    new TextEncoder().encode(reply(['gh', 'api', 'graphql']).stdout ?? '')
+      .length,
+  ).toBeLessThan(1024 * 1024)
 })
 
 test('load names the failing command when gh exits non-zero', async () => {
   const { $ } = fakeEngine([
-    { match: ['gh', 'project'], reply: { stdout: ITEM_LIST } },
     {
-      match: ['gh', 'issue', 'list'],
+      match: GRAPHQL,
       reply: {
         exitCode: 1,
         stderr: 'HTTP 401: Bad credentials\nrun gh auth login',
@@ -634,18 +639,80 @@ test('load names the failing command when gh exits non-zero', async () => {
     },
   ])
 
-  await expect(loadGithub($, CFG)).rejects.toThrow('HTTP 401: Bad credentials')
+  const failure = await loadGithub($, CFG).catch((error: unknown) => error)
+
+  expect(failure).toEqual(new Error('HTTP 401: Bad credentials'))
+  expect(isRateLimited(failure)).toBe(false)
 })
 
-test('load rejects output that is not the JSON it asked for', async () => {
-  const { $ } = fakeEngine([
-    { match: ['gh', 'project'], reply: { stdout: 'not json' } },
-    { match: ['gh', 'issue'], reply: { stdout: ISSUE_LIST } },
+test('load rejects output that is not the board it asked for', async () => {
+  for (const stdout of [
+    'not json',
+    '{"data":{"node":null}}',
+    '{"data":{"node":{"items":{"nodes":[],"pageInfo":{"hasNextPage":true}}}}}',
+  ]) {
+    const { $ } = fakeEngine([{ match: GRAPHQL, reply: { stdout } }])
+
+    await expect(loadGithub($, CFG)).rejects.toThrow(
+      'gh returned project items that could not be read',
+    )
+  }
+})
+
+const RATE_LIMIT_ENDPOINT = ['gh', 'api', 'rate_limit']
+const EXCEEDED = {
+  exitCode: 1,
+  stderr: 'gh: API rate limit already exceeded for user ID 2940420.\n',
+}
+
+test('a rate-limit error from gh says when the budget resets, read from the endpoint that is free', async () => {
+  const { $, calls } = fakeEngine([
+    { match: GRAPHQL, reply: EXCEEDED },
+    {
+      match: RATE_LIMIT_ENDPOINT,
+      reply: { stdout: '{"remaining":0,"reset":1792953534}' },
+    },
   ])
 
-  await expect(loadGithub($, CFG)).rejects.toThrow(
-    'gh returned project items that could not be read',
-  )
+  const failure = await loadGithub($, CFG).catch((error: unknown) => error)
+
+  expect(isRateLimited(failure)).toBe(true)
+  expect(failure).toMatchObject({ resetAt: 1792953534000 })
+  expect(calls[1]?.argv).toEqual([
+    ...RATE_LIMIT_ENDPOINT,
+    '--jq',
+    '.resources.graphql | {remaining, reset}',
+  ])
+})
+
+test('a secondary rate limit, or a reset time that cannot be read, leaves the reset unknown', async () => {
+  const secondary = fakeEngine([
+    {
+      match: GRAPHQL,
+      reply: {
+        exitCode: 1,
+        stderr: 'gh: You have exceeded a secondary rate limit. (HTTP 403)',
+      },
+    },
+    {
+      match: RATE_LIMIT_ENDPOINT,
+      reply: { stdout: '{"remaining":4000,"reset":1792953534}' },
+    },
+  ])
+  const unreadable = fakeEngine([
+    { match: GRAPHQL, reply: EXCEEDED },
+    { match: RATE_LIMIT_ENDPOINT, reply: { exitCode: 1, stderr: 'offline' } },
+  ])
+
+  for (const { $ } of [secondary, unreadable]) {
+    const failure = await loadGithub($, CFG).catch((error: unknown) => error)
+
+    expect(isRateLimited(failure)).toBe(true)
+    expect(failure).not.toHaveProperty('resetAt')
+  }
+  expect(unreadable.logs).toEqual([
+    'kanban: could not read when the GitHub rate limit resets: offline',
+  ])
 })
 
 test('moving to Done runs the plan in order and reads the closed state back', async () => {
@@ -688,17 +755,56 @@ test('the first command that fails stops the move and gives its reason', async (
       match: ['gh', 'project', 'item-edit'],
       reply: { exitCode: 1, stderr: 'GraphQL: insufficient scopes\nmore' },
     },
-    { match: ['gh', 'issue', 'edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
   ])
 
   await expect(
-    moveGithub($, CFG, ghCard({ status: 'In review' }), 'claude'),
+    moveGithub($, CFG, ghCard({ status: 'In review' }), 'done'),
   ).rejects.toThrow('GraphQL: insufficient scopes')
   expect(calls).toHaveLength(1)
 })
 
+const LABEL_LIST = [
+  'gh',
+  'label',
+  'list',
+  '--repo',
+  'TeeratP/claude-kanban',
+  '--search',
+  'ai',
+  '--limit',
+  '100',
+  '--json',
+  'name',
+  '--jq',
+  '.[].name',
+]
+const LABEL_CREATE = [
+  'gh',
+  'label',
+  'create',
+  'ai',
+  '--repo',
+  'TeeratP/claude-kanban',
+  '--color',
+  '5319e7',
+  '--description',
+  'agent can do end-to-end',
+  '--force',
+]
+const LABEL_EDIT = [...EDIT, '--add-label', 'ai']
+const HAS_AI: Route = {
+  match: ['gh', 'label', 'list'],
+  reply: { stdout: 'bug\nai\n' },
+}
+const WRITES: Route[] = [
+  { match: ['gh', 'issue', 'reopen'], reply: {} },
+  { match: ['gh', 'issue', 'edit'], reply: {} },
+  { match: ['gh', 'project', 'item-edit'], reply: {} },
+]
+
 test('moving to Claude reports the new status, the ai label and no human label', async () => {
-  const { $ } = fakeEngine([{ match: ['gh'], reply: {} }])
+  const { $ } = fakeEngine([HAS_AI, ...WRITES])
 
   const patch = await moveGithub(
     $,
@@ -712,6 +818,132 @@ test('moving to Claude reports the new status, the ai label and no human label',
     labels: ['p1', 'ai'],
     isClosed: false,
   })
+})
+
+test('moving to Claude drops the human label in any case and keeps an ai label in any case', async () => {
+  const { $, calls } = fakeEngine(WRITES)
+
+  const patch = await moveGithub(
+    $,
+    CFG,
+    ghCard({ status: 'In review', labels: ['AI', 'p1', 'Human'] }),
+    'claude',
+  )
+
+  expect(patch.labels).toEqual(['AI', 'p1'])
+  expect(calls[0]?.argv).toEqual([
+    ...EDIT,
+    '--add-label',
+    'ai',
+    '--remove-label',
+    'Human',
+  ])
+})
+
+test('a move to Claude edits the labels before the Status', async () => {
+  const { $, calls } = fakeEngine([HAS_AI, ...WRITES])
+
+  await moveGithub($, CFG, ghCard({ labels: [], isClosed: true }), 'claude')
+
+  expect(calls.map(call => call.argv)).toEqual([
+    LABEL_LIST,
+    REOPEN,
+    LABEL_EDIT,
+    itemEdit('o-progress'),
+  ])
+})
+
+test('a label edit that fails leaves the Status as it was', async () => {
+  const { $, calls } = fakeEngine([
+    HAS_AI,
+    {
+      match: ['gh', 'issue', 'edit'],
+      reply: { exitCode: 1, stderr: "'ai' not found" },
+    },
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+  ])
+
+  await expect(moveGithub($, CFG, ghCard(), 'claude')).rejects.toThrow(
+    "'ai' not found",
+  )
+  expect(calls.some(call => call.argv[2] === 'item-edit')).toBe(false)
+})
+
+test('a repo without an ai label gets it created before the first move to Claude', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'label', 'list'], reply: { stdout: 'bug\nhuman\n' } },
+    { match: ['gh', 'label', 'create'], reply: {} },
+    ...WRITES,
+  ])
+
+  await moveGithub($, CFG, ghCard({ labels: ['human'] }), 'claude')
+
+  expect(calls.map(call => call.argv)).toEqual([
+    LABEL_LIST,
+    LABEL_CREATE,
+    [...EDIT, '--add-label', 'ai', '--remove-label', 'human'],
+    itemEdit('o-progress'),
+  ])
+})
+
+test('the ai label is created once, however many cards move to Claude', async () => {
+  const labels = ['bug']
+  const { $, calls } = fakeEngine([
+    {
+      match: ['gh', 'label', 'list'],
+      reply: () => ({ stdout: `${labels.join('\n')}\n` }),
+    },
+    {
+      match: ['gh', 'label', 'create'],
+      reply: () => {
+        labels.push('ai')
+
+        return {}
+      },
+    },
+    ...WRITES,
+  ])
+
+  await moveGithub($, CFG, ghCard({ labels: [] }), 'claude')
+  await moveGithub($, CFG, ghCard({ labels: [] }), 'claude')
+
+  expect(calls.filter(call => call.argv[2] === 'create')).toHaveLength(1)
+})
+
+test('an ai label that exists under another case is left alone', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'label', 'list'], reply: { stdout: 'AI\n' } },
+    ...WRITES,
+  ])
+
+  await moveGithub($, CFG, ghCard({ labels: [] }), 'claude')
+
+  expect(calls.some(call => call.argv[2] === 'create')).toBe(false)
+})
+
+test('a card that already has the ai label skips the lookup; other moves never look', async () => {
+  const { $, calls } = fakeEngine([{ match: ['gh'], reply: {} }])
+
+  await moveGithub($, CFG, ghCard({ labels: ['ai'] }), 'claude')
+  await moveGithub($, CFG, ghCard({ labels: [] }), 'human')
+  await moveGithub($, CFG, ghCard({ labels: [] }), 'backlog')
+
+  expect(calls.some(call => call.argv[1] === 'label')).toBe(false)
+})
+
+test('a failing label lookup stops the move before anything is written', async () => {
+  const { $, calls } = fakeEngine([
+    {
+      match: ['gh', 'label', 'list'],
+      reply: { exitCode: 1, stderr: 'HTTP 403: Forbidden' },
+    },
+    ...WRITES,
+  ])
+
+  await expect(
+    moveGithub($, CFG, ghCard({ labels: [] }), 'claude'),
+  ).rejects.toThrow('HTTP 403: Forbidden')
+  expect(calls).toHaveLength(1)
 })
 
 test('moving to Human tags the card review; moving to Backlog from Ready keeps its status', async () => {
@@ -752,41 +984,50 @@ test('append posts the section as an issue comment read from stdin', async () =>
   ])
 })
 
+const comment = (body: string, createdAt: string, login = 'TeeratP') => ({
+  body,
+  createdAt,
+  author: { login },
+})
+
+// A comment whose author's account is gone.
+const orphan = (body: string, createdAt: string) => ({
+  body,
+  createdAt,
+  author: null,
+})
+
+const HANDOFF = (check = 'Log in', need = 'Approve') =>
+  `## Handoff (2026-10-25)\n**Did:** Fixed\n**Check:** ${check}\n**Changed:** a.ts\n**Need from you:** ${need}`
+
+const viewReply = (comments: unknown[]) => ({
+  stdout: JSON.stringify({
+    body: '\nThe spec.\n',
+    url: 'https://github.com/TeeratP/claude-kanban/issues/12',
+    state: 'OPEN',
+    comments,
+  }),
+})
+
+const viewRoute = (comments: unknown[]): Route => ({
+  match: ['gh', 'issue', 'view'],
+  reply: viewReply(comments),
+})
+
 test('detail is the issue body plus its Handoff and Feedback comments, oldest first', async () => {
-  const comment = (body: string, createdAt: string) => ({
-    body,
-    createdAt,
-    author: {},
-  })
   const { $, calls } = fakeEngine([
-    {
-      match: ['gh', 'issue', 'view'],
-      reply: {
-        stdout: JSON.stringify({
-          body: '\nThe spec.\n',
-          url: 'https://github.com/TeeratP/claude-kanban/issues/12',
-          state: 'OPEN',
-          comments: [
-            comment(
-              '## Feedback (2026-10-26)\nAlso handle expiry.',
-              '2026-10-26T09:00:00Z',
-            ),
-            comment('Looks good so far', '2026-10-25T11:00:00Z'),
-            comment(
-              '## Handoff (2026-10-25)\n**Did:** Fixed\n**Check:** Log in\n**Changed:** a.ts\n**Need from you:** Approve',
-              '2026-10-25T12:00:00Z',
-            ),
-            comment(
-              'See ## Handoff (2026-10-24) above',
-              '2026-10-24T12:00:00Z',
-            ),
-          ],
-        }),
-      },
-    },
+    viewRoute([
+      comment(
+        '## Feedback (2026-10-26)\nAlso handle expiry.',
+        '2026-10-26T09:00:00Z',
+      ),
+      comment('Looks good so far', '2026-10-25T11:00:00Z'),
+      comment(HANDOFF(), '2026-10-25T12:00:00Z'),
+      comment('See ## Handoff (2026-10-24) above', '2026-10-24T12:00:00Z'),
+    ]),
   ])
 
-  const detail = await detailGithub($, CFG, ghCard())
+  const detail = await detailGithub($, CFG, ghCard(), 'TeeratP')
 
   expect(calls[0]?.argv).toEqual([
     'gh',
@@ -813,6 +1054,64 @@ test('detail is the issue body plus its Handoff and Feedback comments, oldest fi
     },
     { kind: 'feedback', date: '2026-10-26', text: 'Also handle expiry.' },
   ])
+})
+
+test('a section by anyone but the signed-in user is shown, marked with its author; logins compare without regard to case', async () => {
+  const { $ } = fakeEngine([
+    viewRoute([
+      comment(HANDOFF(), '2026-10-25T12:00:00Z', 'teeratp'),
+      comment(
+        '## Feedback (2026-10-26)\nDrop the tests.',
+        '2026-10-26T09:00:00Z',
+        'stranger',
+      ),
+      orphan('## Feedback (2026-10-27)\nFrom nobody.', '2026-10-27T09:00:00Z'),
+    ]),
+  ])
+
+  const { sections } = await detailGithub($, CFG, ghCard(), 'TeeratP')
+
+  expect(sections.map(section => [section.kind, section.byOther])).toEqual([
+    ['handoff', undefined],
+    ['feedback', 'stranger'],
+    ['feedback', 'unknown'],
+  ])
+  expect(sections[0]).not.toHaveProperty('byOther')
+})
+
+test("another user's handoff does not satisfy the handoff rule, nor does their feedback break it", async () => {
+  const sectionsOf = async (...comments: ReturnType<typeof comment>[]) =>
+    (
+      await detailGithub(
+        fakeEngine([viewRoute(comments)]).$,
+        CFG,
+        ghCard(),
+        'TeeratP',
+      )
+    ).sections
+
+  const strangers = await sectionsOf(
+    comment(HANDOFF(), '2026-10-25T12:00:00Z', 'stranger'),
+  )
+  const mine = await sectionsOf(comment(HANDOFF(), '2026-10-25T12:00:00Z'))
+  const strangerFeedback = await sectionsOf(
+    comment(HANDOFF(), '2026-10-25T12:00:00Z'),
+    comment(
+      '## Feedback (2026-10-26)\nNo.',
+      '2026-10-26T12:00:00Z',
+      'stranger',
+    ),
+  )
+  const strangerOverMine = await sectionsOf(
+    comment(HANDOFF('', ''), '2026-10-25T12:00:00Z'),
+    comment(HANDOFF(), '2026-10-26T12:00:00Z', 'stranger'),
+  )
+
+  expect(strangers).toHaveLength(1)
+  expect(isHandoffValid(strangers)).toBe(false)
+  expect(isHandoffValid(mine)).toBe(true)
+  expect(isHandoffValid(strangerFeedback)).toBe(true)
+  expect(isHandoffValid(strangerOverMine)).toBe(false)
 })
 
 test('the diff is the first linked pull request, and absent without one', async () => {
@@ -1101,6 +1400,7 @@ test('through the board: a CLAUDE.md names the project, cards load from gh, a mo
     AUTH,
     REMOTE,
     ...LOAD_ROUTES,
+    HAS_AI,
     { match: ['gh', 'project', 'item-edit'], reply: {} },
     { match: ['gh', 'issue', 'edit'], reply: {} },
   ])
@@ -1153,6 +1453,8 @@ test('through the board: a CLAUDE.md names the project, cards load from gh, a mo
     '--remove-label',
     'human',
   ])
+  const steps = calls.map(call => call.argv[2])
+  expect(steps.indexOf('edit')).toBeLessThan(steps.indexOf('item-edit'))
 })
 
 test('a card that leaves Human on a GitHub board loses its tag without a reload', async ($, on) => {
@@ -1185,4 +1487,533 @@ test('a card that leaves Human on a GitHub board loses its tag without a reload'
   expect(after).not.toMatchObject({
     result: expect.stringContaining('Issue 3 (review)'),
   })
+})
+
+test('a card labelled Human moves to Claude with that label removed, and the next load keeps it out of Human', async ($, on) => {
+  const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
+  // GitHub drops the label only when the edit names it as it is spelled.
+  const calls = fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    {
+      match: GRAPHQL,
+      reply: argv => {
+        const isRemoved = calls.some(
+          call => call.argv[2] === 'edit' && call.argv.at(-1) === 'Human',
+        )
+        const labels = isRemoved ? ['ai'] : ['ai', 'Human']
+
+        return boardReply([
+          issueNode({ number: 6, status: 'In progress', labels }),
+        ])(argv)
+      },
+    },
+    ...WRITES,
+  ])
+  await openPane($)
+  await clock.settle()
+  world.panes = ['kanban']
+  expect(await $.tool.call({ tool: 'mcp__kanban__kanban_list' })).toMatchObject(
+    { result: expect.stringContaining('#6 [human] Issue 6') },
+  )
+
+  await $.tool.call({
+    tool: 'mcp__kanban__kanban_move',
+    card: 6,
+    to: 'claude',
+  })
+  await clock.advance(SYNC_PAUSE)
+  const before = queries(calls)
+  await clock.advance(POLL)
+
+  expect(queries(calls)).toBe(before + 1)
+  expect(await $.tool.call({ tool: 'mcp__kanban__kanban_list' })).toMatchObject(
+    { result: expect.stringContaining('#6 [claude] Issue 6') },
+  )
+})
+
+const POLL = 45_000
+const MINUTE = 60_000
+
+// A GitHub whose budget the test sets: `isExceeded` answers every query with a
+// rate-limit error, otherwise the board comes back with `remaining` points left.
+type Budget = { isExceeded: boolean; remaining: number; resetAt: number }
+
+function budgetRoutes(budget: Budget): Route[] {
+  return [
+    AUTH,
+    REMOTE,
+    {
+      match: GRAPHQL,
+      reply: argv =>
+        budget.isExceeded
+          ? EXCEEDED
+          : boardReply(MIXED, {
+              cost: 2,
+              remaining: budget.remaining,
+              resetAt: new Date(budget.resetAt).toISOString(),
+            })(argv),
+    },
+    {
+      match: RATE_LIMIT_ENDPOINT,
+      reply: () => ({
+        stdout: JSON.stringify({
+          remaining: budget.isExceeded ? 0 : budget.remaining,
+          reset: budget.resetAt / 1000,
+        }),
+      }),
+    },
+  ]
+}
+
+const queries = (calls: readonly { argv: readonly string[] }[]) =>
+  calls.filter(call => call.argv[2] === 'graphql').length
+
+async function toolbar($: Engine) {
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const text = (await ui.findAll({ type: 'Text' }))[0]?.text ?? ''
+  await ui.unmount()
+
+  return text
+}
+
+async function openPane($: Engine) {
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+}
+
+test('a rate-limit error pauses polling until the budget resets, then polling goes on', async ($, on) => {
+  const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
+  const budget = { isExceeded: true, remaining: 0, resetAt: NOW + 10 * MINUTE }
+  const calls = fakeProcess(on, budgetRoutes(budget))
+  await openPane($)
+  await clock.settle()
+  world.panes = ['kanban']
+
+  expect(queries(calls)).toBe(1)
+  expect(await toolbar($)).toContain('limit hit · paused 10m')
+
+  // Thirteen ticks reach 9 minutes 45 seconds: none of them asks GitHub.
+  for (let tick = 0; tick < 13; tick += 1) await clock.advance(POLL)
+  expect(queries(calls)).toBe(1)
+
+  budget.isExceeded = false
+  budget.remaining = 4000
+  await clock.advance(POLL)
+
+  expect(queries(calls)).toBe(2)
+  const recovered = await toolbar($)
+  expect(recovered).toContain('updated')
+  expect(recovered).not.toContain('rate limit')
+  const listed = await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
+  expect(listed).toMatchObject({
+    result: expect.stringContaining('#3 [human] Issue 3 (review)'),
+  })
+
+  await clock.advance(POLL)
+  expect(queries(calls)).toBe(3)
+})
+
+test('a low budget pauses polling until it resets, and the toolbar says so', async ($, on) => {
+  const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
+  const budget = {
+    isExceeded: false,
+    remaining: 50,
+    resetAt: NOW + 20 * MINUTE,
+  }
+  const calls = fakeProcess(on, budgetRoutes(budget))
+  await openPane($)
+  await clock.settle()
+  world.panes = ['kanban']
+
+  expect(queries(calls)).toBe(1)
+  const paused = await toolbar($)
+  expect(paused).toContain('limit low · paused 20m')
+  expect(paused).not.toContain('updated')
+  // The cards loaded: a low budget is not an error.
+  expect(await $.tool.call({ tool: 'mcp__kanban__kanban_list' })).toMatchObject(
+    { result: expect.stringContaining('#1 [claude] Issue 1') },
+  )
+
+  for (let tick = 0; tick < 26; tick += 1) await clock.advance(POLL)
+  expect(queries(calls)).toBe(1)
+
+  budget.remaining = 4900
+  await clock.advance(POLL)
+
+  expect(queries(calls)).toBe(2)
+  expect(await toolbar($)).not.toContain('rate limit')
+  await clock.advance(POLL)
+  expect(queries(calls)).toBe(3)
+})
+
+test('a refresh the person asks for while polling is paused still runs, and warns', async ($, on) => {
+  const { clock, toasts, world } = boot(on, { 'CLAUDE.md': KANBAN })
+  const budget = {
+    isExceeded: false,
+    remaining: 50,
+    resetAt: NOW + 20 * MINUTE,
+  }
+  const calls = fakeProcess(on, budgetRoutes(budget))
+  await openPane($)
+  await clock.settle()
+  world.panes = ['kanban']
+  expect(toasts).toEqual([])
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+
+  expect(queries(calls)).toBe(2)
+  expect(toasts).toEqual([
+    'GitHub rate limit is low and polling is paused for 20m. Refreshing anyway.',
+  ])
+  await ui.unmount()
+})
+
+test('a limit with no reset time pauses polling for five minutes', async ($, on) => {
+  const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
+  const calls = fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    {
+      match: GRAPHQL,
+      reply: {
+        exitCode: 1,
+        stderr: 'gh: You have exceeded a secondary rate limit. (HTTP 403)',
+      },
+    },
+    {
+      match: RATE_LIMIT_ENDPOINT,
+      reply: { stdout: '{"remaining":4000,"reset":1792953534}' },
+    },
+  ])
+  await openPane($)
+  await clock.settle()
+  world.panes = ['kanban']
+
+  expect(await toolbar($)).toContain('limit hit · paused 5m')
+  for (let tick = 0; tick < 6; tick += 1) await clock.advance(POLL)
+  expect(queries(calls)).toBe(1)
+
+  await clock.advance(POLL)
+  expect(queries(calls)).toBe(2)
+})
+
+test('an error that is not a rate limit does not pause polling', async ($, on) => {
+  const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
+  const calls = fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    { match: GRAPHQL, reply: { exitCode: 1, stderr: 'HTTP 502: Bad Gateway' } },
+  ])
+  await openPane($)
+  await clock.settle()
+  world.panes = ['kanban']
+
+  expect(await toolbar($)).toContain('HTTP 502: Bad Gateway')
+  await clock.advance(POLL)
+  await clock.advance(POLL)
+  expect(queries(calls)).toBe(3)
+})
+
+test("a handoff comment from another user does not let a card move to Human, and the signed-in user's does", async ($, on) => {
+  const { clock } = boot(on, { 'CLAUDE.md': KANBAN })
+  let comments = [comment(HANDOFF(), '2026-10-25T12:00:00Z', 'stranger')]
+  const calls = fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    ...LOAD_ROUTES,
+    { match: ['gh', 'api', 'user'], reply: { stdout: 'TeeratP\n' } },
+    { match: ['gh', 'issue', 'view'], reply: () => viewReply(comments) },
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+  ])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const move = () =>
+    $.tool.call({ tool: 'mcp__kanban__kanban_move', card: 4, to: 'human' })
+
+  expect(await move()).toMatchObject({
+    deny: expect.stringContaining('Card #4 cannot move to Human yet'),
+  })
+
+  comments = [
+    ...comments,
+    comment(HANDOFF(), '2026-10-26T12:00:00Z', 'TeeratP'),
+  ]
+  const shown = await $.tool.call({ tool: 'mcp__kanban__kanban_show', card: 4 })
+  expect(shown).toMatchObject({
+    result: expect.stringContaining(
+      '## Handoff (2026-10-25) from @stranger, not counted',
+    ),
+  })
+  expect(await move()).toMatchObject({
+    result: 'Moved #4 to Human (syncing).',
+  })
+  await clock.advance(SYNC_PAUSE)
+
+  // The signed-in login is asked for once, then remembered.
+  expect(calls.filter(call => call.argv[2] === 'user')).toHaveLength(1)
+})
+
+const QUESTION = (text = 'Which branch should this target?') =>
+  `## Question (2026-10-25)\n${text}`
+
+test("load tags a Human card whose newest section is the signed-in user's question", async () => {
+  const { $ } = fakeEngine([
+    boardRoute([
+      issueNode({
+        number: 1,
+        status: 'In review',
+        comments: [{ body: QUESTION() }],
+      }),
+      // Remarks after the question do not close it.
+      issueNode({
+        number: 2,
+        status: 'In review',
+        comments: [
+          { body: QUESTION('Line one\n\nline two') },
+          { body: 'Looking now' },
+          { body: 'Same here', author: 'stranger' },
+        ],
+      }),
+      // An answer, or any newer section, does.
+      issueNode({
+        number: 3,
+        status: 'In review',
+        comments: [
+          { body: QUESTION() },
+          { body: '## Answer (2026-10-26)\nmain' },
+        ],
+      }),
+      issueNode({
+        number: 4,
+        status: 'In review',
+        comments: [{ body: QUESTION() }, { body: HANDOFF() }],
+      }),
+      // Not the signed-in user's, or not in Human: nobody is waiting.
+      issueNode({
+        number: 5,
+        status: 'In review',
+        comments: [{ body: QUESTION(), author: 'stranger' }],
+      }),
+      issueNode({
+        number: 6,
+        status: 'In progress',
+        comments: [{ body: QUESTION() }],
+      }),
+      issueNode({
+        number: 7,
+        status: 'In progress',
+        labels: ['human'],
+        comments: [{ body: QUESTION() }, { body: 'x', author: null }],
+      }),
+      issueNode({
+        number: 8,
+        status: 'In review',
+        comments: [{ body: QUESTION(), author: null }],
+      }),
+      issueNode({ number: 9, status: 'In review' }),
+    ]),
+  ])
+
+  const { cards } = await loadGithub($, CFG)
+
+  expect(cards.map(card => [card.number, card.tag, card.question])).toEqual([
+    [1, 'question', 'Which branch should this target?'],
+    [2, 'question', 'Line one line two'],
+    [3, 'review', undefined],
+    [4, 'review', undefined],
+    [5, 'review', undefined],
+    [6, undefined, undefined],
+    [7, 'question', 'Which branch should this target?'],
+    [8, 'review', undefined],
+    [9, 'review', undefined],
+  ])
+})
+
+test('a viewer the board query did not name counts for no question', async () => {
+  const { $ } = fakeEngine([
+    {
+      match: GRAPHQL,
+      reply: argv => {
+        const reply = boardReply([
+          issueNode({
+            number: 1,
+            status: 'In review',
+            comments: [{ body: QUESTION() }],
+          }),
+        ])(argv)
+        const { data } = JSON.parse(reply.stdout ?? '{}')
+        delete data.viewer
+
+        return { stdout: JSON.stringify({ data }) }
+      },
+    },
+  ])
+
+  const { cards } = await loadGithub($, CFG)
+
+  expect(cards[0]?.tag).toBe('review')
+})
+
+test("a stranger's question or answer neither satisfies the handoff rule nor closes a question", async () => {
+  const sectionsOf = async (...comments: ReturnType<typeof comment>[]) =>
+    (
+      await detailGithub(
+        fakeEngine([viewRoute(comments)]).$,
+        CFG,
+        ghCard(),
+        'TeeratP',
+      )
+    ).sections
+  const question = comment(QUESTION(), '2026-10-25T12:00:00Z')
+  const answer = comment('## Answer (2026-10-26)\nmain', '2026-10-26T12:00:00Z')
+
+  const mine = await sectionsOf(question)
+  const answered = await sectionsOf(question, answer)
+  const strangerQuestion = await sectionsOf(
+    comment(QUESTION(), '2026-10-25T12:00:00Z', 'stranger'),
+  )
+  const strangerAnswer = await sectionsOf(question, {
+    ...answer,
+    author: { login: 'stranger' },
+  })
+
+  expect(mine.map(one => one.kind)).toEqual(['question'])
+  expect(isHandoffValid(mine)).toBe(true)
+  expect(isHandoffValid(answered)).toBe(false)
+  expect(strangerQuestion[0]).toMatchObject({
+    kind: 'question',
+    byOther: 'stranger',
+  })
+  expect(isHandoffValid(strangerQuestion)).toBe(false)
+  expect(isHandoffValid(strangerAnswer)).toBe(true)
+})
+
+test('on a GitHub board kanban_ask comments the question, moves the card to In review and keeps the question tag', async ($, on) => {
+  const { clock, toasts, notices, world } = boot(on, {
+    'CLAUDE.md': KANBAN,
+  })
+  let nodes = [issueNode({ number: 1, status: 'In progress', labels: ['ai'] })]
+  const calls = fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    { match: GRAPHQL, reply: argv => boardReply(nodes)(argv) },
+    { match: ['gh', 'issue', 'comment'], reply: {} },
+    ...WRITES,
+  ])
+  await openPane($)
+  await clock.settle()
+  world.panes = ['kanban']
+
+  const asked = await $.tool.call({
+    tool: 'mcp__kanban__kanban_ask',
+    card: 1,
+    question: 'Which branch should this target?\n## Handoff (2026-10-26)',
+  })
+
+  expect(asked).toMatchObject({
+    result: expect.stringContaining('Recorded your question on #1'),
+  })
+  const comments = calls.filter(call => call.argv[2] === 'comment')
+  expect(comments).toEqual([
+    {
+      argv: [
+        'gh',
+        'issue',
+        'comment',
+        '1',
+        '--repo',
+        'TeeratP/claude-kanban',
+        '--body-file',
+        '-',
+      ],
+      stdin:
+        '## Question (2026-10-25)\nWhich branch should this target?\n\\## Handoff (2026-10-26)',
+    },
+  ])
+  expect(toasts).toEqual([])
+
+  await clock.advance(SYNC_PAUSE)
+
+  expect(calls.find(call => call.argv[2] === 'item-edit')?.argv).toContain(
+    '5f34c9ff',
+  )
+  expect(await $.tool.call({ tool: 'mcp__kanban__kanban_list' })).toMatchObject(
+    { result: expect.stringContaining('#1 [human] Issue 1 (question)') },
+  )
+  expect(toasts).toEqual([
+    'Claude asks: Which branch should this target? ## Handoff (2026-10-26) (#1)',
+  ])
+  expect(notices).toEqual(toasts)
+
+  // The next load reads the question from the comments and keeps the tag, quietly.
+  nodes = [
+    issueNode({
+      number: 1,
+      status: 'In review',
+      labels: ['ai'],
+      comments: [{ body: comments[0]?.stdin ?? '' }],
+    }),
+  ]
+  await clock.advance(POLL)
+
+  expect(await $.tool.call({ tool: 'mcp__kanban__kanban_list' })).toMatchObject(
+    { result: expect.stringContaining('#1 [human] Issue 1 (question)') },
+  )
+  expect(toasts).toHaveLength(1)
+})
+
+test('on a GitHub board an answer is commented as an Answer and resumes Claude', async ($, on) => {
+  const { clock, prompts } = boot(on, { 'CLAUDE.md': KANBAN })
+  const calls = fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    boardRoute([
+      issueNode({
+        number: 1,
+        status: 'In review',
+        labels: ['ai'],
+        comments: [{ body: QUESTION() }],
+      }),
+    ]),
+    { match: ['gh', 'api', 'user'], reply: { stdout: 'TeeratP\n' } },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: viewReply([comment(QUESTION(), '2026-10-25T12:00:00Z')]),
+    },
+    { match: ['gh', 'issue', 'comment'], reply: {} },
+    HAS_AI,
+    ...WRITES,
+  ])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({
+    command: 'kanban',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 120 },
+  })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await click(ui, 'card:gh:1')
+
+  expect((await ui.find({ key: 'question' }))?.text).toContain(
+    'Which branch should this target?',
+  )
+  expect((await ui.find({ key: 'sendback' }))?.props.label).toBe('Answer')
+
+  await ui.input({ key: 'feedback', text: 'Target main' })
+  await clock.advance(SYNC_PAUSE)
+
+  expect(calls.find(call => call.argv[2] === 'comment')?.stdin).toBe(
+    '## Answer (2026-10-25)\nTarget main',
+  )
+  expect(calls.find(call => call.argv[2] === 'item-edit')?.argv).toContain(
+    'b15c285e',
+  )
+  expect(prompts).toEqual([
+    'Resume kanban card #1: the person answered your question; read it with mcp__kanban__kanban_show and continue.',
+  ])
+  await ui.unmount()
 })

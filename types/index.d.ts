@@ -1,5 +1,5 @@
 export type KanbanColumn = 'human' | 'claude' | 'backlog' | 'done'
-export type KanbanTag = 'review' | 'human'
+export type KanbanTag = 'review' | 'human' | 'question'
 export type KanbanCard = {
   id: string
   number: number
@@ -9,6 +9,7 @@ export type KanbanCard = {
   createdAt: string
   updatedAt: string
   tag?: KanbanTag
+  question?: string
   file?: string
   itemId?: string
   status?: string
@@ -52,7 +53,7 @@ export type KanbanSync = {
   attempts: number
   error?: string
   settledAt?: number
-  onConfirm?: 'work' | 'resume'
+  onConfirm?: 'work' | 'resume' | 'answer'
   announce?: boolean
 }
 export type KanbanView =
@@ -64,10 +65,11 @@ export type KanbanUi = {
   draft: string
 }
 export type KanbanSection = {
-  kind: 'handoff' | 'feedback'
+  kind: 'handoff' | 'feedback' | 'question' | 'answer'
   date: string
   text: string
   fields?: { did: string; check: string; changed: string; need: string }
+  byOther?: string
 }
 export type KanbanDetail = {
   cardId: string
@@ -89,6 +91,8 @@ declare module 'claude-code' {
       sync: Shaped<Record<string, KanbanSync>>
       detail: Shaped<KanbanDetail | null>
       tick: number
+      pausedUntil: number
+      viewer: string
     }
   }
 }

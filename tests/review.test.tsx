@@ -4,6 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import type { KanbanCard } from '../types'
 import { queueAfter, queueAt, queueStep } from '../hooks/layout'
+import { SETTLE_MS } from '../hooks/model'
 import { focusFeedback } from '../hooks/view-detail'
 import { click, rowKeys } from './board-ui'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
@@ -110,7 +111,7 @@ for (const surface of SURFACES) {
 
     const line = await ui.find({ type: 'Text', text: /· b board$/ })
     expect(line?.text).toBe(
-      'a approve · s send back · p park · f feedback · n next · k prev · b board',
+      'a approve · s send back · p park · f write · n next · k prev · b board',
     )
     expect(line?.props.dimColor).toBe(true)
     await ui.unmount()
@@ -125,6 +126,7 @@ for (const surface of SURFACES) {
       title: '#3 Write docs',
       place: 'Human 1 of 2',
     })
+    await clock.advance(SETTLE_MS)
     await ui.press({ key: 'park' })
     expect(await shown(ui)).toEqual({
       title: '#1 Fix login',
@@ -133,8 +135,9 @@ for (const surface of SURFACES) {
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     expect(await ui.find({ key: 'prev' })).toBeUndefined()
     expect(await hint(ui)).toBe(
-      'a approve · s send back · p park · f feedback · b board',
+      'a approve · s send back · p park · f write · b board',
     )
+    await clock.advance(SETTLE_MS)
     await ui.press({ key: 'approve' })
 
     expect(await ui.find({ key: 'back' })).toBeUndefined()
@@ -144,6 +147,49 @@ for (const surface of SURFACES) {
     expect(files[path(3, 'docs')]).toContain('status: backlog')
     expect(files[path(1, 'login')]).toContain('status: done')
     expect(prompts).toEqual([])
+    await ui.unmount()
+  })
+
+  test(`a decision pressed again as the review moves on is ignored for a moment, and the keys that walk are not on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await open($, on, surface)
+    await click(ui, API)
+
+    await ui.press({ key: 'approve' })
+    await ui.press({ key: 'approve' })
+    await ui.press({ key: 'park' })
+    await ui.input({ key: 'feedback', text: 'Too soon' })
+    expect(await shown(ui)).toEqual({
+      title: '#3 Write docs',
+      place: 'Human 1 of 2',
+    })
+
+    await clock.advance(SETTLE_MS - 1)
+    await ui.press({ key: 'approve' })
+    expect((await shown(ui)).title).toBe('#3 Write docs')
+    await ui.press({ key: 'next' })
+    expect((await shown(ui)).title).toBe('#1 Fix login')
+    await ui.press({ key: 'prev' })
+    expect((await shown(ui)).title).toBe('#3 Write docs')
+
+    await clock.advance(1)
+    await ui.press({ key: 'approve' })
+    expect((await shown(ui)).title).toBe('#1 Fix login')
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(2, 'api')]).toContain('status: done')
+    expect(files[path(3, 'docs')]).toContain('status: done')
+    expect(files[path(3, 'docs')]).not.toContain('Too soon')
+    expect(files[path(1, 'login')]).toContain('status: human')
+    await ui.unmount()
+  })
+
+  test(`a decision on a card opened by hand is never held back on the ${surface}`, async ($, on) => {
+    const { ui } = await open($, on, surface)
+    await click(ui, API)
+
+    await ui.press({ key: 'next' })
+    await ui.press({ key: 'approve' })
+
+    expect((await shown(ui)).title).toBe('#1 Fix login')
     await ui.unmount()
   })
 
@@ -272,6 +318,50 @@ for (const surface of SURFACES) {
 
     expect(files[path(2, 'api')]).toContain('status: claude')
     expect((await shown(ui)).title).toBe('#1 Fix login')
+    await ui.unmount()
+  })
+}
+
+// Card 2 is a question Claude asked; answering it is a decision like Send back.
+const withQuestion = () => ({
+  ...cards(),
+  [path(2, 'api')]: card(
+    2,
+    { status: 'human', title: 'Build API', order: 1 },
+    'Spec text.\n\n## Question (2026-10-25)\nWhich database?',
+  ),
+})
+
+for (const surface of SURFACES) {
+  test(`answering a question opens the next Human card like a send back does on the ${surface}`, async ($, on) => {
+    const { clock, ui, files, prompts } = await open(
+      $,
+      on,
+      surface,
+      withQuestion(),
+    )
+    await click(ui, API)
+    expect(await hint(ui)).toBe(
+      'a approve · s answer · p park · f write · n next · k prev · b board',
+    )
+    expect((await ui.find({ key: 'focus' }))?.props.label).toBe('Write answer')
+
+    await ui.input({ key: 'feedback', text: 'The staging one' })
+
+    expect(await shown(ui)).toEqual({
+      title: '#3 Write docs',
+      place: 'Human 1 of 2',
+    })
+    expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
+    await clock.advance(SYNC_PAUSE)
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(2, 'api')]).toContain(
+      '## Answer (2026-10-25)\nThe staging one',
+    )
+    expect(files[path(2, 'api')]).toContain('status: claude')
+    expect(prompts).toEqual([
+      expect.stringMatching(/^Resume kanban card #2: the person answered/),
+    ])
     await ui.unmount()
   })
 }

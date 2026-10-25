@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 
 import type { KanbanBoard, KanbanDetail } from '../types'
 import { formatFeedback } from '../hooks/handoff'
-import { capDiff } from '../hooks/model'
+import { SETTLE_MS, capDiff } from '../hooks/model'
 import { click, rowKeys } from './board-ui'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 
@@ -56,6 +56,7 @@ for (const surface of SURFACES) {
     await clock.advance(SYNC_PAUSE)
     expect(files[path(1, 'login')]).toContain('status: done')
 
+    await clock.advance(SETTLE_MS)
     await ui.press({ key: 'park' })
     await clock.advance(SYNC_PAUSE)
     expect(files[path(2, 'api')]).toContain('status: backlog')
