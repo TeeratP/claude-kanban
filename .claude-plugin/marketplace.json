@@ -1,0 +1,12 @@
+{
+  "name": "claude-kanban",
+  "description": "Claude Code mods by TeeratP: a kanban side pane for tasks shared between you and Claude.",
+  "owner": { "name": "TeeratP" },
+  "plugins": [
+    {
+      "name": "kanban",
+      "source": "./",
+      "description": "A kanban side pane: Human, Claude, Backlog and Done sections over GitHub Projects or local .kanban/ cards."
+    }
+  ]
+}
