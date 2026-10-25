@@ -39,7 +39,6 @@ export const S = {
 
   moveFailed: (card: KanbanCard, to: KanbanColumn, reason: string) =>
     `Could not move #${card.number} to ${COL[to]}: ${reason}`,
-  githubUnavailable: 'The GitHub backend is not available in this build.',
   unreadableCard: (path: string) => `${path} is not a kanban card file.`,
   cardHasNoFile: (card: KanbanCard) => `Card #${card.number} has no file.`,
 
@@ -77,4 +76,19 @@ export const S = {
     `"${String(to)}" is not a column; use human, claude, backlog or done.`,
   badCard: 'card must be a whole number.',
   toolFailed: (name: string) => `${name} failed; see the debug log.`,
+
+  // #3
+  githubDetectFailed: (reason: string) =>
+    `kanban: using local cards, GitHub is not usable here: ${reason}`,
+  commandExited: (command: string, code: number) => `${command} exited ${code}`,
+  ghBadJson: (what: string, reason?: string) =>
+    `gh returned ${what} that could not be read${reason ? `: ${reason}` : ''}.`,
+  noBoardItem: (card: KanbanCard) =>
+    `#${card.number} is not on the project board.`,
+  closeNotVerified: (card: KanbanCard) =>
+    `#${card.number} is still open after gh issue close.`,
+  noStatusField: (projectNumber: string) =>
+    `Project #${projectNumber} has no Status field.`,
+  missingStatusOption: (name: string) =>
+    `The project's Status field has no "${name}" option.`,
 }

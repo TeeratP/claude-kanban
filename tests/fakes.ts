@@ -36,8 +36,15 @@ export const path = (id: number, slug = 'card') =>
 
 // The engine resolves a relative path against the session's directory before
 // `fs.*` is raised, so the fake maps it back to the path the plugin spelled.
-const relative = (file: string) =>
-  file.includes('.kanban') ? file.slice(file.indexOf('.kanban')) : file
+const relative = (file: string) => {
+  const config = /(\.claude\/)?CLAUDE\.md$/.exec(file)
+
+  return config !== null
+    ? config[0]
+    : file.includes('.kanban')
+      ? file.slice(file.indexOf('.kanban'))
+      : file
+}
 
 /** Answers `fs.*` from a map of path to text; a write bumps the file's mtime. */
 export function fakeFs(on: On, files: Files) {
