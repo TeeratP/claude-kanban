@@ -8,6 +8,7 @@ import {
   readQueue,
   readPausedUntil,
   readQuickAdd,
+  readSuggestions,
   readSync,
   readTick,
   readUi,
@@ -33,9 +34,11 @@ import { toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { dropCard, shiftCard } from './reorder'
 import { S } from './strings'
+import { stripRows } from './suggest'
 import { retryAll } from './sync'
 import { openDetail } from './view-detail'
 import { renderQuickAdd } from './view-quick-add'
+import { renderSuggestions } from './view-suggest'
 
 // Where the pane's window sat at the last draw; a wheel row is relative to it.
 let lastBody = { offset: 0, bodyRows: 0 }
@@ -141,7 +144,9 @@ export async function handleBoardScroll(
     bodyRows: e.bodyRows,
     details: detailIds(cards, await readActivity($), (await readQueue($)).held),
   })
-  const column = hitTest(rows, e.pointer.row + lastBody.offset)
+  // The suggestions sit between the toolbar and the list, outside the layout.
+  const strip = stripRows((await readSuggestions($)).length)
+  const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
   if (column === undefined || ui.collapsed[column]) return false
 
   const step = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by)))
@@ -197,6 +202,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
   const canAdd = e.surface !== 'mobile'
   const quickAdd = await renderQuickAdd($, e)
+  const suggested = await renderSuggestions($, e)
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
 
   const rows = layoutBoard({
@@ -375,6 +381,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box flexDirection="column">
         {rows.slice(0, 1).map(draw)}
         {quickAdd}
+        {suggested}
         {rows.slice(1).map(draw)}
       </Box>
     )
@@ -402,6 +409,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     <Box flexDirection="column">
       {draw({ kind: 'toolbar' })}
       {quickAdd}
+      {suggested}
       <Client
         key="board"
         module="./board-client.tsx"

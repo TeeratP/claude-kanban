@@ -323,6 +323,7 @@ Register each with `isDeferred: false`. Results `{ result: string }` (d.ts:13566
 | `kanban_handoff` | `{card, did?, check, changed?, need}` req card,check,need | `backend.append(formatHandoff…)`, refresh detail |
 | `kanban_move` | `{card, to: enum}` | `to==='human'` && !isHandoffValid → `{deny: S.needHandoff(n)}`. Else `moveCard` (no onConfirm). to human → toast + `$.ui.notify` (d.ts:2501). Result "Moved #N to X (syncing)." |
 | `kanban_create` | `{title, spec, column?}` | local: a card file; GitHub: `gh issue create --label triage`, `gh project item-add`, Status Backlog (then the usual move for any other column) |
+| `kanban_suggest` | `{title, spec, why?}` req title,spec | creates nothing: adds a suggestion to the `suggestions` atom (kept per cwd in `$.store`), toast once; shown in a strip under the toolbar with Add (quick-add path) and Dismiss (#24) |
 
 ### `kanbanFileWatch` (tool.call on Write/Edit)
 - Phase 1: `const ran = await next(e); if (/(^|\/)\.kanban\/[^/]+\.md$/.test(e.file_path)) void refresh($); return ran`.

@@ -4,8 +4,18 @@ import type { Engine, Mounted } from 'claude-code/testing'
 
 import { click, keys, marks, row, rowIndex, rowKeys } from './board-ui'
 import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
-import { boardReply, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
+import {
+  ISSUE_CREATE,
+  ISSUE_URL,
+  ITEM_ADD,
+  ITEM_EDIT,
+  KANBAN,
+  LABEL_LIST,
+  REPO,
+  github,
+  writes,
+} from './github-board'
 
 const SURFACES = ['terminal', 'desktop', 'vscode'] as const
 
@@ -368,131 +378,6 @@ test('a card still waiting when the plugin reloads is dropped, not sent as a mov
   await ui.unmount()
 })
 
-// A GitHub board: the project the repo's CLAUDE.md names, two issues on it, and
-// `gh` answering the commands that make a new one.
-const KANBAN = [
-  '## Task tracking',
-  '- Repo: `TeeratP/claude-kanban` (public).',
-  '- Project board: #7 "claude-kanban" (owner `TeeratP`, project ID `PVT_kwHOAcCsLc4BorgL`).',
-  '- Status field `PVTSSF_lAHOAcCsLc4BorgLzhnKcpg` options: Backlog `1a1cd0bb` · Ready `61b99878` · In progress `b15c285e` · In review `5f34c9ff` · Done `201b4a64`.',
-].join('\n')
-
-const ISSUE_URL = 'https://github.com/TeeratP/claude-kanban/issues/30'
-const REPO = 'TeeratP/claude-kanban'
-const PROJECT = 'PVT_kwHOAcCsLc4BorgL'
-const FIELD = 'PVTSSF_lAHOAcCsLc4BorgLzhnKcpg'
-const GRAPHQL = ['gh', 'api', 'graphql']
-
-const LABEL_LIST = [
-  'gh',
-  'label',
-  'list',
-  '--repo',
-  REPO,
-  '--search',
-  'triage',
-  '--limit',
-  '100',
-  '--json',
-  'name',
-  '--jq',
-  '.[].name',
-]
-const ISSUE_CREATE = [
-  'gh',
-  'issue',
-  'create',
-  '--repo',
-  REPO,
-  '--title',
-  'Fix the login loop',
-  '--body-file',
-  '-',
-  '--label',
-  'triage',
-]
-const ITEM_ADD = [
-  'gh',
-  'project',
-  'item-add',
-  '7',
-  '--owner',
-  'TeeratP',
-  '--url',
-  ISSUE_URL,
-  '--format',
-  'json',
-]
-const ITEM_EDIT = [
-  'gh',
-  'project',
-  'item-edit',
-  '--id',
-  'PVTI_30',
-  '--project-id',
-  PROJECT,
-  '--field-id',
-  FIELD,
-  '--single-select-option-id',
-  '1a1cd0bb',
-]
-
-// The board GitHub holds: the new issue joins it once `gh issue create` ran.
-function github(
-  on: On,
-  overrides: Route[] = [],
-  hold?: (argv: readonly string[]) => Promise<void> | undefined,
-) {
-  const nodes = [
-    issueNode({ number: 4, status: 'Backlog', title: 'Old idea' }),
-    issueNode({ number: 5, status: 'In progress', title: 'In flight' }),
-  ]
-  const calls = fakeProcess(
-    on,
-    [
-      ...overrides,
-      { match: ['gh', 'auth', 'status'], reply: {} },
-      {
-        match: ['git', 'remote', 'get-url', 'origin'],
-        reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
-      },
-      { match: GRAPHQL, reply: argv => boardReply(nodes)(argv) },
-      {
-        match: ['gh', 'label', 'list'],
-        reply: { stdout: 'bug\ntriage\nai\n' },
-      },
-      {
-        match: ['gh', 'issue', 'create'],
-        reply: () => {
-          nodes.push(
-            issueNode({
-              number: 30,
-              title: 'Fix the login loop',
-              status: 'Backlog',
-              labels: ['triage'],
-            }),
-          )
-
-          return { stdout: `${ISSUE_URL}\n` }
-        },
-      },
-      {
-        match: ['gh', 'project', 'item-add'],
-        reply: { stdout: JSON.stringify({ id: 'PVTI_30', type: 'Issue' }) },
-      },
-      { match: ['gh', 'project', 'item-edit'], reply: {} },
-      { match: ['gh', 'issue', 'edit'], reply: {} },
-    ],
-    hold,
-  )
-
-  return calls
-}
-
-// The commands that are not board loads, in the order they ran.
-const writes = (calls: readonly { argv: readonly string[] }[]) =>
-  calls.map(call => call.argv).filter(argv => argv[1] !== 'api')
-
 async function openGithub(
   $: Engine,
   on: On,
@@ -752,6 +637,17 @@ for (const surface of CLIENT_SURFACES) {
 
 test('the board view gives n to the add button and no other Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
+  // A suggestion adds its own buttons to the board view.
+  await $.tool.call({
+    tool: 'mcp__kanban__kanban_suggest',
+    title: 'Fix flaky test',
+    spec: 'It fails 1 in 10.',
+  })
+  expect(
+    (await ui.findAll({ type: 'Button' })).some(button =>
+      String(button.key).startsWith('suggest:add:'),
+    ),
+  ).toBe(true)
 
   const hotkeys = (await ui.findAll({ type: 'Button' })).flatMap(button =>
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],

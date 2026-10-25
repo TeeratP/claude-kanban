@@ -77,6 +77,12 @@ export type KanbanQuickAdd = {
   title: string
   spec: string
 }
+export type KanbanSuggestion = {
+  id: number
+  title: string
+  spec: string
+  why?: string
+}
 export type KanbanSection = {
   kind: 'handoff' | 'feedback' | 'question' | 'answer' | 'check'
   date: string
@@ -153,6 +159,7 @@ declare module 'claude-code' {
       viewer: string
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
+      suggestions: Shaped<KanbanSuggestion[]>
     }
   }
 }

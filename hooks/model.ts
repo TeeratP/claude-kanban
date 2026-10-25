@@ -197,6 +197,9 @@ export function isKanbanFile(path: unknown): boolean {
   return typeof path === 'string' && KANBAN_FILE.test(path)
 }
 
+/** Text on one line, trimmed: a card title never wraps. */
+export const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
+
 export function errorMessage(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error)
 

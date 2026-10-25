@@ -8,6 +8,7 @@ import type {
   KanbanDetail,
   KanbanQueue,
   KanbanQuickAdd,
+  KanbanSuggestion,
   KanbanSync,
   KanbanUi,
 } from '../types'
@@ -64,6 +65,14 @@ const quickAdd = atom(
   { plugin: 'kanban', key: 'quickAdd' } as const,
   EMPTY_QUICK_ADD,
   { shape: 'quickAdd-1' },
+)
+// Claude's follow-ups waiting for the person to add or dismiss them.
+const suggestions = atom(
+  { plugin: 'kanban', key: 'suggestions' } as const,
+  [],
+  {
+    shape: 'suggestions-1',
+  },
 )
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
@@ -193,4 +202,17 @@ export function updateQuickAdd(
   change: (value: KanbanQuickAdd) => KanbanQuickAdd,
 ): Promise<KanbanQuickAdd> {
   return update($, quickAdd, change)
+}
+
+export function readSuggestions(
+  $: EngineInterface,
+): Promise<KanbanSuggestion[]> {
+  return read($, suggestions)
+}
+
+export function updateSuggestions(
+  $: EngineInterface,
+  change: (value: KanbanSuggestion[]) => KanbanSuggestion[],
+): Promise<KanbanSuggestion[]> {
+  return update($, suggestions, change)
 }
