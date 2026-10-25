@@ -2,6 +2,7 @@ import type { On } from 'claude-code'
 import { mock } from 'claude-code/testing'
 
 export const NOW = Date.parse('2026-10-25T12:00:00Z')
+export const CWD = '/work'
 
 export type Files = Record<string, string>
 
@@ -51,6 +52,8 @@ export function fakeFs(on: On, files: Files) {
     denyRead: undefined as string | undefined,
     // While set, a write waits for it: a move stays unsettled for the test to look at.
     hold: undefined as Promise<void> | undefined,
+    // While set, a listing waits for it: the first load stays unanswered.
+    holdList: undefined as Promise<void> | undefined,
     // A change made outside the plugin, as Claude's Write or the person's editor does.
     edit: (file: string, text: string) => {
       files[file] = text
@@ -68,9 +71,10 @@ export function fakeFs(on: On, files: Files) {
 
     return { value: file in files || under(file).length > 0 }
   })
-  on('fs.list', (_, e) => {
+  on('fs.list', async (_, e) => {
     const dir = relative(e.path)
     calls.lists += 1
+    await calls.holdList
 
     return {
       value: under(dir).map(file => ({
@@ -105,16 +109,54 @@ export function fakeFs(on: On, files: Files) {
 }
 
 /** The engine beneath the plugin: a clock, files, and the registration calls. */
-export function boot(on: On, files: Files) {
+export function boot(on: On, files: Files, store?: Record<string, unknown>) {
   const clock = mock.clock(on, { now: NOW })
+  // Kept as JSON text, as the engine keeps it, so a test can read what was saved.
+  const saved = new Map(
+    Object.entries(store ?? {}).map(([key, value]) => [
+      key,
+      JSON.stringify(value),
+    ]),
+  )
   const calls = fakeFs(on, files)
   const toasts: string[] = []
+  const notices: string[] = []
+  const statuses: (string | undefined)[] = []
   const logs: string[] = []
   const scrolls: { by: number }[] = []
   const registered: string[] = []
   const world = { panes: [] as string[], opened: [] as string[] }
 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: CWD }))
+  on('store.get', (_, e) => {
+    const text = saved.get(e.key)
+
+    return { value: text === undefined ? undefined : JSON.parse(text) }
+  })
+  on('store.set', (_, e) => {
+    saved.set(e.key, JSON.stringify(e.value))
+
+    return { value: undefined }
+  })
+  on('store.delete', (_, e) => {
+    saved.delete(e.key)
+
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: [...saved.keys()] }))
+  on('ui.status', (_, e) => {
+    statuses.push(e.text)
+
+    return { value: undefined }
+  })
+  on('ui.notify', (_, e) => {
+    notices.push(e.text)
+
+    return {
+      value: { isSent: true as const, channel: 'terminal_bell' as const },
+    }
+  })
   on('command.register', () => ({ value: { command: 'kanban' } }))
   on('tool.register', (_, e) => {
     registered.push(e.name)
@@ -152,7 +194,18 @@ export function boot(on: On, files: Files) {
   })
   on('tool.call', () => ({ result: {} }))
 
-  return { clock, calls, toasts, logs, scrolls, registered, world }
+  return {
+    clock,
+    calls,
+    toasts,
+    notices,
+    statuses,
+    logs,
+    scrolls,
+    registered,
+    world,
+    saved,
+  }
 }
 
 export const PANE = {

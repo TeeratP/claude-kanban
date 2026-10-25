@@ -77,4 +77,14 @@ export const S = {
     `"${String(to)}" is not a column; use human, claude, backlog or done.`,
   badCard: 'card must be a whole number.',
   toolFailed: (name: string) => `${name} failed; see the debug log.`,
+
+  // #5
+  waiting: (n: number) =>
+    n === 1 ? '1 card waiting on you' : `${n} cards waiting on you`,
+  handedToYou: (card: KanbanCard) =>
+    `Waiting on you: #${card.number} ${card.title}`,
+  cacheFailed: (reason: string) =>
+    `kanban: could not use the saved board: ${reason}`,
+  notifyFailed: (reason: string) =>
+    `kanban: could not send the notification: ${reason}`,
 }
