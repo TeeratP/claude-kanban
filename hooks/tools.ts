@@ -12,7 +12,7 @@ import {
   isHandoffValid,
 } from './handoff'
 import { sectionList } from './layout'
-import { COLUMNS, errorMessage, isColumn } from './model'
+import { COLUMNS, errorMessage, isColumn, isPendingId, withCard } from './model'
 import { S } from './strings'
 import { moveCard } from './sync'
 
@@ -127,9 +127,11 @@ async function list(
   const board = await ensureBoard($)
   if (board.fetchedAt === 0) return { deny: S.boardUnavailable(board.error) }
 
+  // A card still being made has no number the tools could name.
+  const made = board.cards.filter(one => !isPendingId(one.id))
   const { held } = await readQueue($)
   const lines = COLUMNS.filter(one => column === undefined || column === one)
-    .flatMap(one => sectionList(board.cards, one))
+    .flatMap(one => sectionList(made, one))
     .map(card => S.listLine(card, held[card.id] !== undefined))
 
   return { result: lines.length === 0 ? S.listEmpty : lines.join('\n') }
@@ -159,7 +161,9 @@ async function find(
   const loaded = await ready($)
   if ('deny' in loaded) return loaded
 
-  const card = loaded.board.cards.find(one => one.number === number)
+  const card = loaded.board.cards.find(
+    one => one.number === number && !isPendingId(one.id),
+  )
 
   return card === undefined
     ? { deny: S.noSuchCard(number) }
@@ -322,7 +326,7 @@ async function create(
     // Shown at once; the reload behind it settles what a load in flight missed.
     await setBoard($, board => ({
       ...board,
-      cards: [...board.cards.filter(one => one.id !== card.id), card],
+      cards: withCard(board.cards, card),
     }))
     inBackground($, refresh($))
 

@@ -7,6 +7,7 @@ import {
   readBoard,
   readQueue,
   readPausedUntil,
+  readQuickAdd,
   readSync,
   readTick,
   readUi,
@@ -28,11 +29,13 @@ import {
 import type { Row } from './layout'
 import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
 import { headerCount, queuePlace, queueView } from './queue'
+import { toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { dropCard, shiftCard } from './reorder'
 import { S } from './strings'
 import { retryAll } from './sync'
 import { openDetail } from './view-detail'
+import { renderQuickAdd } from './view-quick-add'
 
 // Where the pane's window sat at the last draw; a wheel row is relative to it.
 let lastBody = { offset: 0, bodyRows: 0 }
@@ -128,6 +131,8 @@ export async function handleBoardScroll(
 ): Promise<boolean> {
   const ui = await readUi($)
   if (ui.view.mode !== 'board' || e.pointer === undefined) return false
+  // The open form pushes the list down by rows the layout does not know.
+  if ((await readQuickAdd($)).isOpen) return false
 
   const { cards } = await readBoard($)
   const rows = layoutBoard({
@@ -190,6 +195,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const { bodyColumns: columns, scroll } = e.props
   // Terminal and desktop draw the list through a Client, which takes the keys.
   const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
+  const canAdd = e.surface !== 'mobile'
+  const quickAdd = await renderQuickAdd($, e)
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
 
   const rows = layoutBoard({
@@ -219,7 +226,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
                 : S.updated(ageLabel(board.fetchedAt, now)))
         const retryLabel = S.retryAll(failed.length)
         const room =
-          columns - 1 - (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1)
+          columns -
+          1 -
+          (canAdd ? cellWidth(S.add) + 1 : 0) -
+          (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1)
         const join = (parts: string[]) =>
           ` ${parts.filter(part => part !== '').join(' · ')}`
         // The key hint shows whole or not at all: a cut hint is noise.
@@ -234,6 +244,17 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             <Button key="refresh" plain onPress={() => refresh($)}>
               {S.refresh}
             </Button>
+            {canAdd && (
+              <Button
+                key="add"
+                plain
+                hotkey="n"
+                onPress={() => toggleQuickAdd($)}
+              >
+                {' '}
+                {S.add}
+              </Button>
+            )}
             {board.error === undefined ? (
               <Text dimColor wrap="truncate-end">
                 {text}
@@ -350,7 +371,13 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   // above it. (The table names a Client on every surface, so the surface
   // decides.)
   if (!hasClient) {
-    return <Box flexDirection="column">{rows.map(draw)}</Box>
+    return (
+      <Box flexDirection="column">
+        {rows.slice(0, 1).map(draw)}
+        {quickAdd}
+        {rows.slice(1).map(draw)}
+      </Box>
+    )
   }
 
   const { Client } = $.ui.resolve(e)
@@ -374,6 +401,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   return (
     <Box flexDirection="column">
       {draw({ kind: 'toolbar' })}
+      {quickAdd}
       <Client
         key="board"
         module="./board-client.tsx"

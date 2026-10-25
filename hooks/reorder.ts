@@ -4,6 +4,7 @@ import type { KanbanCard, KanbanColumn } from '../types'
 import { readBoard } from './atoms'
 import type { Place } from './board-client'
 import { sectionList } from './layout'
+import { isPendingId } from './model'
 import { moveCard, moveOptions } from './sync'
 
 /**
@@ -26,7 +27,8 @@ export function anchorFor(
 /**
  * Drops a card into a section, at `place` in it: moves it from another
  * section, or reorders it within its own. Left without a place, or dropped in
- * Done (which lists by update time), it goes last.
+ * Done (which lists by update time), it goes last. A card still being made is
+ * not on the backend: it is not dropped, and no place is taken from it.
  */
 export async function dropCard(
   $: EngineInterface,
@@ -36,9 +38,13 @@ export async function dropCard(
 ): Promise<void> {
   const { cards } = await readBoard($)
   const card = cards.find(one => one.id === cardId)
-  if (card === undefined) return
+  if (card === undefined || isPendingId(cardId)) return
+  if (place !== undefined && place.at !== 'top' && isPendingId(place.cardId)) {
+    return
+  }
 
-  const others = sectionList(cards, column).filter(one => one.id !== cardId)
+  const made = cards.filter(one => !isPendingId(one.id))
+  const others = sectionList(made, column).filter(one => one.id !== cardId)
   const after =
     column === 'done' || place === undefined
       ? undefined
@@ -53,7 +59,7 @@ export async function dropCard(
 /**
  * Moves a card one place up or down in its section. Resolves its section, where
  * it ended up there and how many cards the section holds, or nothing when it
- * cannot move (at the end, or in Done).
+ * cannot move (at the end, in Done, or still being made).
  */
 export async function shiftCard(
   $: EngineInterface,
@@ -64,9 +70,14 @@ export async function shiftCard(
 > {
   const { cards } = await readBoard($)
   const card = cards.find(one => one.id === cardId)
-  if (card === undefined || card.column === 'done') return undefined
+  if (card === undefined || card.column === 'done' || isPendingId(cardId)) {
+    return undefined
+  }
 
-  const list = sectionList(cards, card.column)
+  const list = sectionList(
+    cards.filter(one => !isPendingId(one.id)),
+    card.column,
+  )
   const index =
     list.findIndex(one => one.id === cardId) + (dir === 'up' ? -1 : 1)
   if (index < 0 || index >= list.length) return undefined

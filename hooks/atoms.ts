@@ -7,10 +7,17 @@ import type {
   KanbanCheckRun,
   KanbanDetail,
   KanbanQueue,
+  KanbanQuickAdd,
   KanbanSync,
   KanbanUi,
 } from '../types'
-import { EMPTY_ACTIVITY, EMPTY_BOARD, EMPTY_QUEUE, INITIAL_UI } from './model'
+import {
+  EMPTY_ACTIVITY,
+  EMPTY_BOARD,
+  EMPTY_QUEUE,
+  EMPTY_QUICK_ADD,
+  INITIAL_UI,
+} from './model'
 
 // The scan that lists what a module reads and writes only accepts an atom
 // written in the file that reads it, so the atoms stay here and every other
@@ -51,6 +58,12 @@ const activity = atom(
   { plugin: 'kanban', key: 'activity' } as const,
   EMPTY_ACTIVITY,
   { shape: 'activity-1' },
+)
+// The add-a-card form: open or not, and what has been typed in it.
+const quickAdd = atom(
+  { plugin: 'kanban', key: 'quickAdd' } as const,
+  EMPTY_QUICK_ADD,
+  { shape: 'quickAdd-1' },
 )
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
@@ -169,4 +182,15 @@ export function updateActivity(
   change: (value: KanbanActivity) => KanbanActivity,
 ): Promise<KanbanActivity> {
   return update($, activity, change)
+}
+
+export function readQuickAdd($: EngineInterface): Promise<KanbanQuickAdd> {
+  return read($, quickAdd)
+}
+
+export function updateQuickAdd(
+  $: EngineInterface,
+  change: (value: KanbanQuickAdd) => KanbanQuickAdd,
+): Promise<KanbanQuickAdd> {
+  return update($, quickAdd, change)
 }

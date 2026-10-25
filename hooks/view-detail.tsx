@@ -36,6 +36,7 @@ import {
   ageLabel,
   capDiff,
   errorMessage,
+  isPendingId,
 } from './model'
 import { shiftCard } from './reorder'
 import { S } from './strings'
@@ -79,6 +80,9 @@ function syncNote(entry: KanbanSync): string {
 
 /** Shows a card's detail and reads its spec and sections from the backend. */
 export async function openDetail($: EngineInterface, cardId: string) {
+  // A card still being made has no spec to show yet.
+  if (isPendingId(cardId)) return
+
   const view: KanbanView = { mode: 'detail', cardId, tab: 'card' }
   const loading: KanbanDetail = {
     cardId,

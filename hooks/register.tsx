@@ -19,6 +19,7 @@ import {
 } from './board'
 import { guardEdit, guardWrite } from './guard'
 import { applyQueue, claudeLimit } from './queue'
+import { dropUnfinishedAdds } from './quick-add'
 import { S } from './strings'
 import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
@@ -46,6 +47,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await applyMode($, mode)
     await applyQueue($, mode, limit)
+    await dropUnfinishedAdds($)
     await $.command.register({
       name: 'kanban',
       description: S.commandDescription,

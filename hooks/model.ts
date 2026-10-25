@@ -4,6 +4,7 @@ import type {
   KanbanCard,
   KanbanColumn,
   KanbanQueue,
+  KanbanQuickAdd,
   KanbanUi,
 } from '../types'
 
@@ -57,6 +58,19 @@ export const INITIAL_UI: KanbanUi = {
   collapsed: { human: false, claude: false, backlog: false, done: true },
   draft: '',
 }
+
+export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
+  isOpen: false,
+  hasDetails: false,
+  title: '',
+  spec: '',
+}
+
+// A card shown before its backend has made it carries this prefix in its id.
+export const PENDING_PREFIX = 'new:'
+
+/** Whether a card id is one shown before its backend has made the card. */
+export const isPendingId = (cardId: string) => cardId.startsWith(PENDING_PREFIX)
 
 export function isColumn(value: unknown): value is KanbanColumn {
   return COLUMNS.some(column => column === value)
@@ -157,6 +171,23 @@ export function maxOrder(cards: readonly KanbanCard[], column: KanbanColumn) {
   return cards
     .filter(card => card.column === column)
     .reduce((max, card) => Math.max(max, card.order), 0)
+}
+
+/**
+ * The cards with `card` at the end of its column; a card with its id, or with
+ * the id `replaces`, gives way to it.
+ */
+export function withCard(
+  cards: readonly KanbanCard[],
+  card: KanbanCard,
+  replaces?: string,
+): KanbanCard[] {
+  const rest = cards.filter(one => one.id !== card.id && one.id !== replaces)
+
+  return [
+    ...rest,
+    { ...card, order: Math.max(card.order, maxOrder(rest, card.column) + 1) },
+  ]
 }
 
 const KANBAN_FILE = /(^|\/)\.kanban\/[^/]+\.md$/

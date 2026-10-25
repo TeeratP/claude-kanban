@@ -17,7 +17,13 @@ import {
   setBoard,
 } from './board'
 import { sectionList } from './layout'
-import { MAX_ATTEMPTS, TICK_SHOWN_MS, errorMessage, maxOrder } from './model'
+import {
+  MAX_ATTEMPTS,
+  TICK_SHOWN_MS,
+  errorMessage,
+  isPendingId,
+  maxOrder,
+} from './model'
 import { placeIn } from './order'
 import { holdPrompt, releaseQueued, submitPrompt } from './queue'
 import { S } from './strings'
@@ -143,6 +149,9 @@ export async function moveCard(
   to: KanbanColumn,
   opts?: MoveOptions,
 ): Promise<void> {
+  // A card still being made is not on the backend to be moved.
+  if (isPendingId(cardId)) return
+
   // Done lists by update time: it keeps no order to place a card in.
   const after = to === 'done' ? undefined : opts?.after
   // The card is found inside the write: a read here could be an older moment.
@@ -288,7 +297,8 @@ async function tick($: EngineInterface): Promise<void> {
   if (isShowing(await updateSync($, sync => sync))) ensureTicker($)
 }
 
-function expireLater(
+/** Removes a confirmed card's mark once it has been shown long enough. */
+export function expireLater(
   $: EngineInterface,
   cardId: string,
   settledAt: number,

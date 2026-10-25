@@ -1,9 +1,6 @@
-import type { EngineInterface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import type { KanbanBackendInfo } from '../types'
-import { createCard } from '../hooks/backend'
 import { parseSections } from '../hooks/handoff'
 import { parseCardFile, serializeCardFile } from '../hooks/local'
 import { click } from './board-ui'
@@ -456,22 +453,6 @@ test('kanban_create that cannot write says why', async ($, on) => {
   expect(refused).toMatchObject({
     deny: expect.stringMatching(/^Could not create the card: .*EACCES/),
   })
-})
-
-test('on a GitHub board kanban_create points to the /issue skill', async () => {
-  const github: KanbanBackendInfo = {
-    kind: 'github',
-    repo: 'o/r',
-    owner: 'o',
-    projectNumber: 1,
-    projectId: 'PVT_x',
-    statusFieldId: 'PVTSSF_x',
-    options: { backlog: 'a', inProgress: 'b', inReview: 'c', done: 'd' },
-  }
-
-  await expect(
-    createCard({} as EngineInterface, github, 'T', 's', 'backlog'),
-  ).rejects.toThrow('/issue skill')
 })
 
 test('every tool works with the pane closed', async ($, on) => {

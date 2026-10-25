@@ -67,6 +67,12 @@ When Claude is at its limit and you move another card to Claude (the moves that 
 
 A queued card is in Status In progress on GitHub like any card in Claude: a column means who holds the ball. The queue itself is local, saved per working directory and `backend` setting, so it survives a restart; the waiting cards start at the first load of the board once a slot is free. Lowering the limit stops no card that is already working. Cards Claude moves itself with `kanban_move` are never queued (they carry no prompt), though they use up a slot; `kanban_list` marks a waiting card `(queued)` so Claude leaves it alone.
 
+### Adding a card
+
+Press `+` in the toolbar (or `n` while the pane has the keys) to open a title field at the top of the board. `Enter` adds the card to Backlog; `Add details` opens a second, taller field for the spec (a new line is typed there as in the prompt box; `Enter` in either field adds the card). `Cancel`, or `+` again, closes the form and drops what you typed; `Esc` only gives the keys back to the prompt, so a half-typed card is not lost. An empty title is refused with a toast. The button is not shown on mobile, which has no text field.
+
+The card shows at once with a pulsing `⟳` (`#0` until its backend has numbered it) and `✓` when it exists. On the local backend it is written to `.kanban/NNNN-slug.md`. On GitHub it is an issue with the `triage` label (created in the repo if missing, never overwritten), added to the project board with Status Backlog: that label marks it for grooming. If the backend refuses, the card disappears, a toast gives the reason and the form comes back with your text. If GitHub made the issue but could not add it to the board, the toast names the issue.
+
 ## Backends
 
 A project uses one backend. They do not sync with each other.
@@ -147,7 +153,7 @@ Claude gets these tools. They work with the pane closed.
 | `kanban_handoff` | Records a handoff on a card. |
 | `kanban_ask` | Asks you a blocking question on a card (see below). |
 | `kanban_move` | Moves a card to `human`, `claude`, `backlog` or `done`. |
-| `kanban_create` | Creates a card (local backend only; on GitHub, Claude is told to use the `/issue` skill). The spec cannot open a handoff or feedback section: marker lines in it are escaped. |
+| `kanban_create` | Creates a card: a file on the local backend, an issue labeled `triage` on the project board on GitHub. The spec cannot open a handoff or feedback section: marker lines in it are escaped (local backend). |
 
 ### Handoff format
 

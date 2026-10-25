@@ -10,6 +10,7 @@ import type {
 } from '../types'
 import {
   appendGithub,
+  createGithub,
   detailGithub,
   diffGithub,
   moveGithub,
@@ -80,7 +81,7 @@ export async function readDetail(
   return detailGithub($, info, card, await viewerLogin($))
 }
 
-/** Creates a card and returns it; only the local backend does, GitHub cards come from issues. */
+/** Creates a card and returns it: a card file, or on GitHub an issue labeled `triage` on the board. */
 export async function createCard(
   $: EngineInterface,
   info: KanbanBackendInfo,
@@ -90,7 +91,7 @@ export async function createCard(
 ): Promise<KanbanCard> {
   if (info.kind === 'local') return createLocal($, title, spec, column)
 
-  throw new Error(S.createViaIssueSkill)
+  return createGithub($, info, title, spec, column)
 }
 
 /** The card's pull request diff; undefined when the backend has none. */
