@@ -180,4 +180,8 @@ export const S = {
     `Resume kanban card #${n}: read the newest feedback (mcp__kanban__kanban_show) and continue.`,
   promptFailed: (reason: string) =>
     `kanban: could not send the prompt to Claude: ${reason}`,
+
+  // #11
+  keyHint: '↑↓ ⏎ open · m move',
+  moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
 }
