@@ -55,3 +55,7 @@ Decisions made while building v1, newest last. Each entry: what was decided, why
 49. **`announce` rides on the sync entry** like `onConfirm`: it survives reloads and retries, and is dropped if the person retargets the move. (integration)
 50. **One rule for "Backlog→Claude by the person sends the work prompt": `moveOptions(from, to)` in `sync.ts`**, used by both the move buttons and drag drops. (integration)
 51. **Tests assert behaviour on both Button rows and Client rows through shared helpers** (`tests/board-ui.ts`), so no assertion passes vacuously on a surface that draws rows differently. (integration)
+52. **The backend setting's mode is stored on the board.** The engine keeps the board atom across the reload that a setting change causes, so `session.start` compares modes and resets the board when it differs; the same mode keeps the board across a hot reload. (#10)
+53. **`github` mode surfaces the failing check with a fix hint and re-checks on every refresh**, so it recovers by itself once `gh` is fixed. `auto` keeps logging quietly and falling back to local. (#10)
+54. **A cache saved under another mode is ignored, not deleted**, and overwritten by the next successful load. (#10)
+55. **Toolbar label is `GitHub (auto)` / `GitHub` / `Local (auto)` / `Local`, empty until the backend is known under `auto`**, so it never claims Local while GitHub may be about to load. (#10)
