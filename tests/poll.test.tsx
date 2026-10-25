@@ -482,3 +482,135 @@ test('the first load ever announces nothing', async ($, on) => {
   expect(toasts).toEqual([])
   expect(notices).toEqual([])
 })
+
+const HUMAN_CARDS = [
+  cardOf(7, 'human', { id: 'md:0007-first', title: 'First cached' }),
+  cardOf(8, 'human', { id: 'md:0008-second', title: 'Second cached' }),
+  cardOf(9, 'claude', { id: 'md:0009-busy', title: 'Busy cached' }),
+]
+
+const savedUnder = (mode: string, savedCards = HUMAN_CARDS) => ({
+  [`cache:${CWD}`]: {
+    shape: 'cache-2',
+    mode,
+    backend: { kind: 'local' },
+    cards: savedCards,
+  },
+})
+
+async function startClosed($: Engine) {
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+}
+
+test('the status line is set at the session start from the saved board with the pane closed', async ($, on) => {
+  const { clock, calls, statuses } = boot(on, cards(), savedUnder('auto'))
+
+  await startClosed($)
+  await clock.settle()
+
+  expect(statuses).toEqual(['2 cards waiting on you'])
+  expect(calls.lists).toBe(0)
+})
+
+test(
+  'the status line is set from a saved board under a chosen setting',
+  { options: { backend: 'local' } },
+  async ($, on) => {
+    const { clock, statuses } = boot(on, cards(), savedUnder('local'))
+
+    await startClosed($)
+    await clock.settle()
+
+    // The first call clears the line when the setting differs from the board's.
+    expect(statuses).toEqual([undefined, '2 cards waiting on you'])
+  },
+)
+
+test('a saved board with nobody waiting leaves the status line empty', async ($, on) => {
+  const { clock, statuses } = boot(
+    on,
+    cards(),
+    savedUnder('auto', [cardOf(9, 'claude')]),
+  )
+
+  await startClosed($)
+  await clock.settle()
+
+  expect(statuses.filter(text => text !== undefined)).toEqual([])
+})
+
+test('a board saved under another setting does not set the status line', async ($, on) => {
+  const { clock, calls, statuses } = boot(on, cards(), savedUnder('local'))
+
+  await startClosed($)
+  await clock.settle()
+
+  expect(statuses).toEqual([])
+  expect(calls.lists).toBe(0)
+})
+
+test(
+  'a board saved under auto does not set the status line under github',
+  { options: { backend: 'github' } },
+  async ($, on) => {
+    const { clock, statuses } = boot(on, cards(), savedUnder('auto'))
+
+    await startClosed($)
+    await clock.settle()
+
+    expect(statuses.filter(text => text !== undefined)).toEqual([])
+  },
+)
+
+test('no saved board leaves the status line alone at the session start', async ($, on) => {
+  const { clock, calls, statuses } = boot(on, cards())
+
+  await startClosed($)
+  await clock.settle()
+
+  expect(statuses).toEqual([])
+  expect(calls.lists).toBe(0)
+})
+
+test('a board saved for another directory does not set the status line', async ($, on) => {
+  const { clock, statuses } = boot(on, cards(), {
+    'cache:/elsewhere': savedUnder('auto')[`cache:${CWD}`],
+  })
+
+  await startClosed($)
+  await clock.settle()
+
+  expect(statuses).toEqual([])
+})
+
+test('a load after the session start replaces the saved count and tools never see the saved cards', async ($, on) => {
+  const { clock, calls, statuses } = boot(on, cards(), savedUnder('auto'))
+  await startClosed($)
+  await clock.settle()
+  expect(statuses.at(-1)).toBe('2 cards waiting on you')
+  expect(calls.lists).toBe(0)
+
+  const listed = await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
+
+  expect(calls.lists).toBe(1)
+  expect(statuses.at(-1)).toBe('1 card waiting on you')
+  expect(listed).toMatchObject({
+    result: expect.stringContaining('#1 [human] Fix login'),
+  })
+  expect(JSON.stringify(listed)).not.toContain('cached')
+})
+
+test('the saved count does not replace the count of a board already loaded', async ($, on) => {
+  const { clock, saved: store, statuses } = boot(on, cards())
+  await open($)
+  await clock.settle()
+  expect(statuses.at(-1)).toBe('1 card waiting on you')
+  store.set(`cache:${CWD}`, JSON.stringify(savedUnder('auto')[`cache:${CWD}`]))
+  const before = statuses.length
+
+  await startClosed($)
+  await clock.settle()
+
+  expect(statuses.slice(before)).toEqual([])
+  expect(statuses.at(-1)).toBe('1 card waiting on you')
+})
