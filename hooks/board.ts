@@ -7,9 +7,10 @@ import type {
   KanbanCard,
   KanbanSync,
 } from '../types'
-import { readBoard, readSync, updateBoard } from './atoms'
+import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
 import { EMPTY_BOARD, PANE, errorMessage, isKanbanFile } from './model'
+import { pauseLeft } from './rate-limit'
 import { S } from './strings'
 
 const POLL_MS = 45_000
@@ -59,7 +60,11 @@ export async function applyMode(
 
     return seen.isReset ? { ...EMPTY_BOARD, mode } : current
   })
-  if (seen.isReset) updateStatusLine($, board.cards)
+  if (seen.isReset) {
+    // A pause for GitHub's rate limit belongs to the board that is gone.
+    await updatePausedUntil($, () => 0)
+    updateStatusLine($, board.cards)
+  }
 }
 
 /**
@@ -311,11 +316,12 @@ export function startPolling($: EngineInterface): void {
 }
 
 // A tick reloads while the pane is open and ends the polling once it is not;
-// opening the pane again starts it.
+// opening the pane again starts it. While the GitHub rate limit pauses polling,
+// ticks pass without a load.
 async function pollOnce($: EngineInterface): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) {
-    await refresh($)
+    if ((await pauseLeft($)) === 0) await refresh($)
 
     return
   }

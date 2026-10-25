@@ -1,7 +1,14 @@
 import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
 
 import type { KanbanColumn, KanbanSync } from '../types'
-import { readBoard, readSync, readTick, readUi, updateUi } from './atoms'
+import {
+  readBoard,
+  readPausedUntil,
+  readSync,
+  readTick,
+  readUi,
+  updateUi,
+} from './atoms'
 import { refresh } from './board'
 import type { BoardProps } from './board-client'
 import { parseBoardMessage, toRowViews } from './board-rows'
@@ -16,6 +23,7 @@ import {
 } from './layout'
 import type { Row } from './layout'
 import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
+import { minutesLeft } from './rate-limit'
 import { S } from './strings'
 import { moveCard, moveOptions, retryAll } from './sync'
 import { openDetail } from './view-detail'
@@ -127,6 +135,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const ui = await readUi($)
   const sync = await readSync($)
   const tick = await readTick($)
+  const pausedUntil = await readPausedUntil($)
   const now = await $.clock.now()
   const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
@@ -148,9 +157,11 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           board.error ??
           (board.isLoading
             ? S.loading
-            : board.fetchedAt === 0
-              ? ''
-              : S.updated(ageLabel(board.fetchedAt, now)))
+            : pausedUntil > now
+              ? S.rateLimitLow(minutesLeft(pausedUntil - now))
+              : board.fetchedAt === 0
+                ? ''
+                : S.updated(ageLabel(board.fetchedAt, now)))
         const retryLabel = S.retryAll(failed.length)
         const room =
           columns - 1 - (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1)

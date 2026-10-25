@@ -112,11 +112,15 @@ Moving a card on GitHub:
 | To | What happens |
 |---|---|
 | Backlog | Status becomes Backlog. |
-| Claude | Status becomes In progress; label `ai` is added and `human` is removed if present. |
+| Claude | The label `ai` is added and `human` is removed if present (whatever its case), then Status becomes In progress. If the repo has no `ai` label, it is created first. |
 | Human | Status becomes In review. No label changes. |
 | Done | Status becomes Done and the issue is closed. The close is re-read to make sure it took. |
 
 Moving a closed issue out of Done reopens it first. Handoffs and feedback are posted as issue comments; the Diff tab of a card with a linked pull request shows `gh pr diff`.
+
+Only comments written by the account `gh` is signed in as count toward the handoff rule. Anyone else's Handoff or Feedback comment is shown on the card, marked with its author, and ignored when deciding whether a card may move to Human.
+
+The board is read with one GraphQL query per 100 items (about 2 points of GitHub's 5000 an hour per page). When the budget runs low or out, polling pauses until it resets and the toolbar says so; the refresh button still works.
 
 ## Claude's tools and the handoff
 

@@ -168,8 +168,8 @@ async function show(
     const { body, sections } = await readDetail($, found.info, found.card)
     const heading = (one: KanbanSection) =>
       one.kind === 'handoff'
-        ? S.handoffHeading(one.date)
-        : S.feedbackHeading(one.date)
+        ? S.handoffHeading(one.date, one.byOther)
+        : S.feedbackHeading(one.date, one.byOther)
 
     return {
       result: [

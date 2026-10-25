@@ -329,7 +329,7 @@ export async function renderDetail(
         detail.sections.map((section, index) => (
           <Markdown
             key={`section:${index}`}
-            text={`**${section.kind === 'handoff' ? S.handoffHeading(section.date) : S.feedbackHeading(section.date)}**\n\n${section.text}`}
+            text={`**${section.kind === 'handoff' ? S.handoffHeading(section.date, section.byOther) : S.feedbackHeading(section.date, section.byOther)}**\n\n${section.text}`}
           />
         ))}
     </Box>
