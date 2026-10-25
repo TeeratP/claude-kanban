@@ -24,8 +24,9 @@ import {
 import type { Row } from './layout'
 import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
 import { minutesLeft } from './rate-limit'
+import { dropCard, shiftCard } from './reorder'
 import { S } from './strings'
-import { moveCard, moveOptions, retryAll } from './sync'
+import { retryAll } from './sync'
 import { openDetail } from './view-detail'
 
 // Where the pane's window sat at the last draw; a wheel row is relative to it.
@@ -81,6 +82,28 @@ async function scrollSection(
   return seen.isMoved
 }
 
+// Scrolls the section the card is in just far enough to keep it in sight.
+async function keepInView(
+  $: EngineInterface,
+  column: KanbanColumn,
+  at: { index: number; length: number },
+): Promise<void> {
+  await updateUi($, ui => {
+    const cap = capFor(lastBody.bodyRows, openCount(ui))
+    const shown = clampOffset(ui.offsets[column], at.length, cap)
+    const offset =
+      at.index < shown
+        ? at.index
+        : at.index >= shown + cap
+          ? at.index - cap + 1
+          : shown
+
+    return offset === shown
+      ? ui
+      : { ...ui, offsets: { ...ui.offsets, [column]: offset } }
+  })
+}
+
 /**
  * Scrolls the section under the wheel; false leaves the move to the engine, as it
  * does for a section already at the end the wheel points to.
@@ -102,7 +125,7 @@ export async function handleBoardScroll(
   return scrollSection($, column, e.bodyRows, () => step)
 }
 
-/** Acts on what the board's Client posted: a click on a row or a card dropped. */
+/** Acts on what the board's Client posted: a click on a row, a card dropped or a card moved a place. */
 export async function handleBoardMessage(
   $: EngineInterface,
   data: unknown,
@@ -114,15 +137,12 @@ export async function handleBoardMessage(
     case 'open':
       await openDetail($, message.cardId)
       break
-    case 'drop': {
-      const { cards } = await readBoard($)
-      const from = cards.find(one => one.id === message.cardId)?.column
-      await moveCard(
-        $,
-        message.cardId,
-        message.column,
-        from === undefined ? undefined : moveOptions(from, message.column),
-      )
+    case 'drop':
+      await dropCard($, message.cardId, message.column, message.place)
+      break
+    case 'shift': {
+      const moved = await shiftCard($, message.cardId, message.dir)
+      if (moved !== undefined) await keepInView($, moved.column, moved)
       break
     }
     case 'toggle':

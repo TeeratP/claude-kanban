@@ -21,24 +21,122 @@ export type RowView =
       /** The keys that move the card under the cursor here, and how they read. */
       moveKeys: string[]
       hint: string
+      /** Whether the section keeps its cards in the order they were put in. */
+      isOrdered: boolean
     })
   | (Base & { kind: 'more'; column: string; dir: 'up' | 'down' })
   | (Base & { kind: 'card'; column: string; cardId: string })
-  | (Base & { kind: 'text' })
+  // The empty row of a section names it; other text belongs to none.
+  | (Base & { kind: 'text'; column?: string })
 
 export type BoardProps = { rows: RowView[]; columns: number }
 
-/** What the module posts: a click on a row, or a card dropped on a header. */
+/** Where in a section a dropped card goes: its top, or right before or after a card. */
+export type Place = { at: 'top' } | { at: 'before' | 'after'; cardId: string }
+
+/**
+ * What the module posts: a click on a row, a card dropped on a section (at a
+ * place in it, or last when none) or moved a place up or down in its own.
+ */
 export type BoardPost =
   | { type: 'open'; cardId: string }
-  | { type: 'drop'; cardId: string; column: string }
+  | { type: 'drop'; cardId: string; column: string; place?: Place }
+  | { type: 'shift'; cardId: string; dir: 'up' | 'down' }
   | { type: 'toggle'; column: string }
   | { type: 'page'; column: string; dir: 'up' | 'down' }
 
+/** Where a drop at a pointer position lands, and the rows that show it. */
+export type DropTarget = {
+  column: string
+  /** Where in the section; none when it keeps no order. */
+  place?: Place
+  /** The row the insertion line is drawn under. */
+  line?: number
+  /** The row lit instead, for a section that keeps no order. */
+  lit?: number
+}
+
+// Whether the pointer is in the lower half of its row; only where the terminal
+// reports it finer than a cell.
+const isLower = (row: number, fineY?: number) =>
+  fineY !== undefined && fineY - row >= 0.5
+
+/**
+ * What a card dropped over row `pointerRow` goes to. Any row of a section
+ * takes it: a header or the empty row puts it first, a card puts it before
+ * that card (after it, in the card's lower half where `fineY` knows), a `more`
+ * row at that edge of the window shown. A section that keeps no order is lit.
+ */
+export function dropTarget(
+  rows: readonly RowView[],
+  pointerRow: number,
+  fineY?: number,
+): DropTarget | undefined {
+  const row = rows[pointerRow]
+  const column = row?.column
+  if (row === undefined || column === undefined) return undefined
+
+  let headerAt = pointerRow
+  while (headerAt >= 0) {
+    const one = rows[headerAt]
+    if (one?.kind === 'header' && one.column === column) break
+    headerAt -= 1
+  }
+  const header = rows[headerAt]
+  if (header?.kind !== 'header') return undefined
+  if (!header.isOrdered) return { column, lit: headerAt }
+
+  const top: DropTarget = { column, place: { at: 'top' }, line: headerAt }
+  if (row.kind === 'header' || row.kind === 'text') return top
+
+  if (row.kind === 'more') {
+    const isUp = row.dir === 'up'
+    const edge = rows[isUp ? pointerRow + 1 : pointerRow - 1]
+    if (edge?.kind !== 'card' || edge.column !== column) return top
+
+    return isUp
+      ? {
+          column,
+          place: { at: 'before', cardId: edge.cardId },
+          line: pointerRow,
+        }
+      : {
+          column,
+          place: { at: 'after', cardId: edge.cardId },
+          line: pointerRow - 1,
+        }
+  }
+
+  return isLower(pointerRow, fineY)
+    ? { column, place: { at: 'after', cardId: row.cardId }, line: pointerRow }
+    : {
+        column,
+        place: { at: 'before', cardId: row.cardId },
+        line: pointerRow - 1,
+      }
+}
+
+// Whether the card on row `from` would stay where it is if dropped at `target`:
+// in an unordered section, or at the place it already has.
+function staysPut(rows: readonly RowView[], target: DropTarget, from: number) {
+  return (
+    target.column === rows[from]?.column &&
+    (target.place === undefined ||
+      target.line === from ||
+      target.line === from - 1)
+  )
+}
+
 // Where the button went down (its row and that row's key, since a refresh can
 // shift rows under the pointer), whether the pointer has left that row since,
-// and the row it is over now.
-type Gesture = { y: number; key: string; hasMoved: boolean; over: number }
+// the row it is over now and, where known, its fine position there.
+type Gesture = {
+  y: number
+  key: string
+  hasMoved: boolean
+  over: number
+  fine?: number
+}
 
 // The row the keys act on: its key (a refresh can shift rows), the index it
 // had (for when its row is gone) and whether it is drawn. A click only records
@@ -93,24 +191,28 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     }
   }
 
-  // A click acts on the row it hit; a drag that ends on a header moves the card.
-  const finish = (start: Gesture, end: number) => {
-    const from = rows.find(row => row.key === start.key)
+  // A click acts on the row it hit; a card dragged to a place that is not its
+  // own is dropped there.
+  const finish = (start: Gesture, end: number, fineY?: number) => {
+    const fromAt = rows.findIndex(row => row.key === start.key)
+    const from = rows[fromAt]
     if (from === undefined) return
 
     if (!start.hasMoved && rows[end]?.key === start.key) {
       activate(from)
       return
     }
+    if (from.kind !== 'card') return
 
-    const to = rows[end]
-    if (
-      from.kind === 'card' &&
-      to?.kind === 'header' &&
-      to.column !== from.column
-    ) {
-      post({ type: 'drop', cardId: from.cardId, column: to.column })
-    }
+    const to = dropTarget(rows, end, fineY)
+    if (to === undefined || staysPut(rows, to, fromAt)) return
+
+    post({
+      type: 'drop',
+      cardId: from.cardId,
+      column: to.column,
+      ...(to.place === undefined ? {} : { place: to.place }),
+    })
   }
 
   surface.onPointer((event: ClientPointerEvent) => {
@@ -149,13 +251,21 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
         surface.setState({ ...now, gesture: null })
         return
       }
-      if (event.y === current.over) return
+      // Within a row only crossing its middle changes where the card would land.
+      if (
+        event.y === current.over &&
+        isLower(event.y, event.fine?.y) === isLower(current.over, current.fine)
+      ) {
+        return
+      }
+      const { fine: _was, ...held } = current
       surface.setState({
         ...now,
         gesture: {
-          ...current,
+          ...held,
           hasMoved: current.hasMoved || event.y !== current.y,
           over: event.y,
+          ...(event.fine === undefined ? {} : { fine: event.fine.y }),
         },
       })
       return
@@ -163,12 +273,13 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
 
     if (event.type === 'up') {
       surface.setState({ ...now, gesture: null })
-      finish(current, event.y)
+      finish(current, event.y, event.fine?.y)
     }
   })
 
-  // Up and down (or k and j) move the cursor, Enter does what a click does and
-  // `m` then a section's key moves the card, as a drop on its header does.
+  // Up and down (or k and j) move the cursor, Enter does what a click does,
+  // `m` then a section's key moves the card to the end of that section and
+  // shift-k or shift-j moves it a place up or down in its own.
   surface.onKey((event: ClientKeyEvent) => {
     if (event.ctrl === true || event.meta === true) return
 
@@ -203,6 +314,19 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
       return
     }
 
+    const shift =
+      event.key === 'K' || (event.shift === true && event.key === 'k')
+        ? 'up'
+        : event.key === 'J' || (event.shift === true && event.key === 'j')
+          ? 'down'
+          : undefined
+    if (shift !== undefined) {
+      if (at.kind === 'card') {
+        post({ type: 'shift', cardId: at.cardId, dir: shift })
+      }
+      return
+    }
+
     const delta =
       event.key === 'down' || event.key === 'j'
         ? 1
@@ -226,19 +350,20 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     }
   })
 
-  // While a card is being dragged it is dimmed and the header it could drop on
-  // is highlighted.
-  const dragged =
+  // While a card is being dragged it is dimmed and a line shows where it would
+  // land: under the row above that place, or the section is lit when it keeps
+  // no order. A place the card already has shows nothing.
+  const draggedAt =
     gesture !== null && gesture.hasMoved
-      ? rows.find(row => row.key === gesture.key)
+      ? rows.findIndex(row => row.key === gesture.key)
+      : -1
+  const dragged = rows[draggedAt]
+  const found =
+    gesture !== null && dragged?.kind === 'card'
+      ? dropTarget(rows, gesture.over, gesture.fine)
       : undefined
-  const over = gesture === null ? undefined : rows[gesture.over]
   const target =
-    dragged?.kind === 'card' &&
-    over?.kind === 'header' &&
-    over.column !== dragged.column
-      ? gesture?.over
-      : undefined
+    found === undefined || staysPut(rows, found, draggedAt) ? undefined : found
 
   // The cursor, once a key has brought it up, and the card an `m` is moving:
   // the other headers then show the keys that send it there.
@@ -257,9 +382,11 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
   return (
     <Box flexDirection="column">
       {rows.map((row, index) => {
-        const isLit = index === target || index === cursorAt
+        const isLit = index === target?.lit || index === cursorAt
+        const isLine = index === target?.line
         const rowStyle = {
           ...(isLit ? { inverse: true } : {}),
+          ...(isLine ? { underline: true } : {}),
           ...(row === dragged ? { dimColor: true } : {}),
         }
         const segs =
@@ -272,8 +399,8 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
               ]
             : row.segs
         const only = segs.length === 1 ? segs[0] : undefined
-        // The highlight runs to the pane's edge.
-        const pad = isLit ? Math.max(0, columns - row.width) : 0
+        // The highlight and the line run to the pane's edge.
+        const pad = isLit || isLine ? Math.max(0, columns - row.width) : 0
 
         return (
           <Box key={row.key}>

@@ -48,6 +48,8 @@ export type KanbanSync = {
   from: KanbanColumn
   to: KanbanColumn
   queued?: KanbanColumn
+  after?: string | null
+  queuedAfter?: string | null
   phase: KanbanSyncPhase
   attempts: number
   error?: string

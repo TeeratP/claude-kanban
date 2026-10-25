@@ -12,7 +12,9 @@ import {
 import { appendSection, readDetail, readDiff } from './backend'
 import { ensureBackend } from './board'
 import { formatFeedback } from './handoff'
+import { sectionList } from './layout'
 import { COLUMNS, MAX_ATTEMPTS, ageLabel, capDiff, errorMessage } from './model'
+import { shiftCard } from './reorder'
 import { S } from './strings'
 import { moveCard, moveOptions, retry } from './sync'
 
@@ -210,6 +212,11 @@ export async function renderDetail(
   const hasDiff = (card.prNumbers?.length ?? 0) > 0
   const tab = hasDiff ? view.tab : 'card'
   const isHuman = card.column === 'human'
+  // Where the Client has drag and keys, the board reorders; elsewhere it is here.
+  const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
+  const siblings = sectionList(board.cards, card.column)
+  const place = siblings.findIndex(one => one.id === card.id)
+  const canReorder = !hasClient && card.column !== 'done' && place >= 0
 
   const drawDiff = (shown: KanbanDetail) => {
     switch (shown.diffState) {
@@ -297,6 +304,25 @@ export async function renderDetail(
           />
         ))}
       </Box>
+      {canReorder && siblings.length > 1 && (
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>{S.reorderLabel}</Text>
+          {place > 0 && (
+            <Button
+              key="reorder:up"
+              label={S.reorderUp}
+              onPress={() => shiftCard($, card.id, 'up')}
+            />
+          )}
+          {place < siblings.length - 1 && (
+            <Button
+              key="reorder:down"
+              label={S.reorderDown}
+              onPress={() => shiftCard($, card.id, 'down')}
+            />
+          )}
+        </Box>
+      )}
       {hasDiff && (
         <Box flexDirection="row" gap={1}>
           <Button

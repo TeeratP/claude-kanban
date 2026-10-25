@@ -13,6 +13,7 @@ import {
   moveGithub,
   parseClaudeMd,
   planMove,
+  planPosition,
 } from '../hooks/github'
 import { isHandoffValid } from '../hooks/handoff'
 import { NOW, PANE, RUN, SYNC_PAUSE, boot } from './fakes'
@@ -1747,4 +1748,108 @@ test("a handoff comment from another user does not let a card move to Human, and
 
   // The signed-in login is asked for once, then remembered.
   expect(calls.filter(call => call.argv[2] === 'user')).toHaveLength(1)
+})
+
+const POSITION_ROUTE: Route = {
+  match: ['gh', 'api', 'graphql'],
+  reply: { stdout: '{"data":{"updateProjectV2ItemPosition":{}}}' },
+}
+
+test('the position command puts the item after the other, or first when there is none', () => {
+  const after = ghCard({ id: 'gh:9', number: 9, itemId: 'PVTI_9' })
+  const [, , , flag, query, ...fields] = planPosition(ghCard(), after, CFG)
+
+  expect(flag).toBe('-f')
+  expect(query).toMatch(
+    /^query=mutation\(\$projectId: ID!, \$itemId: ID!, \$afterId: ID\)/,
+  )
+  expect(query).toContain(
+    'updateProjectV2ItemPosition(input: {projectId: $projectId, itemId: $itemId, afterId: $afterId})',
+  )
+  expect(fields).toEqual([
+    '-f',
+    'projectId=PVT_proj',
+    '-f',
+    'itemId=PVTI_12',
+    '-f',
+    'afterId=PVTI_9',
+  ])
+  // First: no afterId, which GitHub reads as the top.
+  expect(planPosition(ghCard(), null, CFG).slice(5)).toEqual([
+    '-f',
+    'projectId=PVT_proj',
+    '-f',
+    'itemId=PVTI_12',
+  ])
+})
+
+test('a card or a neighbour that is not on the board has no position to set', () => {
+  expect(() => planPosition(ghCard({ itemId: undefined }), null, CFG)).toThrow(
+    '#12 is not on the project board.',
+  )
+  expect(() =>
+    planPosition(ghCard(), ghCard({ number: 9, itemId: undefined }), CFG),
+  ).toThrow('#9 is not on the project board.')
+})
+
+test('a reorder within a column runs the position mutation and nothing else', async () => {
+  const { $, calls } = fakeEngine([POSITION_ROUTE, ...WRITES])
+  const after = ghCard({ id: 'gh:9', number: 9, itemId: 'PVTI_9' })
+
+  const patch = await moveGithub($, CFG, ghCard(), 'backlog', after)
+
+  expect(calls.map(call => call.argv)).toEqual([
+    planPosition(ghCard(), after, CFG),
+  ])
+  expect(patch).toEqual({})
+})
+
+test('a move with a place sets the status first and the position last, and moving to Claude still checks the label', async () => {
+  const { $, calls } = fakeEngine([HAS_AI, POSITION_ROUTE, ...WRITES])
+
+  const patch = await moveGithub($, CFG, ghCard(), 'claude', null)
+
+  expect(calls.map(call => call.argv.slice(0, 3).join(' '))).toEqual([
+    'gh issue edit',
+    'gh project item-edit',
+    'gh api graphql',
+  ])
+  expect(calls[2]?.argv).toEqual(planPosition(ghCard(), null, CFG))
+  expect(patch).toMatchObject({ status: 'In progress', isClosed: false })
+
+  // With no place asked for, nothing is positioned.
+  const plain = fakeEngine([HAS_AI, POSITION_ROUTE, ...WRITES])
+  await moveGithub(plain.$, CFG, ghCard(), 'claude')
+  expect(plain.calls.some(call => call.argv[1] === 'api')).toBe(false)
+})
+
+test('a position GitHub refuses fails the move with its reason', async () => {
+  const refused = fakeEngine([
+    {
+      match: ['gh', 'api', 'graphql'],
+      reply: { stdout: '{"errors":[{"message":"Could not resolve item"}]}' },
+    },
+  ])
+  await expect(
+    moveGithub(refused.$, CFG, ghCard(), 'backlog', null),
+  ).rejects.toThrow(
+    "GitHub did not accept the card's new position: Could not resolve item",
+  )
+
+  const failed = fakeEngine([
+    {
+      match: ['gh', 'api', 'graphql'],
+      reply: { exitCode: 1, stderr: 'HTTP 502: Bad Gateway' },
+    },
+  ])
+  await expect(
+    moveGithub(failed.$, CFG, ghCard(), 'backlog', null),
+  ).rejects.toThrow('HTTP 502: Bad Gateway')
+
+  const garbled = fakeEngine([
+    { match: ['gh', 'api', 'graphql'], reply: { stdout: 'oops' } },
+  ])
+  await expect(
+    moveGithub(garbled.$, CFG, ghCard(), 'backlog', null),
+  ).rejects.toThrow('gh returned the new position that could not be read')
 })

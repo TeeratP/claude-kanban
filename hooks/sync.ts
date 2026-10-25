@@ -10,7 +10,9 @@ import {
   refresh,
   setBoard,
 } from './board'
+import { sectionList } from './layout'
 import { MAX_ATTEMPTS, TICK_SHOWN_MS, errorMessage, maxOrder } from './model'
+import { placeIn } from './order'
 import { S } from './strings'
 
 export type MoveOptions = {
@@ -18,6 +20,12 @@ export type MoveOptions = {
   onConfirm?: 'work' | 'resume'
   /** Tell the person the card is theirs once the backend has confirmed the move. */
   announce?: boolean
+  /**
+   * Where the card lands in its section: right after this card, or first when
+   * null. Left out, a card moving to another section goes last and one in its
+   * own section stays put.
+   */
+  after?: string | null
 }
 
 /** The options for a move the person makes: Backlog to Claude asks Claude to start work. */
@@ -47,16 +55,21 @@ function detach($: EngineInterface, work: Promise<unknown>): void {
   work.catch((error: unknown) => $.ui.log(S.syncFailed(errorMessage(error))))
 }
 
+const where = (after: string | null | undefined) =>
+  after === undefined ? {} : { after }
+
 /**
- * The entry after the person moves the card to `to`, or none when the card is
- * back where the backend has it. `from` is the column the card was in on the
- * board, which is the backend's only for a card with no unsettled entry.
+ * The entry after the person moves the card to `to` (after the card `after`,
+ * when given), or none when the card is back where the backend has it. `from`
+ * is the column the card was in on the board, which is the backend's only for
+ * a card with no unsettled entry.
  */
 function retarget(
   entry: KanbanSync | undefined,
   cardId: string,
   from: KanbanColumn,
   to: KanbanColumn,
+  after: string | null | undefined,
   isInFlight: boolean,
   opts: MoveOptions | undefined,
 ): KanbanSync | undefined {
@@ -65,28 +78,56 @@ function retarget(
     ...(opts?.announce === true ? { announce: true } : {}),
   }
   if (entry === undefined || entry.phase === 'ok')
-    return { cardId, from, to, phase: 'pending', attempts: 0, ...confirm }
+    return {
+      cardId,
+      from,
+      to,
+      ...where(after),
+      phase: 'pending',
+      attempts: 0,
+      ...confirm,
+    }
 
   const {
     error: _error,
     queued: _queued,
+    queuedAfter: _queuedAfter,
     onConfirm: _prompt,
     announce: _announce,
     ...rest
   } = entry
   // A call on its way finishes first; the move is sent after it.
-  if (isInFlight)
-    return { ...rest, ...(to === entry.to ? {} : { queued: to }), ...confirm }
+  if (isInFlight) {
+    const isAsked = to !== entry.to || after !== entry.after
 
-  return to === entry.from
+    return {
+      ...rest,
+      ...(isAsked
+        ? { queued: to, ...(after === undefined ? {} : { queuedAfter: after }) }
+        : {}),
+      ...confirm,
+    }
+  }
+
+  const { after: _after, ...elsewhere } = rest
+
+  return to === entry.from && after === undefined
     ? undefined
-    : { ...rest, to, phase: 'pending', attempts: 0, ...confirm }
+    : {
+        ...elsewhere,
+        to,
+        ...where(after),
+        phase: 'pending',
+        attempts: 0,
+        ...confirm,
+      }
 }
 
 /**
  * Moves a card at once on the board, then, after a pause for further moves,
  * asks the backend to make it so. A refused move waits for a retry and, once
- * out of tries, puts the card back and says why.
+ * out of tries, puts the card back and says why. With `opts.after` the card
+ * is placed in its section, which may be the one it is in.
  */
 export async function moveCard(
   $: EngineInterface,
@@ -94,21 +135,31 @@ export async function moveCard(
   to: KanbanColumn,
   opts?: MoveOptions,
 ): Promise<void> {
+  // Done lists by update time: it keeps no order to place a card in.
+  const after = to === 'done' ? undefined : opts?.after
   // The card is found inside the write: a read here could be an older moment.
   const seen: { from?: KanbanColumn; entry?: KanbanSync } = {}
   await setBoard($, board => {
     const card = board.cards.find(one => one.id === cardId)
-    seen.from =
-      card === undefined || card.column === to ? undefined : card.column
-    if (card === undefined || card.column === to) return board
+    seen.from = undefined
+    if (card === undefined) return board
 
-    const order = maxOrder(board.cards, to) + 1
+    const placed =
+      after === undefined ? undefined : placeIn(board.cards, cardId, to, after)
+    // Nowhere new to go: its own section with no place asked, or the place it has.
+    if (card.column === to && placed === undefined) return board
+
+    seen.from = card.column
+    const order = placed?.order ?? maxOrder(board.cards, to) + 1
 
     return {
       ...board,
-      cards: board.cards.map(one =>
-        one.id === cardId ? { ...one, column: to, order } : one,
-      ),
+      cards: board.cards.map(one => {
+        if (one.id === cardId) return { ...one, column: to, order }
+        const shifted = placed?.shifted[one.id]
+
+        return shifted === undefined ? one : { ...one, order: shifted }
+      }),
     }
   })
   const from = seen.from
@@ -120,6 +171,7 @@ export async function moveCard(
       cardId,
       from,
       to,
+      after,
       inFlight.has(cardId),
       opts,
     )
@@ -253,6 +305,21 @@ async function dispatch($: EngineInterface, cardId: string): Promise<void> {
   if (isMore) $.clock.after(0, () => detach($, dispatch($, cardId)))
 }
 
+// The card this move goes after, as the board has it now: null for first, the
+// section's last when that card is gone, nothing when no place was asked.
+function anchorOf(
+  cards: readonly KanbanCard[],
+  cardId: string,
+  sent: KanbanSync,
+): KanbanCard | null | undefined {
+  if (sent.after === undefined) return undefined
+  if (sent.after === null) return null
+
+  const others = sectionList(cards, sent.to).filter(one => one.id !== cardId)
+
+  return others.find(one => one.id === sent.after) ?? others.at(-1) ?? null
+}
+
 // Resolves whether the person asked for another move while this one was out.
 async function send($: EngineInterface, cardId: string): Promise<boolean> {
   const { cards } = await readBoard($)
@@ -275,7 +342,13 @@ async function send($: EngineInterface, cardId: string): Promise<boolean> {
   let patch: Partial<KanbanCard>
   try {
     const info = await ensureBackend($)
-    patch = await moveRemote($, info, { ...card, column: sent.from }, sent.to)
+    patch = await moveRemote(
+      $,
+      info,
+      { ...card, column: sent.from },
+      sent.to,
+      anchorOf(cards, card.id, sent),
+    )
   } catch (error) {
     return settle($, card, sent, { reason: errorMessage(error) })
   }
@@ -306,14 +379,23 @@ async function settle(
     seen.next = 'gone'
     if (entry === undefined) return sync
 
-    const { error: _error, queued, onConfirm, announce, ...rest } = entry
+    const {
+      error: _error,
+      queued,
+      queuedAfter,
+      onConfirm,
+      announce,
+      ...rest
+    } = entry
+    // The place of the move that was sent; what the person asked for since replaces it.
+    const { after: _sent, ...unplaced } = rest
     const confirm = {
       ...(onConfirm === undefined ? {} : { onConfirm }),
       ...(announce === true ? { announce } : {}),
     }
     const target = queued ?? entry.to
     // The person asked for something else while the call was out.
-    const isOverridden = target !== sent.to
+    const isOverridden = queued !== undefined
 
     if ('patch' in outcome) {
       if (isOverridden) {
@@ -322,10 +404,11 @@ async function settle(
         return {
           ...sync,
           [card.id]: {
-            ...rest,
+            ...unplaced,
             ...confirm,
             from: sent.to,
             to: target,
+            ...where(queuedAfter),
             phase: 'pending',
             attempts: 0,
           },
@@ -339,15 +422,18 @@ async function settle(
     }
 
     if (isOverridden) {
-      if (target === entry.from) return without(sync, card.id)
+      if (target === entry.from && queuedAfter === undefined) {
+        return without(sync, card.id)
+      }
       seen.next = 'more'
 
       return {
         ...sync,
         [card.id]: {
-          ...rest,
+          ...unplaced,
           ...confirm,
           to: target,
+          ...where(queuedAfter),
           phase: 'pending',
           attempts: 0,
         },
@@ -369,11 +455,13 @@ async function settle(
   if ('patch' in outcome) {
     const { column: _column, order: _order, ...elsewhere } = outcome.patch
     // The board already shows the column the person chose; only while it
-    // still shows the one this call set does the backend's order apply.
+    // still shows the one this call set does the backend's order apply, and
+    // not when the person has asked for another place in it since.
+    const isCurrent = seen.next !== 'more'
     const settled = (one: KanbanCard): KanbanCard => {
       const merged = {
         ...one,
-        ...(one.column === sent.to ? outcome.patch : elsewhere),
+        ...(one.column === sent.to && isCurrent ? outcome.patch : elsewhere),
       }
       if (sent.to === 'human') return merged
 
@@ -418,7 +506,11 @@ async function settle(
           : one,
       ),
     }))
-    $.ui.toast(S.movedBack(card, sent.to, sent.from, outcome.reason))
+    $.ui.toast(
+      sent.from === sent.to
+        ? S.reorderUndone(card, outcome.reason)
+        : S.movedBack(card, sent.to, sent.from, outcome.reason),
+    )
     // A load restores the card's place in the column it is back in.
     $.clock.after(0, () => detach($, refresh($)))
   }

@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type { KanbanCard, KanbanColumn, KanbanDetail } from '../types'
 import { escapeMarkers, parseSections } from './handoff'
 import { KANBAN_DIR, isColumn, maxOrder } from './model'
+import { placeIn } from './order'
 import { S } from './strings'
 
 // Frontmatter lines this module does not own, kept so a rewrite loses nothing.
@@ -158,18 +159,57 @@ export async function loadLocal($: EngineInterface): Promise<KanbanCard[]> {
   return parsed.flatMap(one => (one === null ? [] : [one.card]))
 }
 
+/**
+ * Moves the card to `to`, after the card `after` (first when null) or last
+ * when none is given. Neighbours that have to change their order to make room
+ * are rewritten first, the moved card last.
+ */
 export async function moveLocal(
   $: EngineInterface,
   card: KanbanCard,
   to: KanbanColumn,
+  after?: KanbanCard | null,
 ): Promise<Partial<KanbanCard>> {
   const current = await readCard($, card)
-  const others = (await loadLocal($)).filter(other => other.id !== card.id)
+  const all = await loadLocal($)
+  const placed =
+    after === undefined
+      ? undefined
+      : placeIn(all, card.id, to, after === null ? null : after.id)
+  // Already in place: another write got there first.
+  if (after !== undefined && placed === undefined) return {}
+
+  const isReorder = current.card.column === to && after !== undefined
   const patch = {
     column: to,
-    order: maxOrder(others, to) + 1,
-    updatedAt: new Date(await $.clock.now()).toISOString(),
+    order:
+      placed?.order ??
+      maxOrder(
+        all.filter(other => other.id !== card.id),
+        to,
+      ) + 1,
+    ...(isReorder
+      ? {}
+      : { updatedAt: new Date(await $.clock.now()).toISOString() }),
   }
+
+  for (const other of all) {
+    const order = placed?.shifted[other.id]
+    if (order === undefined) continue
+
+    const neighbour = await readCard($, other)
+    const file = `${KANBAN_DIR}/${nameOf(other)}`
+    await $.fs.write(
+      file,
+      serializeCardFile(
+        { ...neighbour.card, order },
+        neighbour.body,
+        neighbour.extras,
+      ),
+    )
+    cache.delete(file)
+  }
+
   const path = `${KANBAN_DIR}/${nameOf(card)}`
   await $.fs.write(
     path,

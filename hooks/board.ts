@@ -10,6 +10,7 @@ import type {
 import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
 import { EMPTY_BOARD, PANE, errorMessage, isKanbanFile } from './model'
+import { placeIn } from './order'
 import { pauseLeft } from './rate-limit'
 import { S } from './strings'
 
@@ -150,7 +151,28 @@ export function mergeRemote(
     card => isUnsettled(card) && !remote.some(other => other.id === card.id),
   )
 
-  return [...merged, ...kept]
+  // A card put after another keeps its place among the remote's cards, whose
+  // orders it was not computed against.
+  return Object.values(sync).reduce(
+    (cards, entry) => {
+      const to = entry.queued ?? entry.to
+      const after = entry.queued === undefined ? entry.after : entry.queuedAfter
+      const isHeld = entry.phase !== 'ok' || confirmed.has(entry.cardId)
+      const own = cards.find(card => card.id === entry.cardId)
+      if (!isHeld || after === undefined || own?.column !== to) return cards
+
+      const placed = placeIn(cards, entry.cardId, to, after)
+      if (placed === undefined) return cards
+
+      return cards.map(card => {
+        const order =
+          card.id === entry.cardId ? placed.order : placed.shifted[card.id]
+
+        return order === undefined ? card : { ...card, order }
+      })
+    },
+    [...merged, ...kept],
+  )
 }
 
 const cacheKey = (cwd: string) => `cache:${cwd}`

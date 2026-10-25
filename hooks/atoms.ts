@@ -18,7 +18,7 @@ const sync = atom(
   { plugin: 'kanban', key: 'sync' } as const,
   {},
   {
-    shape: 'sync-2',
+    shape: 'sync-3',
   },
 )
 const detail = atom({ plugin: 'kanban', key: 'detail' } as const, null, {

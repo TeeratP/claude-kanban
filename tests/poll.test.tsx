@@ -119,6 +119,55 @@ test('a card whose move was confirmed while the load was reading keeps its colum
   expect(mergeRemote(remote, [mine], {}, new Set(['md:other']))).toEqual(remote)
 })
 
+test('a card put after another keeps its place among the cards a load brings', () => {
+  const mine = cardOf(1, 'backlog', { order: 15 })
+  const remote = [
+    cardOf(1, 'backlog', { order: 30 }),
+    cardOf(2, 'backlog', { order: 10 }),
+    cardOf(3, 'backlog', { order: 20 }),
+  ]
+  const placed = (
+    phase: KanbanSync['phase'],
+    place: Partial<KanbanSync>,
+    confirmed = NONE,
+  ) =>
+    mergeRemote(
+      remote,
+      [mine],
+      {
+        [mine.id]: {
+          cardId: mine.id,
+          from: 'backlog',
+          to: 'backlog',
+          phase,
+          attempts: 1,
+          ...place,
+        },
+      },
+      confirmed,
+    )
+      .sort((a, b) => a.order - b.order)
+      .map(one => one.number)
+
+  // Put after card 2: the load's own orders for 2 and 3 are the ones it sits between.
+  expect(placed('pending', { after: 'md:0002-card' })).toEqual([2, 1, 3])
+  expect(placed('failed', { after: 'md:0002-card' })).toEqual([2, 1, 3])
+  expect(placed('pending', { after: null })).toEqual([1, 2, 3])
+  // The place asked for last is the one kept.
+  expect(
+    placed('pending', {
+      after: null,
+      queued: 'backlog',
+      queuedAfter: 'md:0003-card',
+    }),
+  ).toEqual([2, 3, 1])
+  // A settled move is the remote's again, unless the load may have read before it.
+  expect(placed('ok', { after: 'md:0002-card' })).toEqual([2, 3, 1])
+  expect(
+    placed('ok', { after: 'md:0002-card' }, new Set(['md:0001-card'])),
+  ).toEqual([2, 1, 3])
+})
+
 test('a card gone from the remote stays only while its move is pending', () => {
   const moving = cardOf(1, 'claude')
   const other = cardOf(2, 'backlog')

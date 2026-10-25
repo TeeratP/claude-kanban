@@ -198,6 +198,37 @@ export function planMove(
   ]
 }
 
+const POSITION_MUTATION = `mutation($projectId: ID!, $itemId: ID!, $afterId: ID) {
+  updateProjectV2ItemPosition(input: {projectId: $projectId, itemId: $itemId, afterId: $afterId}) {
+    clientMutationId
+  }
+}`
+
+/** The `gh` command that puts the card's board item right after `after`'s, or first when null. */
+export function planPosition(
+  card: KanbanCard,
+  after: KanbanCard | null,
+  cfg: KanbanGithub,
+): string[] {
+  if (card.itemId === undefined) throw new Error(S.noBoardItem(card))
+  if (after !== null && after.itemId === undefined) {
+    throw new Error(S.noBoardItem(after))
+  }
+
+  return [
+    'gh',
+    'api',
+    'graphql',
+    '-f',
+    `query=${POSITION_MUTATION}`,
+    '-f',
+    `projectId=${cfg.projectId}`,
+    '-f',
+    `itemId=${card.itemId}`,
+    ...(after === null ? [] : ['-f', `afterId=${after.itemId}`]),
+  ]
+}
+
 const isVerify = (argv: readonly string[]) =>
   argv[1] === 'issue' && argv[2] === 'view'
 
@@ -529,23 +560,41 @@ async function ensureAiLabel(
   ])
 }
 
-/** Moves the card on GitHub; resolves the fields that changed, throws on the first failing command. */
+/**
+ * Moves the card on GitHub, and puts it after the card `after` (first when
+ * null) when one is given; resolves the fields that changed, throws on the
+ * first failing command. A card moved within its own column is only placed.
+ */
 export async function moveGithub(
   $: EngineInterface,
   info: KanbanGithub,
   card: KanbanCard,
   to: KanbanColumn,
+  after?: KanbanCard | null,
 ): Promise<Partial<KanbanCard>> {
   const labels = card.labels ?? []
+  const isReorder = card.column === to && after !== undefined
   // `--add-label ai` fails on a repo that has no such label.
-  if (to === 'claude' && !labels.some(isAiLabel)) await ensureAiLabel($, info)
+  if (!isReorder && to === 'claude' && !labels.some(isAiLabel)) {
+    await ensureAiLabel($, info)
+  }
 
-  for (const argv of planMove(card, to, info)) {
+  for (const argv of isReorder ? [] : planMove(card, to, info)) {
     const out = await runCommand($, argv)
     if (isVerify(argv) && out.trim() !== 'CLOSED') {
       throw new Error(S.closeNotVerified(card))
     }
   }
+  if (after !== undefined) {
+    const out = await runCommand($, planPosition(card, after, info))
+    const reply = parseJson(out, 'the new position')
+    const [failure] =
+      isRec(reply) && Array.isArray(reply.errors) ? reply.errors : []
+    if (failure !== undefined) {
+      throw new Error(S.positionFailed(str(isRec(failure) && failure.message)))
+    }
+  }
+  if (isReorder) return {}
 
   return {
     ...(to === 'backlog' && isParked(card) ? {} : { status: STATUS_OF[to] }),

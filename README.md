@@ -47,9 +47,9 @@ The toolbar shows the refresh button, the active backend, when the board was las
 
 ### Moving cards
 
-- **Terminal and desktop:** drag a card onto a section header to move it. Click a card (press and release without moving) to open it.
-- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, fold a section, page a section), and `m` followed by `1`-`4` or `h`/`c`/`b`/`d` moves the card under the cursor to Human, Claude, Backlog or Done. Any other key cancels the move.
-- **VS Code and mobile:** there is no drag. Open the card and press a `Move to:` button.
+- **Terminal and desktop:** drag a card onto any row of a section: its header or the `(empty)` row puts it first, a card puts it before that card (after it, in the card's lower half, on a terminal that reports the pointer finer than a cell: kitty, Ghostty, iTerm2, WezTerm, foot), and a `↑`/`↓ N more` row puts it at that edge of the cards shown. A line under a row shows where it will land. Without that, a card cannot be dragged below the last card of a section (use `Shift`+`J`). Dropped in its own section it is reordered; in Done, which lists by update time, it simply moves there. Click a card (press and release without moving) to open it.
+- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, fold a section, page a section), and `m` followed by `1`-`4` or `h`/`c`/`b`/`d` moves the card under the cursor to Human, Claude, Backlog or Done. Any other key cancels the move. `Shift`+`K` and `Shift`+`J` move the card under the cursor one place up or down in its section.
+- **VS Code and mobile:** there is no drag. Open the card and press a `Move to:` button, or `↑`/`↓` to move it a place in its section.
 
 A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure on the card's row; open the card for the reason and a Retry button, or press `✕N retry` in the toolbar to send every failed move again. Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.
 
@@ -156,7 +156,7 @@ Open a card in Human to review it. The detail view has:
 - **Send back:** type feedback in the box first, then press the button. The feedback is appended to the card (a `## Feedback (date)` section, or an issue comment on GitHub), the card moves to Claude, and once that move is confirmed Claude is prompted to resume the card: read the newest feedback and continue. An empty box shows a toast and moves nothing.
 - **Park:** moves the card to Backlog.
 
-Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
+Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Reordering a card within a section never prompts. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
 
 On mobile there is no text box, so Send back is not shown; the detail view says to use the terminal or desktop.
 
@@ -189,7 +189,7 @@ Your feedback.
 
 - `status` is one of `human`, `claude`, `backlog`, `done`; anything else counts as `backlog`.
 - `id` is the card number (`#7`); a missing `id` falls back to the filename's number. Titles may contain colons.
-- `order` sorts a section, lowest first. Done sorts by `updated`, newest first.
+- `order` sorts a section, lowest first. Done sorts by `updated`, newest first. Reordering a card writes only its `order`, between its neighbours' when there is a gap and otherwise renumbering the section by tens (10, 20, 30, …), rewriting only the cards whose number changed. On GitHub the order is the project item's position (`updateProjectV2ItemPosition`).
 - The Handoff and Feedback sections are appended below the spec. The board rewrites `status`, `order` and `updated` when a card moves, and leaves the body alone.
 - Done cards stay as files with `status: done`. The pane never deletes a file.
 - Files Claude writes or edits show on the board straight away.

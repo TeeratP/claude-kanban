@@ -223,4 +223,15 @@ export const S = {
     `kanban: the board has more than ${items} items; only the first ${items} are shown.`,
   aiLabelDescription: 'agent can do end-to-end',
   unknownAuthor: 'unknown',
+
+  // #22
+  positionFailed: (reason: string) =>
+    reason === ''
+      ? "GitHub did not accept the card's new position."
+      : `GitHub did not accept the card's new position: ${reason}`,
+  reorderUndone: (card: KanbanCard, reason: string) =>
+    `Could not reorder #${card.number} in ${COL[card.column]}, so it is back where it was: ${reason}`,
+  reorderUp: '↑',
+  reorderDown: '↓',
+  reorderLabel: 'Move in section:',
 }

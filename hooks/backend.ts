@@ -43,16 +43,20 @@ export async function loadCards(
   return loadGithubPaced($, info)
 }
 
-/** Moves the card; resolves the fields that changed, throws on failure. */
+/**
+ * Moves the card, after the card `after` in its section (first when null, last
+ * when undefined); resolves the fields that changed, throws on failure.
+ */
 export async function moveRemote(
   $: EngineInterface,
   info: KanbanBackendInfo,
   card: KanbanCard,
   to: KanbanColumn,
+  after?: KanbanCard | null,
 ): Promise<Partial<KanbanCard>> {
-  if (info.kind === 'local') return moveLocal($, card, to)
+  if (info.kind === 'local') return moveLocal($, card, to, after)
 
-  return moveGithub($, info, card, to)
+  return moveGithub($, info, card, to, after)
 }
 
 export async function appendSection(

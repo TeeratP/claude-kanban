@@ -107,3 +107,13 @@ export async function litRows(ui: BoardUi): Promise<string[]> {
 
   return lit
 }
+
+/** The keys of the list rows with the insertion line under them: where a drag would drop. */
+export async function lineRows(ui: BoardUi): Promise<string[]> {
+  const lined: string[] = []
+  for (const key of await rowKeys(ui)) {
+    if ((await rowStyle(ui, key)).underline === true) lined.push(key)
+  }
+
+  return lined
+}
