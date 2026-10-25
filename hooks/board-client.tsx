@@ -61,16 +61,29 @@ export type DropTarget = {
 const isLower = (row: number, fineY?: number) =>
   fineY !== undefined && fineY - row >= 0.5
 
+// Whether the pointer comes down onto `row`: it moved down to get there from
+// `prev`, or the card on row `from` began above it in its own section. Where no
+// finer position is known, this says which side of a card the drop is on.
+const movesDown = (
+  rows: readonly RowView[],
+  from: number,
+  row: number,
+  prev: number,
+) => row >= prev || (rows[from]?.column === rows[row]?.column && from < row)
+
 /**
  * What a card dropped over row `pointerRow` goes to. Any row of a section
  * takes it: a header or the empty row puts it first, a card puts it before
- * that card (after it, in the card's lower half where `fineY` knows), a `more`
- * row at that edge of the window shown. A section that keeps no order is lit.
+ * that card or after it, a `more` row at that edge of the window shown. Which
+ * side of a card is the lower half of its row where `fineY` knows it, and else
+ * `isDown`: whether the pointer came down onto it. A section that keeps no
+ * order is lit.
  */
 export function dropTarget(
   rows: readonly RowView[],
   pointerRow: number,
   fineY?: number,
+  isDown = false,
 ): DropTarget | undefined {
   const row = rows[pointerRow]
   const column = row?.column
@@ -107,7 +120,9 @@ export function dropTarget(
         }
   }
 
-  return isLower(pointerRow, fineY)
+  const isAfter = fineY === undefined ? isDown : isLower(pointerRow, fineY)
+
+  return isAfter
     ? { column, place: { at: 'after', cardId: row.cardId }, line: pointerRow }
     : {
         column,
@@ -129,12 +144,14 @@ function staysPut(rows: readonly RowView[], target: DropTarget, from: number) {
 
 // Where the button went down (its row and that row's key, since a refresh can
 // shift rows under the pointer), whether the pointer has left that row since,
-// the row it is over now and, where known, its fine position there.
+// the row it is over now, the row it was over before that and, where known, its
+// fine position now.
 type Gesture = {
   y: number
   key: string
   hasMoved: boolean
   over: number
+  prev: number
   fine?: number
 }
 
@@ -204,7 +221,8 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     }
     if (from.kind !== 'card') return
 
-    const to = dropTarget(rows, end, fineY)
+    const prev = end === start.over ? start.prev : start.over
+    const to = dropTarget(rows, end, fineY, movesDown(rows, fromAt, end, prev))
     if (to === undefined || staysPut(rows, to, fromAt)) return
 
     post({
@@ -229,6 +247,7 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
           key: pressed.key,
           hasMoved: false,
           over: event.y,
+          prev: event.y,
         },
         // A click is what gives the Client the keys: the cursor starts here.
         cursor:
@@ -265,6 +284,7 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
           ...held,
           hasMoved: current.hasMoved || event.y !== current.y,
           over: event.y,
+          prev: event.y === current.over ? current.prev : current.over,
           ...(event.fine === undefined ? {} : { fine: event.fine.y }),
         },
       })
@@ -360,7 +380,12 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
   const dragged = rows[draggedAt]
   const found =
     gesture !== null && dragged?.kind === 'card'
-      ? dropTarget(rows, gesture.over, gesture.fine)
+      ? dropTarget(
+          rows,
+          gesture.over,
+          gesture.fine,
+          movesDown(rows, draggedAt, gesture.over, gesture.prev),
+        )
       : undefined
   const target =
     found === undefined || staysPut(rows, found, draggedAt) ? undefined : found

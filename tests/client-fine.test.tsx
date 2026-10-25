@@ -218,3 +218,67 @@ test('shift-K and shift-J post a shift for the card under the cursor, once a key
     { type: 'shift', cardId: 'b', dir: 'up' },
   ])
 })
+
+test('without a finer position a card comes down onto a card after it and goes up onto one before it', () => {
+  const places = (from: number, ...over: number[]) => {
+    const board = mount()
+    board.pointer(at('down', from))
+    for (const y of over) board.pointer(at('move', y))
+    const end = over[over.length - 1] ?? from
+    board.pointer(at('up', end))
+
+    return board.posts.map(post => (post.type === 'drop' ? post.place : post))
+  }
+
+  // Within a section: a (row 1) down onto b (row 2), b up onto a.
+  expect(places(1, 2)).toEqual([{ at: 'after', cardId: 'b' }])
+  expect(places(2, 1)).toEqual([{ at: 'before', cardId: 'a' }])
+  // Across sections: a down onto c (row 4), c up onto b.
+  expect(places(1, 4)).toEqual([{ at: 'after', cardId: 'c' }])
+  expect(places(4, 2)).toEqual([{ at: 'before', cardId: 'b' }])
+  // A pointer that goes past and comes back follows its last step.
+  expect(places(1, 4, 3, 4)).toEqual([{ at: 'after', cardId: 'c' }])
+  expect(places(4, 0, 2)).toEqual([{ at: 'after', cardId: 'b' }])
+  expect(places(4, 1, 0, 1)).toEqual([{ at: 'after', cardId: 'a' }])
+  expect(places(4, 1, 2, 1)).toEqual([{ at: 'before', cardId: 'a' }])
+  // A card that began above the target in its own section is going down to it, however it got there.
+  expect(places(1, 4, 2)).toEqual([{ at: 'after', cardId: 'b' }])
+})
+
+test('a finer position beats the direction the pointer came from', () => {
+  const places = (fine: number) => {
+    const board = mount()
+    board.pointer(at('down', 1))
+    board.pointer(at('move', 4, fine))
+    board.pointer(at('up', 4, fine))
+
+    return board.posts.map(post => (post.type === 'drop' ? post.place : post))
+  }
+
+  // Coming down onto c, the upper half is still before it and the lower after.
+  expect(places(4.25)).toEqual([{ at: 'before', cardId: 'c' }])
+  expect(places(4.75)).toEqual([{ at: 'after', cardId: 'c' }])
+
+  // Going up onto b, the lower half is after it.
+  const board = mount()
+  board.pointer(at('down', 4))
+  board.pointer(at('move', 2, 2.8))
+  board.pointer(at('up', 2, 2.8))
+  expect(board.posts).toEqual([
+    {
+      type: 'drop',
+      cardId: 'c',
+      column: 'claude',
+      place: { at: 'after', cardId: 'b' },
+    },
+  ])
+})
+
+test('the line follows the direction of the drag when no finer position is known', () => {
+  const board = mount()
+
+  board.pointer(at('down', 4))
+  expect(lined(board.pointer(at('move', 2)))).toEqual(['card:a'])
+  expect(lined(board.pointer(at('move', 1)))).toEqual(['hdr:claude'])
+  expect(lined(board.pointer(at('move', 2)))).toEqual(['card:b'])
+})

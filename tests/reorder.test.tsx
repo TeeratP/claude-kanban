@@ -219,6 +219,82 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
+  test(`dragged down onto a card in its own section a card lands after it, dragged up it lands before on the ${surface}`, async ($, on) => {
+    const { clock, ui, files, calls, prompts } = await start($, on, surface)
+
+    // Onto the last card: the end of the section, reachable without a finer pointer.
+    await drag(ui, DOCS, DEPS)
+    expect(await section(ui, 'hdr:backlog', 'hdr:done')).toEqual([
+      LINT,
+      DEPS,
+      DOCS,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    expect(orderOf(files, 4, 'docs')).toBe(61)
+    expect(calls.writes).toEqual([path(4, 'docs')])
+
+    // Up onto the first: before it.
+    await drag(ui, DOCS, LINT)
+    expect(await section(ui, 'hdr:backlog', 'hdr:done')).toEqual([
+      DOCS,
+      LINT,
+      DEPS,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    expect(orderOf(files, 4, 'docs')).toBe(25)
+
+    // Down onto a card in the middle: after it, before the next.
+    await drag(ui, DOCS, LINT)
+    expect(await section(ui, 'hdr:backlog', 'hdr:done')).toEqual([
+      LINT,
+      DOCS,
+      DEPS,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    expect(orderOf(files, 4, 'docs')).toBe(55)
+    expect(prompts).toEqual([])
+    await clock.advance(2000)
+    await ui.unmount()
+  })
+
+  test(`dragged down onto a card in another section a card lands after it, dragged up it lands before on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await start($, on, surface)
+
+    // Claude is above Backlog: down onto its last card puts the card last there.
+    await drag(ui, API, DEPS)
+    expect(await section(ui, 'hdr:backlog', 'hdr:done')).toEqual([
+      DOCS,
+      LINT,
+      DEPS,
+      API,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(2, 'api')]).toContain('status: backlog')
+    expect(orderOf(files, 2, 'api')).toBe(61)
+
+    // Backlog is below Claude: up onto its first card puts the card first there.
+    await drag(ui, DOCS, TESTS)
+    expect(await section(ui, 'hdr:claude', 'hdr:backlog')).toEqual([
+      DOCS,
+      TESTS,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    expect(orderOf(files, 4, 'docs')).toBe(15)
+
+    // Down onto the card of a section below, from the section above.
+    await drag(ui, DOCS, LINT)
+    expect(await section(ui, 'hdr:backlog', 'hdr:done')).toEqual([
+      LINT,
+      DOCS,
+      DEPS,
+      API,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    expect(orderOf(files, 4, 'docs')).toBe(55)
+    await clock.advance(2000)
+    await ui.unmount()
+  })
+
   test(`a card dragged within its section is reordered, written once and never prompts on the ${surface}`, async ($, on) => {
     const { clock, ui, files, calls, prompts } = await start($, on, surface)
 
@@ -303,8 +379,13 @@ for (const surface of WITH_CLIENT) {
     expect(await lineRows(ui)).toEqual(['hdr:backlog'])
     await over('hdr:claude')
     expect(await lineRows(ui)).toEqual(['hdr:claude'])
+    // Down onto a card: after it. Up onto one: before it.
     await over(TESTS)
-    expect(await lineRows(ui)).toEqual([API])
+    expect(await lineRows(ui)).toEqual([TESTS])
+    await over(API)
+    expect(await lineRows(ui)).toEqual(['hdr:claude'])
+    await over(TESTS)
+    expect(await lineRows(ui)).toEqual([TESTS])
     await over('empty:human')
     expect(await lineRows(ui)).toEqual(['hdr:human'])
 
@@ -553,7 +634,7 @@ for (const surface of WITH_CLIENT) {
 
     await drag(ui, DEPS, 'hdr:backlog')
     await clock.advance(100)
-    await drag(ui, DEPS, LINT)
+    await drag(ui, DEPS, DOCS)
     await clock.advance(SYNC_PAUSE - 1)
     expect(calls.writes).toEqual([])
 
