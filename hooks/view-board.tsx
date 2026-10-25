@@ -151,12 +151,17 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             : board.fetchedAt === 0
               ? ''
               : S.updated(ageLabel(board.fetchedAt, now)))
-        const hint = hasClient && board.error === undefined ? S.keyHint : ''
         const retryLabel = S.retryAll(failed.length)
-        const text = truncate(
-          ` ${[label, status, hint].filter(part => part !== '').join(' · ')}`,
-          columns - 1 - (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1),
-        )
+        const room =
+          columns - 1 - (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1)
+        const join = (parts: string[]) =>
+          ` ${parts.filter(part => part !== '').join(' · ')}`
+        // The key hint shows whole or not at all: a cut hint is noise.
+        const withHint = join([label, status, S.keyHint])
+        const text =
+          hasClient && board.error === undefined && cellWidth(withHint) <= room
+            ? withHint
+            : truncate(join([label, status]), room)
 
         return (
           <Box flexDirection="row">

@@ -25,12 +25,17 @@ async function start<S extends RenderSurface>(
   on: On,
   surface: S,
   files: Record<string, string> = cards(),
+  bodyColumns: number = PANE.props.bodyColumns,
 ) {
   const world = boot(on, files)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
-  const ui = await $.ui.mount({ ...PANE, surface })
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, bodyColumns },
+  })
 
   return { ...world, files, ui }
 }
@@ -329,7 +334,7 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`the toolbar shows the key hint, until a read fails, on the ${surface}`, async ($, on) => {
-    const { ui, calls } = await start($, on, surface)
+    const { ui, calls } = await start($, on, surface, cards(), 72)
 
     expect(
       await ui.find({ type: 'Text', text: /↑↓ ⏎ open · m move/ }),
@@ -340,6 +345,15 @@ for (const surface of WITH_CLIENT) {
     await ui.press({ key: 'refresh' })
     expect(await ui.find({ type: 'Text', text: /EIO/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /↑↓/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test(`a pane too narrow for the whole key hint leaves it out, on the ${surface}`, async ($, on) => {
+    const { ui } = await start($, on, surface, cards(), 30)
+
+    expect(
+      await ui.find({ type: 'Text', text: /↑↓|m move|open ·/ }),
+    ).toBeUndefined()
     await ui.unmount()
   })
 }
