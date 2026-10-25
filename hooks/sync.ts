@@ -218,7 +218,8 @@ async function tick($: EngineInterface): Promise<void> {
   if (isShowing(await updateSync($, sync => sync))) ensureTicker($)
 }
 
-function expireLater(
+/** Removes a confirmed card's mark once it has been shown long enough. */
+export function expireLater(
   $: EngineInterface,
   cardId: string,
   settledAt: number,

@@ -30,7 +30,7 @@ function answer(routes: readonly Route[], call: Call) {
   }
 }
 
-/** A stand-in `$` for the plain functions: `process.run` from routes, `fs` from a map. */
+/** A stand-in `$` for the plain functions: `process.run` from routes, `fs` from a map, a fixed clock. */
 export function fakeEngine(
   routes: readonly Route[],
   files: Record<string, string> = {},
@@ -48,6 +48,7 @@ export function fakeEngine(
         return text
       },
     },
+    clock: { now: async () => Date.parse('2026-10-25T12:00:00Z') },
     ui: {
       log: (text: string) => {
         logs.push(text)
@@ -77,16 +78,18 @@ export function fakeEngine(
 
 /**
  * Answers the engine's `process.run` event from routes and records each command.
- * Every answer waits for `hold`, when given: the first load stays unanswered.
+ * Every answer waits for `hold`, when given: the first load stays unanswered. A
+ * function holds only the commands it returns a promise for.
  */
 export function fakeProcess(
   on: On,
   routes: readonly Route[],
-  hold?: Promise<void>,
+  hold?:
+    Promise<void> | ((argv: readonly string[]) => Promise<void> | undefined),
 ) {
   const calls: Call[] = []
   on('process.run', async (_, e) => {
-    await hold
+    await (typeof hold === 'function' ? hold(e.argv) : hold)
     const call = {
       argv: e.argv,
       ...(e.init?.stdin === undefined ? {} : { stdin: e.init.stdin }),

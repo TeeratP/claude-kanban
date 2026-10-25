@@ -139,6 +139,21 @@ const verifyClosed = (issue: string, repo: string) => [
   '.state',
 ]
 
+// Sets the item's Status to the option with this id.
+const statusEdit = (itemId: string, cfg: KanbanGithub, option: string) => [
+  'gh',
+  'project',
+  'item-edit',
+  '--id',
+  itemId,
+  '--project-id',
+  cfg.projectId,
+  '--field-id',
+  cfg.statusFieldId,
+  '--single-select-option-id',
+  option,
+]
+
 /** The `gh` commands, in order, that make the card's issue and board item say `to`. */
 export function planMove(
   card: KanbanCard,
@@ -149,19 +164,7 @@ export function planMove(
   if (itemId === undefined) throw new Error(S.noBoardItem(card))
 
   const issue = String(card.number)
-  const itemEdit = (option: string) => [
-    'gh',
-    'project',
-    'item-edit',
-    '--id',
-    itemId,
-    '--project-id',
-    cfg.projectId,
-    '--field-id',
-    cfg.statusFieldId,
-    '--single-select-option-id',
-    option,
-  ]
+  const itemEdit = (option: string) => statusEdit(itemId, cfg, option)
   const reopen =
     card.isClosed === true && to !== 'done'
       ? [['gh', 'issue', 'reopen', issue, '--repo', cfg.repo]]
@@ -492,11 +495,27 @@ export async function loadGithub(
   return { cards, ...(rateLimit === undefined ? {} : { rateLimit }) }
 }
 
-// Labels are repo-wide and not case-sensitive, so any spelling of `ai` will do.
-async function ensureAiLabel(
+type LabelSpec = { name: string; color: string; description: string }
+
+const AI: LabelSpec = {
+  name: AI_LABEL,
+  color: '5319e7',
+  description: S.aiLabelDescription,
+}
+// The user's marker for an issue still to be groomed.
+const TRIAGE: LabelSpec = {
+  name: 'triage',
+  color: 'fbca04',
+  description: S.triageLabelDescription,
+}
+
+// Labels are repo-wide and not case-sensitive, so any spelling of the name will do.
+// Resolves the label as the repo spells it; one that exists is never overwritten.
+async function ensureLabel(
   $: EngineInterface,
   info: KanbanGithub,
-): Promise<void> {
+  label: LabelSpec,
+): Promise<string> {
   const names = await runCommand($, [
     'gh',
     'label',
@@ -504,7 +523,7 @@ async function ensureAiLabel(
     '--repo',
     info.repo,
     '--search',
-    AI_LABEL,
+    label.name,
     '--limit',
     '100',
     '--json',
@@ -512,21 +531,27 @@ async function ensureAiLabel(
     '--jq',
     '.[].name',
   ])
-  if (names.split('\n').some(name => isAiLabel(name.trim()))) return
+  const found = names
+    .split('\n')
+    .map(name => name.trim())
+    .find(name => name.toLowerCase() === label.name)
+  if (found !== undefined) return found
 
   await runCommand($, [
     'gh',
     'label',
     'create',
-    AI_LABEL,
+    label.name,
     '--repo',
     info.repo,
     '--color',
-    '5319e7',
+    label.color,
     '--description',
-    S.aiLabelDescription,
+    label.description,
     '--force',
   ])
+
+  return label.name
 }
 
 /** Moves the card on GitHub; resolves the fields that changed, throws on the first failing command. */
@@ -538,7 +563,7 @@ export async function moveGithub(
 ): Promise<Partial<KanbanCard>> {
   const labels = card.labels ?? []
   // `--add-label ai` fails on a repo that has no such label.
-  if (to === 'claude' && !labels.some(isAiLabel)) await ensureAiLabel($, info)
+  if (to === 'claude' && !labels.some(isAiLabel)) await ensureLabel($, info, AI)
 
   for (const argv of planMove(card, to, info)) {
     const out = await runCommand($, argv)
@@ -559,6 +584,96 @@ export async function moveGithub(
       : {}),
     ...(to === 'human' ? { tag: 'review' as const } : {}),
     isClosed: to === 'done',
+  }
+}
+
+const ISSUE_URL = /\/issues\/(\d+)$/
+
+/** Puts the issue on the project board; resolves the new item's id. */
+async function addToBoard(
+  $: EngineInterface,
+  info: KanbanGithub,
+  url: string,
+): Promise<string> {
+  const item = parseJson(
+    await runCommand($, [
+      'gh',
+      'project',
+      'item-add',
+      String(info.projectNumber),
+      '--owner',
+      info.owner,
+      '--url',
+      url,
+      '--format',
+      'json',
+    ]),
+    'the new board item',
+  )
+  const id = isRec(item) ? str(item.id) : ''
+  if (id === '') throw new Error(S.ghBadJson('the new board item', ''))
+
+  return id
+}
+
+/**
+ * Creates an issue labeled `triage`, puts it on the board in Backlog and, for any
+ * other column, moves it there. Throws on the first failing command; an issue
+ * already created stays, and the error names it.
+ */
+export async function createGithub(
+  $: EngineInterface,
+  info: KanbanGithub,
+  title: string,
+  spec: string,
+  column: KanbanColumn,
+): Promise<KanbanCard> {
+  const triage = await ensureLabel($, info, TRIAGE)
+  const out = await runCommand(
+    $,
+    [
+      'gh',
+      'issue',
+      'create',
+      '--repo',
+      info.repo,
+      '--title',
+      title,
+      '--body-file',
+      '-',
+      '--label',
+      triage,
+    ],
+    { stdin: spec },
+  )
+  const url = out.trim().split('\n').pop()?.trim() ?? ''
+
+  try {
+    const number = ISSUE_URL.exec(url)?.[1]
+    if (number === undefined) throw new Error(S.ghBadJson('the new issue', ''))
+
+    const itemId = await addToBoard($, info, url)
+    await runCommand($, statusEdit(itemId, info, info.options.backlog))
+    const now = new Date(await $.clock.now()).toISOString()
+    const card: KanbanCard = {
+      id: `gh:${number}`,
+      number: Number(number),
+      title,
+      column: 'backlog',
+      order: 0,
+      createdAt: now,
+      updatedAt: now,
+      itemId,
+      status: STATUS_NAME.backlog,
+      labels: [triage],
+      isClosed: false,
+      url,
+    }
+    if (column === 'backlog') return card
+
+    return { ...card, ...(await moveGithub($, info, card, column)), column }
+  } catch (error) {
+    throw new Error(S.createdPartly(url, errorMessage(error)))
   }
 }
 

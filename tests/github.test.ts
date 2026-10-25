@@ -6,6 +6,7 @@ import { detectBackend, readDiff } from '../hooks/backend'
 import {
   appendGithub,
   columnOf,
+  createGithub,
   detailGithub,
   diffGithub,
   isRateLimited,
@@ -1747,4 +1748,258 @@ test("a handoff comment from another user does not let a card move to Human, and
 
   // The signed-in login is asked for once, then remembered.
   expect(calls.filter(call => call.argv[2] === 'user')).toHaveLength(1)
+})
+
+const ISSUE_URL = 'https://github.com/TeeratP/claude-kanban/issues/30'
+const TRIAGE_LIST = [
+  'gh',
+  'label',
+  'list',
+  '--repo',
+  'TeeratP/claude-kanban',
+  '--search',
+  'triage',
+  '--limit',
+  '100',
+  '--json',
+  'name',
+  '--jq',
+  '.[].name',
+]
+const TRIAGE_CREATE = [
+  'gh',
+  'label',
+  'create',
+  'triage',
+  '--repo',
+  'TeeratP/claude-kanban',
+  '--color',
+  'fbca04',
+  '--description',
+  'needs grooming',
+  '--force',
+]
+const ISSUE_CREATE = (label = 'triage') => [
+  'gh',
+  'issue',
+  'create',
+  '--repo',
+  'TeeratP/claude-kanban',
+  '--title',
+  'Fix the login',
+  '--body-file',
+  '-',
+  '--label',
+  label,
+]
+const ITEM_ADD = [
+  'gh',
+  'project',
+  'item-add',
+  '7',
+  '--owner',
+  'TeeratP',
+  '--url',
+  ISSUE_URL,
+  '--format',
+  'json',
+]
+const NEW_ITEM_EDIT = [
+  'gh',
+  'project',
+  'item-edit',
+  '--id',
+  'PVTI_new',
+  '--project-id',
+  'PVT_proj',
+  '--field-id',
+  'PVTSSF_status',
+  '--single-select-option-id',
+  'o-backlog',
+]
+const HAS_TRIAGE: Route = {
+  match: ['gh', 'label', 'list'],
+  reply: { stdout: 'bug\ntriage\n' },
+}
+const CREATES: Route[] = [
+  { match: ['gh', 'issue', 'create'], reply: { stdout: `${ISSUE_URL}\n` } },
+  {
+    match: ['gh', 'project', 'item-add'],
+    reply: { stdout: JSON.stringify({ id: 'PVTI_new', type: 'Issue' }) },
+  },
+  { match: ['gh', 'project', 'item-edit'], reply: {} },
+]
+
+test('create makes the issue with the triage label and the spec on stdin, adds it to the board, sets Backlog', async () => {
+  const { $, calls } = fakeEngine([HAS_TRIAGE, ...CREATES])
+
+  const made = await createGithub(
+    $,
+    CFG,
+    'Fix the login',
+    'Users loop.',
+    'backlog',
+  )
+
+  expect(calls.map(call => call.argv)).toEqual([
+    TRIAGE_LIST,
+    ISSUE_CREATE(),
+    ITEM_ADD,
+    NEW_ITEM_EDIT,
+  ])
+  expect(calls[1]?.stdin).toBe('Users loop.')
+  expect(made).toEqual({
+    id: 'gh:30',
+    number: 30,
+    title: 'Fix the login',
+    column: 'backlog',
+    order: 0,
+    createdAt: '2026-10-25T12:00:00.000Z',
+    updatedAt: '2026-10-25T12:00:00.000Z',
+    itemId: 'PVTI_new',
+    status: 'Backlog',
+    labels: ['triage'],
+    isClosed: false,
+    url: ISSUE_URL,
+  })
+})
+
+test('create makes the triage label first when the repo has none, and never overwrites one it has', async () => {
+  const missing = fakeEngine([
+    { match: ['gh', 'label', 'list'], reply: { stdout: 'bug\nhuman\n' } },
+    { match: ['gh', 'label', 'create'], reply: {} },
+    ...CREATES,
+  ])
+
+  await createGithub(missing.$, CFG, 'Fix the login', '', 'backlog')
+
+  expect(missing.calls.map(call => call.argv).slice(0, 3)).toEqual([
+    TRIAGE_LIST,
+    TRIAGE_CREATE,
+    ISSUE_CREATE(),
+  ])
+
+  // Another case counts as the label, and is used as the repo spells it.
+  const spelled = fakeEngine([
+    { match: ['gh', 'label', 'list'], reply: { stdout: 'Triage\n' } },
+    ...CREATES,
+  ])
+
+  const made = await createGithub(
+    spelled.$,
+    CFG,
+    'Fix the login',
+    '',
+    'backlog',
+  )
+
+  expect(
+    spelled.calls.some(
+      call => call.argv[2] === 'create' && call.argv[1] === 'label',
+    ),
+  ).toBe(false)
+  expect(spelled.calls[1]?.argv).toEqual(ISSUE_CREATE('Triage'))
+  expect(made.labels).toEqual(['Triage'])
+})
+
+test('create sends an empty spec as an empty body', async () => {
+  const { $, calls } = fakeEngine([HAS_TRIAGE, ...CREATES])
+
+  await createGithub($, CFG, 'Fix the login', '', 'backlog')
+
+  expect(calls[1]).toEqual({ argv: ISSUE_CREATE(), stdin: '' })
+})
+
+test('create in Claude then moves the new card as a move to Claude does', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'label', 'list'], reply: { stdout: 'triage\nai\n' } },
+    ...CREATES,
+    ...WRITES,
+  ])
+
+  const made = await createGithub($, CFG, 'Fix the login', '', 'claude')
+
+  expect(calls.map(call => call.argv.slice(0, 3).join(' '))).toEqual([
+    'gh label list',
+    'gh issue create',
+    'gh project item-add',
+    'gh project item-edit',
+    'gh label list',
+    'gh issue edit',
+    'gh project item-edit',
+  ])
+  expect(calls.at(-2)?.argv).toEqual([
+    'gh',
+    'issue',
+    'edit',
+    '30',
+    '--repo',
+    'TeeratP/claude-kanban',
+    '--add-label',
+    'ai',
+  ])
+  expect(calls.at(-1)?.argv.at(-1)).toBe('o-progress')
+  expect(made).toMatchObject({
+    column: 'claude',
+    status: 'In progress',
+    labels: ['triage', 'ai'],
+  })
+})
+
+test('a failure before the issue exists says only what failed, and creates nothing', async () => {
+  const { $, calls } = fakeEngine([
+    HAS_TRIAGE,
+    {
+      match: ['gh', 'issue', 'create'],
+      reply: { exitCode: 1, stderr: 'HTTP 403: Resource not accessible\nmore' },
+    },
+    ...CREATES,
+  ])
+
+  await expect(
+    createGithub($, CFG, 'Fix the login', '', 'backlog'),
+  ).rejects.toThrow(new Error('HTTP 403: Resource not accessible'))
+  expect(calls.some(call => call.argv[1] === 'project')).toBe(false)
+})
+
+test('a failure after the issue exists names the issue', async () => {
+  const noBoard = fakeEngine([
+    HAS_TRIAGE,
+    CREATES[0] as Route,
+    {
+      match: ['gh', 'project', 'item-add'],
+      reply: { exitCode: 1, stderr: 'GraphQL: insufficient scopes' },
+    },
+  ])
+
+  await expect(
+    createGithub(noBoard.$, CFG, 'Fix the login', '', 'backlog'),
+  ).rejects.toThrow(
+    new Error(
+      `Created ${ISSUE_URL} but could not finish adding it: GraphQL: insufficient scopes`,
+    ),
+  )
+
+  const noStatus = fakeEngine([
+    HAS_TRIAGE,
+    CREATES[0] as Route,
+    CREATES[1] as Route,
+    {
+      match: ['gh', 'project', 'item-edit'],
+      reply: { exitCode: 1, stderr: 'GraphQL: nope' },
+    },
+  ])
+
+  await expect(
+    createGithub(noStatus.$, CFG, 'Fix the login', '', 'backlog'),
+  ).rejects.toThrow(`Created ${ISSUE_URL} but could not finish adding it`)
+
+  const odd = fakeEngine([
+    HAS_TRIAGE,
+    { match: ['gh', 'issue', 'create'], reply: { stdout: 'created it\n' } },
+  ])
+
+  await expect(
+    createGithub(odd.$, CFG, 'Fix the login', '', 'backlog'),
+  ).rejects.toThrow('could not finish adding it')
 })

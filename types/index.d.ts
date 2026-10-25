@@ -63,6 +63,12 @@ export type KanbanUi = {
   collapsed: Record<KanbanColumn, boolean>
   draft: string
 }
+export type KanbanQuickAdd = {
+  isOpen: boolean
+  hasDetails: boolean
+  title: string
+  spec: string
+}
 export type KanbanSection = {
   kind: 'handoff' | 'feedback'
   date: string
@@ -92,6 +98,7 @@ declare module 'claude-code' {
       tick: number
       pausedUntil: number
       viewer: string
+      quickAdd: Shaped<KanbanQuickAdd>
     }
   }
 }

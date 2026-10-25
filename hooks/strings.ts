@@ -113,7 +113,7 @@ export const S = {
   },
   toolCreate: {
     description:
-      'Create a kanban card in the local .kanban folder. Not for GitHub boards: use the /issue skill there.',
+      'Create a kanban card: a file in the local .kanban folder, or on a GitHub board an issue labeled triage, which the person grooms later.',
     title: 'A short title for the card.',
     spec: 'The card text: what is to be done and how to tell it is done.',
     column:
@@ -133,10 +133,8 @@ export const S = {
   createNotHuman:
     'A new card cannot start in Human: create it in claude or backlog, record a handoff with kanban_handoff, then use kanban_move.',
   created: (card: KanbanCard) =>
-    `Created #${card.number} [${card.column}] ${card.title} in ${card.file ?? 'the board'}.`,
+    `Created #${card.number} [${card.column}] ${card.title} in ${card.file ?? card.url ?? 'the board'}.`,
   createFailed: (reason: string) => `Could not create the card: ${reason}`,
-  createViaIssueSkill:
-    'GitHub boards are made of issues; create the card with the /issue skill instead.',
 
   // #3
   githubDetectFailed: (reason: string) =>
@@ -223,4 +221,19 @@ export const S = {
     `kanban: the board has more than ${items} items; only the first ${items} are shown.`,
   aiLabelDescription: 'agent can do end-to-end',
   unknownAuthor: 'unknown',
+
+  // #23
+  add: '+',
+  addTitleLabel: 'New card',
+  addTitlePlaceholder: 'New card title',
+  addDetailsLabel: 'Details',
+  addDetailsPlaceholder: 'What is to be done, and how to tell it is done',
+  addSubmit: 'add',
+  addDetails: 'Add details',
+  addCancel: 'Cancel',
+  addNeedsTitle: 'Give the card a title first.',
+  addFailed: (reason: string) => `Could not add the card: ${reason}`,
+  triageLabelDescription: 'needs grooming',
+  createdPartly: (url: string, reason: string) =>
+    `Created ${url} but could not finish adding it: ${reason}`,
 }

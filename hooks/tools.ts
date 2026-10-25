@@ -11,7 +11,7 @@ import { appendSection, createCard, readDetail } from './backend'
 import { ensureBoard, inBackground, refresh, setBoard } from './board'
 import { formatHandoff, isFilled, isHandoffValid } from './handoff'
 import { sectionList } from './layout'
-import { COLUMNS, errorMessage, isColumn } from './model'
+import { COLUMNS, errorMessage, isColumn, withCard } from './model'
 import { S } from './strings'
 import { moveCard } from './sync'
 
@@ -271,7 +271,7 @@ async function create(
     // Shown at once; the reload behind it settles what a load in flight missed.
     await setBoard($, board => ({
       ...board,
-      cards: [...board.cards.filter(one => one.id !== card.id), card],
+      cards: withCard(board.cards, card),
     }))
     inBackground($, refresh($))
 

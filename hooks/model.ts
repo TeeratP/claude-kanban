@@ -1,4 +1,10 @@
-import type { KanbanBoard, KanbanCard, KanbanColumn, KanbanUi } from '../types'
+import type {
+  KanbanBoard,
+  KanbanCard,
+  KanbanColumn,
+  KanbanQuickAdd,
+  KanbanUi,
+} from '../types'
 
 export const PANE = 'kanban'
 export const KANBAN_DIR = '.kanban'
@@ -32,6 +38,13 @@ export const INITIAL_UI: KanbanUi = {
   offsets: { human: 0, claude: 0, backlog: 0, done: 0 },
   collapsed: { human: false, claude: false, backlog: false, done: true },
   draft: '',
+}
+
+export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
+  isOpen: false,
+  hasDetails: false,
+  title: '',
+  spec: '',
 }
 
 export function isColumn(value: unknown): value is KanbanColumn {
@@ -133,6 +146,23 @@ export function maxOrder(cards: readonly KanbanCard[], column: KanbanColumn) {
   return cards
     .filter(card => card.column === column)
     .reduce((max, card) => Math.max(max, card.order), 0)
+}
+
+/**
+ * The cards with `card` at the end of its column; a card with its id, or with
+ * the id `replaces`, gives way to it.
+ */
+export function withCard(
+  cards: readonly KanbanCard[],
+  card: KanbanCard,
+  replaces?: string,
+): KanbanCard[] {
+  const rest = cards.filter(one => one.id !== card.id && one.id !== replaces)
+
+  return [
+    ...rest,
+    { ...card, order: Math.max(card.order, maxOrder(rest, card.column) + 1) },
+  ]
 }
 
 const KANBAN_FILE = /(^|\/)\.kanban\/[^/]+\.md$/

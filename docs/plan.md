@@ -4,7 +4,7 @@
 - In progress without `ai` label → Claude column (accepted).
 - Moving to Human uses Status=In review (no label churn); moving to Claude adds `ai`, removes `human` if present (accepted).
 - Phase 4 (Client drag) IS in scope — the user asked for drag. Do it after phases 1–3 are green. If wheel-over-Client breaks per-section scroll, keep Client only for the card rows and verify scroll still works; if a hard API blocker appears, stop and report instead of hacking around it.
-- `kanban_create` tool: include (local backend creates file; GitHub backend uses `gh issue create` with `--label ai`? NO — on GitHub return a message telling Claude to use the /issue skill. Keep it local-only.)
+- `kanban_create` tool: include (local backend creates file; GitHub backend uses `gh issue create` with `--label triage`, then adds it to the board in Backlog — decision 66, #23).
 - Never run mutating `gh` commands against real repos while developing. Read-only `gh` (auth status, `gh issue list --json` field discovery, `gh project field-list`) is fine. All mutation paths are covered by tests with fakes.
 
 All `d.ts:NNNN` refer to `/private/tmp/claude-501/bundled-skills/2.1.310/75928e3c9b934bca99fa180c48df41c0/plugin-authoring/types/claude-code.d.ts`. Mod folder: `/Users/teeratp/.claude/dev-mods/399de62a-c3ce-57f0-92a6-1f6601ddec6b/kanban/`.
@@ -322,7 +322,7 @@ Register each with `isDeferred: false`. Results `{ result: string }` (d.ts:13566
 | `kanban_show` | `{card: integer}` req | spec + all sections, newest last |
 | `kanban_handoff` | `{card, did?, check, changed?, need}` req card,check,need | `backend.append(formatHandoff…)`, refresh detail |
 | `kanban_move` | `{card, to: enum}` | `to==='human'` && !isHandoffValid → `{deny: S.needHandoff(n)}`. Else `moveCard` (no onConfirm). to human → toast + `$.ui.notify` (d.ts:2501). Result "Moved #N to X (syncing)." |
-| `kanban_create` | `{title, spec, column?}` | local only; on GitHub tell Claude to use the /issue skill |
+| `kanban_create` | `{title, spec, column?}` | local: a card file; GitHub: `gh issue create --label triage`, `gh project item-add`, Status Backlog (then the usual move for any other column) |
 
 ### `kanbanFileWatch` (tool.call on Write/Edit)
 - Phase 1: `const ran = await next(e); if (/(^|\/)\.kanban\/[^/]+\.md$/.test(e.file_path)) void refresh($); return ran`.
