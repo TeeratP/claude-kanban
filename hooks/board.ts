@@ -166,6 +166,12 @@ async function saveCache($: EngineInterface, board: KanbanBoard) {
   }
 }
 
+async function readCache($: EngineInterface): Promise<BoardCache | undefined> {
+  const cached = await $.store.get(cacheKey(await $.session.cwd()))
+
+  return isBoardCache(cached) ? cached : undefined
+}
+
 /**
  * Shows the cards saved from the last load while the first load of this session
  * runs. They are not "fetched": a tool must not take them for the board, so
@@ -173,8 +179,8 @@ async function saveCache($: EngineInterface, board: KanbanBoard) {
  */
 async function showCached($: EngineInterface) {
   try {
-    const cached = await $.store.get(cacheKey(await $.session.cwd()))
-    if (!isBoardCache(cached)) return
+    const cached = await readCache($)
+    if (cached === undefined) return
 
     await setBoard($, board =>
       board.fetchedAt === 0 &&
@@ -188,6 +194,32 @@ async function showCached($: EngineInterface) {
           }
         : board,
     )
+  } catch (error) {
+    $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
+  }
+}
+
+/**
+ * Sets the status line from the saved cards while the pane is closed, so it
+ * shows what waits on the person without a load. The board is left as it is: no
+ * load starts and the cards stay unfetched. A board already loaded, or saved
+ * under another `backend` setting, is not the cache's to speak for.
+ */
+async function showCachedStatus($: EngineInterface) {
+  try {
+    const cached = await readCache($)
+    if (cached === undefined) return
+
+    const seen = { isUnloaded: false }
+    await updateBoard($, board => {
+      seen.isUnloaded =
+        board.fetchedAt === 0 &&
+        board.cards.length === 0 &&
+        board.mode === cached.mode
+
+      return board
+    })
+    if (seen.isUnloaded) updateStatusLine($, cached.cards)
   } catch (error) {
     $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
   }
@@ -299,8 +331,12 @@ export async function openBoard($: EngineInterface): Promise<void> {
   await refresh($)
 }
 
-/** Called at session start and on a hot reload: refreshes a pane still open. */
+/**
+ * Called at session start and on a hot reload: refreshes a pane still open;
+ * with none, restores the status line from the saved cards.
+ */
 export async function bootstrap($: EngineInterface): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) await openBoard($)
+  else await showCachedStatus($)
 }
