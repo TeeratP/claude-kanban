@@ -74,6 +74,8 @@ export type KanbanUi = {
   filter: string
   /** Whether the filter's text field is shown. */
   isFilterOpen: boolean
+  /** Sections the person collapsed or opened by a header press while filtering; dropped when the filter changes. */
+  filterCollapsed: Partial<Record<KanbanColumn, boolean>>
 }
 export type KanbanQuickAdd = {
   isOpen: boolean

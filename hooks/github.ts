@@ -604,10 +604,28 @@ async function ensureLabel(
   return label.name
 }
 
+// Puts the card's board item after `after`'s (first when null); throws when GitHub refuses.
+async function setPosition(
+  $: EngineInterface,
+  info: KanbanGithub,
+  card: KanbanCard,
+  after: KanbanCard | null,
+): Promise<void> {
+  const out = await runCommand($, planPosition(card, after, info))
+  const reply = parseJson(out, 'the new position')
+  const [failure] =
+    isRec(reply) && Array.isArray(reply.errors) ? reply.errors : []
+  if (failure !== undefined) {
+    throw new Error(S.positionFailed(str(isRec(failure) && failure.message)))
+  }
+}
+
 /**
  * Moves the card on GitHub, and puts it after the card `after` (first when
  * null) when one is given; resolves the fields that changed, throws on the
  * first failing command. A card moved within its own column is only placed.
+ * With `placeAsked` false the place is only the default: GitHub has the move
+ * by then, so a position that fails is logged and the move stands.
  */
 export async function moveGithub(
   $: EngineInterface,
@@ -615,6 +633,7 @@ export async function moveGithub(
   card: KanbanCard,
   to: KanbanColumn,
   after?: KanbanCard | null,
+  placeAsked = true,
 ): Promise<Partial<KanbanCard>> {
   const labels = card.labels ?? []
   const isReorder = card.column === to && after !== undefined
@@ -630,12 +649,12 @@ export async function moveGithub(
     }
   }
   if (after !== undefined) {
-    const out = await runCommand($, planPosition(card, after, info))
-    const reply = parseJson(out, 'the new position')
-    const [failure] =
-      isRec(reply) && Array.isArray(reply.errors) ? reply.errors : []
-    if (failure !== undefined) {
-      throw new Error(S.positionFailed(str(isRec(failure) && failure.message)))
+    try {
+      await setPosition($, info, card, after)
+    } catch (error) {
+      if (placeAsked) throw error
+
+      $.ui.log(S.positionSkipped(card, errorMessage(error)), { to: 'debug' })
     }
   }
   if (isReorder) return {}

@@ -46,7 +46,9 @@ export async function loadCards(
 
 /**
  * Moves the card, after the card `after` in its section (first when null, last
- * when undefined); resolves the fields that changed, throws on failure.
+ * when undefined); resolves the fields that changed, throws on failure. With
+ * `placeAsked` false, `after` is only the default place, and GitHub keeps a
+ * move whose position could not be set.
  */
 export async function moveRemote(
   $: EngineInterface,
@@ -54,10 +56,11 @@ export async function moveRemote(
   card: KanbanCard,
   to: KanbanColumn,
   after?: KanbanCard | null,
+  placeAsked = true,
 ): Promise<Partial<KanbanCard>> {
   if (info.kind === 'local') return moveLocal($, card, to, after)
 
-  return moveGithub($, info, card, to, after)
+  return moveGithub($, info, card, to, after, placeAsked)
 }
 
 export async function appendSection(

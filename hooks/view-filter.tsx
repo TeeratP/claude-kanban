@@ -5,9 +5,16 @@ import { readUi, updateUi } from './atoms'
 import { INITIAL_UI } from './model'
 import { S } from './strings'
 
-// New text starts every section from its top again.
+// New text starts every section from its top again, and drops the header presses made under the old.
 const withText = (ui: KanbanUi, filter: string): KanbanUi =>
-  filter === ui.filter ? ui : { ...ui, filter, offsets: INITIAL_UI.offsets }
+  filter === ui.filter
+    ? ui
+    : {
+        ...ui,
+        filter,
+        offsets: INITIAL_UI.offsets,
+        filterCollapsed: INITIAL_UI.filterCollapsed,
+      }
 
 /** Shows the filter's text field, or hides it when it is shown; the filter stays. */
 export function toggleFilter($: EngineInterface) {

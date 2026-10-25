@@ -216,6 +216,49 @@ for (const surface of SURFACES) {
     expect(await under(ui, 'hdr:human')).toEqual([LOGIN])
     await ui.unmount()
   })
+
+  // #31: a header press under a filter changes what is shown, not the stored flag.
+  test(`a header pressed under a filter collapses or opens its section on screen, and clearing the filter gives the stored flags back on the ${surface}`, async ($, on) => {
+    const { ui } = await start($, on, surface)
+    await applyFilter(ui, 'fix')
+    // Done is collapsed but has a match, so the filter opens it.
+    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 1/2')
+    expect(await under(ui, 'hdr:done')).toEqual([OLDER])
+
+    await click(ui, 'hdr:done')
+    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 1/2')
+    expect(await under(ui, 'hdr:done')).toEqual([])
+    // An open section collapses the same way.
+    await click(ui, 'hdr:backlog')
+    expect(await textOf(ui, 'hdr:backlog')).toBe('▸ Backlog 3/4')
+    expect(await under(ui, 'hdr:backlog')).toEqual([])
+
+    // A second press opens the one the filter had opened.
+    await click(ui, 'hdr:done')
+    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 1/2')
+
+    await ui.press({ key: 'filter:clear' })
+    // Done is collapsed as stored, Backlog open as stored.
+    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 2')
+    expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 4')
+    expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, HIDDEN, BETA, GAMMA])
+
+    // Without a filter a header press still changes the stored flag.
+    await click(ui, 'hdr:done')
+    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 2')
+    await ui.unmount()
+  })
+
+  test(`a section collapsed under a filter opens again when the filter text changes on the ${surface}`, async ($, on) => {
+    const { ui } = await start($, on, surface)
+    await applyFilter(ui, 'fix')
+    await click(ui, 'hdr:done')
+    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 1/2')
+
+    await typeFilter(ui, 'old')
+    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 2/2')
+    await ui.unmount()
+  })
 }
 
 test('the filter button and its field are not drawn on mobile, which has no text field', async ($, on) => {

@@ -1319,6 +1319,105 @@ test('a place that has left its section falls back to the last card there, never
   await ui.unmount()
 })
 
+// #31: where a card goes by default is a courtesy; GitHub has already applied
+// its Status by then. A place the person asked for is still part of the move.
+function failingPosition(live: Route[], isFailing: () => boolean): Route[] {
+  const board = live.find(one => one.match[2] === 'graphql')
+
+  return [
+    {
+      match: ['gh', 'api', 'graphql'],
+      reply: argv => {
+        if (isFailing() && queryOf(argv).includes(POSITION)) {
+          return { exitCode: 1, stderr: 'HTTP 502: Bad Gateway' }
+        }
+        const reply = board?.reply
+
+        return typeof reply === 'function' ? reply(argv) : (reply ?? {})
+      },
+    },
+    { match: ['gh', 'issue', 'comment'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { stdout: '{"body":"","comments":[],"url":"","state":"OPEN"}' },
+    },
+    ...live,
+  ]
+}
+
+test('a move to Human whose default position call fails is still confirmed, announced once and frees its slot', async ($, on) => {
+  const issues = [ready(1), ready(2, 'In progress')]
+  let isFailing = false
+  const { clock, ui, commands, prompts, toasts, notices, logs } =
+    await startGithub(
+      $,
+      on,
+      failingPosition(liveGithub(issues), () => isFailing),
+    )
+
+  // Claude is at its limit of one: card 1 waits for card 2's slot.
+  await sendToClaude(ui, 1)
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+  expect(prompts).toEqual([])
+
+  isFailing = true
+  const sent = commands.length
+  await $.tool.call({
+    tool: 'mcp__kanban__kanban_ask',
+    card: 2,
+    question: 'Which branch should this target?',
+  })
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+
+  // Status was edited, the position was tried once, and the move is confirmed.
+  const argvs = commands.slice(sent).map(command => command.argv)
+  expect(
+    argvs.filter(argv => argv[2] === 'item-edit' && argv.includes('PVTI_2')),
+  ).toHaveLength(1)
+  expect(positions(commands.slice(sent))).toHaveLength(1)
+  const text = (await row(ui, 'card:gh:2'))?.text ?? ''
+  expect(text).toContain('✓')
+  expect(text).not.toContain('✕')
+  expect(await section(ui, 'hdr:human', 'hdr:claude')).toEqual(['card:gh:2'])
+  expect(toasts).toEqual(['Claude asks: Which branch should this target? (#2)'])
+  expect(notices).toEqual(toasts)
+  // The slot is free: the waiting card starts.
+  expect(prompts).toEqual([expect.stringMatching(/^Work on kanban card #1 /)])
+  expect(logs.filter(line => line.includes('HTTP 502'))).toEqual([
+    'kanban: left #2 where GitHub put it, its position was not set: HTTP 502: Bad Gateway',
+  ])
+  await clock.advance(2500)
+  expect(toasts).toHaveLength(1)
+  expect(prompts).toHaveLength(1)
+  await ui.unmount()
+})
+
+test(
+  'a card dropped in a place on GitHub whose position call fails still goes to ✕',
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const issues = [ready(1), ready(2), ready(4, 'In progress')]
+    const { clock, ui, prompts, logs } = await startGithub(
+      $,
+      on,
+      failingPosition(liveGithub(issues), () => true),
+    )
+
+    await place(ui, 'gh:2', 'claude', { at: 'after', cardId: 'gh:4' })
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+
+    const text = (await row(ui, 'card:gh:2'))?.text ?? ''
+    expect(text).toContain('✕')
+    expect(text).not.toContain('✓')
+    expect(prompts).toEqual([])
+    expect(logs.filter(line => line.includes('was not set'))).toEqual([])
+    await ui.unmount()
+  },
+)
+
 // #28: local renumbering takes turns, so two cards dropped into the same full
 // section within one pause both keep their place.
 test(
