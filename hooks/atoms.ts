@@ -18,12 +18,13 @@ const sync = atom(
   { plugin: 'kanban', key: 'sync' } as const,
   {},
   {
-    shape: 'sync-1',
+    shape: 'sync-2',
   },
 )
 const detail = atom({ plugin: 'kanban', key: 'detail' } as const, null, {
   shape: 'detail-2',
 })
+const tick = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
   return read($, board)
@@ -71,4 +72,15 @@ export function updateDetailState(
   change: (value: KanbanDetail | null) => KanbanDetail | null,
 ): Promise<KanbanDetail | null> {
   return update($, detail, change)
+}
+
+export function readTick($: EngineInterface): Promise<number> {
+  return read($, tick)
+}
+
+export function updateTick(
+  $: EngineInterface,
+  change: (value: number) => number,
+): Promise<number> {
+  return update($, tick, change)
 }

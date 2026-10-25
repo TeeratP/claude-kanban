@@ -5,6 +5,12 @@ export const KANBAN_DIR = '.kanban'
 export const DONE_LIMIT = 10
 export const DIFF_LIMIT = 90_000
 
+// A move is tried once and retried by hand up to three times before it is undone.
+export const MAX_ATTEMPTS = 4
+// A confirmed move shows a bright tick for this long, a dim one for as long again.
+export const TICK_BRIGHT_MS = 1000
+export const TICK_SHOWN_MS = 2000
+
 // Top to bottom on the board.
 export const COLUMNS: readonly KanbanColumn[] = [
   'human',

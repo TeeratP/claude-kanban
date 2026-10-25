@@ -5,7 +5,7 @@ import type { On } from 'claude-code'
 import type { KanbanBoard, KanbanDetail } from '../types'
 import { formatFeedback } from '../hooks/handoff'
 import { capDiff } from '../hooks/model'
-import { PANE, RUN, boot, card, path } from './fakes'
+import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -44,26 +44,28 @@ for (const surface of SURFACES) {
   })
 
   test(`approve moves the card to Done and park to Backlog on the ${surface}`, async ($, on) => {
-    const { ui, files, prompts } = await open($, on, surface)
+    const { clock, ui, files, prompts } = await open($, on, surface)
 
     await ui.press({ key: 'card:md:0001-login' })
     await ui.press({ key: 'approve' })
-    expect(files[path(1, 'login')]).toContain('status: done')
     expect(await ui.find({ key: 'approve' })).toBeUndefined()
     expect((await ui.find({ type: 'Text', text: /^Done/ }))?.text).toMatch(
       /^Done/,
     )
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(1, 'login')]).toContain('status: done')
 
     await ui.press({ key: 'back' })
     await ui.press({ key: 'card:md:0002-api' })
     await ui.press({ key: 'park' })
+    await clock.advance(SYNC_PAUSE)
     expect(files[path(2, 'api')]).toContain('status: backlog')
     expect(prompts).toEqual([])
     await ui.unmount()
   })
 
   test(`send back saves the feedback, moves the card to Claude and asks Claude to resume on the ${surface}`, async ($, on) => {
-    const { ui, files, prompts, toasts } = await open($, on, surface)
+    const { clock, ui, files, prompts, toasts } = await open($, on, surface)
     await ui.press({ key: 'card:md:0001-login' })
 
     await ui.press({ key: 'sendback' })
@@ -83,10 +85,14 @@ for (const surface of SURFACES) {
     )
     await ui.press({ key: 'sendback' })
 
-    expect(files[path(1, 'login')]).toContain('status: claude')
+    // The feedback is saved at once; the move and the prompt follow its confirmation.
     expect(files[path(1, 'login')]).toContain(
       'Spec text.\n\n## Feedback (2026-10-25)\nUse the staging DB\n',
     )
+    expect(files[path(1, 'login')]).toContain('status: human')
+    expect(prompts).toEqual([])
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(1, 'login')]).toContain('status: claude')
     expect(prompts).toEqual([
       expect.stringMatching(/^Resume kanban card #1: read the newest feedback/),
     ])
@@ -109,10 +115,11 @@ for (const surface of SURFACES) {
   })
 
   test(`Enter in the feedback field sends the card back on the ${surface}`, async ($, on) => {
-    const { ui, files, prompts } = await open($, on, surface)
+    const { clock, ui, files, prompts } = await open($, on, surface)
     await ui.press({ key: 'card:md:0001-login' })
 
     await ui.input({ key: 'feedback', text: 'Add a test' })
+    await clock.advance(SYNC_PAUSE)
 
     expect(files[path(1, 'login')]).toContain('status: claude')
     expect(files[path(1, 'login')]).toContain(
@@ -123,12 +130,17 @@ for (const surface of SURFACES) {
   })
 
   test(`feedback that cannot be saved keeps the card and the draft on the ${surface}`, async ($, on) => {
-    const { ui, files, calls, prompts, toasts } = await open($, on, surface)
+    const { clock, ui, files, calls, prompts, toasts } = await open(
+      $,
+      on,
+      surface,
+    )
     await ui.press({ key: 'card:md:0001-login' })
     await ui.input({ key: 'feedback', text: 'Add a test', kind: 'change' })
     calls.denyWrite = 'EACCES: read-only'
 
     await ui.press({ key: 'sendback' })
+    await clock.advance(SYNC_PAUSE)
 
     expect(toasts).toHaveLength(1)
     expect(toasts[0]).toContain('Could not save the feedback')
@@ -140,19 +152,31 @@ for (const surface of SURFACES) {
 
     calls.denyWrite = undefined
     await ui.press({ key: 'sendback' })
+    await clock.advance(SYNC_PAUSE)
     expect(files[path(1, 'login')]).toContain('status: claude')
     expect(prompts).toHaveLength(1)
     await ui.unmount()
   })
 
   test(`a refused move after send back puts the card back and sends no prompt on the ${surface}`, async ($, on) => {
-    const { ui, files, calls, prompts, toasts } = await open($, on, surface)
+    const { clock, ui, files, calls, prompts, toasts } = await open(
+      $,
+      on,
+      surface,
+    )
     await ui.press({ key: 'card:md:0001-login' })
     await ui.input({ key: 'feedback', text: 'Add a test', kind: 'change' })
     // The append lands, the status write after it is refused.
     calls.denyWriteAfter = 1
 
     await ui.press({ key: 'sendback' })
+    await clock.advance(SYNC_PAUSE)
+    // The first try failed; three retries follow before the card goes back.
+    for (let tries = 0; tries < 3; tries += 1) {
+      expect(toasts).toEqual([])
+      await ui.press({ key: 'retry-all' })
+      await clock.settle()
+    }
 
     expect(calls.writes).toEqual([path(1, 'login')])
     expect(files[path(1, 'login')]).toContain('status: human')
@@ -175,10 +199,12 @@ for (const surface of SURFACES) {
   })
 
   test(`a Backlog card moved to Claude asks Claude to work on it, any other move does not on the ${surface}`, async ($, on) => {
-    const { ui, files, prompts } = await open($, on, surface)
+    const { clock, ui, files, prompts } = await open($, on, surface)
 
     await ui.press({ key: 'card:md:0003-docs' })
     await ui.press({ key: 'move:claude' })
+    expect(prompts).toEqual([])
+    await clock.advance(SYNC_PAUSE)
     expect(files[path(3, 'docs')]).toContain('status: claude')
     expect(prompts).toEqual([
       expect.stringMatching(
@@ -186,9 +212,11 @@ for (const surface of SURFACES) {
       ),
     ])
 
-    await ui.press({ key: 'move:backlog' })
-    await ui.press({ key: 'move:human' })
-    await ui.press({ key: 'move:claude' })
+    for (const key of ['move:backlog', 'move:human', 'move:claude']) {
+      await ui.press({ key })
+      await clock.advance(SYNC_PAUSE)
+    }
+    expect(files[path(3, 'docs')]).toContain('status: claude')
     expect(prompts).toHaveLength(1)
     await ui.unmount()
   })
@@ -213,6 +241,7 @@ test('the mobile app has no field, so Send back is unavailable with a hint', asy
   expect(await ui.find({ key: 'park' })).toBeDefined()
 
   await ui.press({ key: 'approve' })
+  await clock.advance(SYNC_PAUSE)
   expect(files[path(1, 'login')]).toContain('status: done')
   await ui.unmount()
 })

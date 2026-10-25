@@ -6,7 +6,7 @@ import type { KanbanBackendInfo } from '../types'
 import { createCard } from '../hooks/backend'
 import { parseSections } from '../hooks/handoff'
 import { parseCardFile, serializeCardFile } from '../hooks/local'
-import { NOW, PANE, RUN, boot, card, path } from './fakes'
+import { NOW, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 
 const tool = (name: string): `mcp__${string}__${string}` =>
   `mcp__kanban__${name}`
@@ -74,7 +74,7 @@ test('feedback newer than the handoff asks for a new handoff', async ($, on) => 
   const files = {
     [path(1, 'a')]: withBody(`The spec.\n\n${HANDOFF}\n\n${FEEDBACK}`),
   }
-  boot(on, files)
+  const { clock } = boot(on, files)
 
   expect(await moveToHuman($)).toMatchObject({
     deny: expect.stringContaining('kanban_handoff'),
@@ -88,18 +88,20 @@ test('feedback newer than the handoff asks for a new handoff', async ($, on) => 
   })
 
   expect(await moveToHuman($)).toMatchObject({
-    result: 'Moved #1 to Human.',
+    result: 'Moved #1 to Human (syncing).',
   })
+  await clock.advance(SYNC_PAUSE)
   expect(files[path(1, 'a')]).toContain('status: human')
 })
 
 test('a valid handoff lets the card move to Human', async ($, on) => {
   const files = { [path(1, 'a')]: withBody(`The spec.\n\n${HANDOFF}`) }
-  boot(on, files)
+  const { clock } = boot(on, files)
 
   const moved = await moveToHuman($)
 
-  expect(moved).toMatchObject({ result: 'Moved #1 to Human.' })
+  expect(moved).toMatchObject({ result: 'Moved #1 to Human (syncing).' })
+  await clock.advance(SYNC_PAUSE)
   expect(files[path(1, 'a')]).toContain('status: human')
 })
 
@@ -175,7 +177,9 @@ test('kanban_handoff writes the exact handoff format with the clock date', async
       },
     },
   ])
-  expect(await moveToHuman($)).toMatchObject({ result: 'Moved #1 to Human.' })
+  expect(await moveToHuman($)).toMatchObject({
+    result: 'Moved #1 to Human (syncing).',
+  })
 })
 
 test('a handoff without the optional fields leaves them empty', async ($, on) => {
@@ -510,7 +514,7 @@ test('moving a card and recording a handoff keep the frontmatter keys they do no
   const lines = withBody('The spec.').split('\n')
   lines.splice(lines.indexOf('---', 1), 0, ...extras)
   const files = { [path(1, 'a')]: lines.join('\n') }
-  boot(on, files)
+  const { clock } = boot(on, files)
 
   await $.tool.call({
     tool: tool('kanban_handoff'),
@@ -519,10 +523,12 @@ test('moving a card and recording a handoff keep the frontmatter keys they do no
     need: 'Approve',
   })
   await moveToHuman($)
+  await clock.advance(SYNC_PAUSE)
 
   const rewritten = files[path(1, 'a')] ?? ''
+  // The status is written once the pause for further moves is over.
   expect(rewritten).toContain(
-    `updated: 2026-10-25T11:00:00Z`.replace('11:00:00Z', '12:00:00.000Z'),
+    `updated: ${new Date(NOW + SYNC_PAUSE).toISOString()}`,
   )
   expect(rewritten).toContain(`${extras.join('\n')}\n---\n`)
   expect(rewritten).toContain('status: human')

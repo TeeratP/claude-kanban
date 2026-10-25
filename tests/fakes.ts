@@ -3,6 +3,8 @@ import { mock } from 'claude-code/testing'
 
 export const NOW = Date.parse('2026-10-25T12:00:00Z')
 export const CWD = '/work'
+// A move reaches the backend this long after it is made, so a test looks at the files after it.
+export const SYNC_PAUSE = 300
 
 export type Files = Record<string, string>
 
@@ -31,6 +33,17 @@ export function card(
     `${body}\n`,
   ].join('\n')
 }
+
+/** A card body with a valid handoff, which a card needs before it can move to Human. */
+export const HANDED_OFF = [
+  'Spec text.',
+  '',
+  '## Handoff (2026-10-25)',
+  '**Did:** Wrote the docs',
+  '**Check:** Read the README',
+  '**Changed:** README.md',
+  '**Need from you:** Approve',
+].join('\n')
 
 export const path = (id: number, slug = 'card') =>
   `.kanban/${String(id).padStart(4, '0')}-${slug}.md`

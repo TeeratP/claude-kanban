@@ -92,6 +92,7 @@ for (const surface of SURFACES) {
     expect(await ui.find({ key: 'move:backlog' })).toBeUndefined()
 
     await ui.press({ key: 'move:claude' })
+    await clock.advance(300)
     expect(files[path(3, 'docs')]).toContain('status: claude')
     expect(files[path(3, 'docs')]).toContain('Spec text.')
     expect((await ui.find({ type: 'Text', text: /^Claude/ }))?.text).toMatch(
@@ -127,13 +128,14 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
     release = resolve
   })
 
-  const moving = $.tool.call({
+  const moved = await $.tool.call({
     tool: 'mcp__kanban__kanban_move',
     card: 3,
     to: 'claude',
   })
-  await clock.settle()
+  await clock.advance(300)
 
+  expect(moved).toMatchObject({ result: 'Moved #3 to Claude (syncing).' })
   expect(await under('hdr:claude', 'hdr:backlog')).toEqual([
     'card:md:0002-api',
     'card:md:0003-docs',
@@ -147,16 +149,17 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
   ])
 
   release()
-  expect(await moving).toMatchObject({ result: 'Moved #3 to Claude.' })
-  expect((await ui.find({ key: 'card:md:0003-docs' }))?.text).not.toContain('⟳')
+  await clock.settle()
+  expect((await ui.find({ key: 'card:md:0003-docs' }))?.text).toContain('✓')
   expect(await under('hdr:claude', 'hdr:backlog')).toEqual([
     'card:md:0002-api',
     'card:md:0003-docs',
   ])
+  await clock.advance(2000)
   await ui.unmount()
 })
 
-test('a refused move puts the card back on the board', async ($, on) => {
+test('a refused move waits for a retry and, out of retries, goes back with the reason', async ($, on) => {
   const { clock, calls, toasts } = boot(on, cards())
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
@@ -166,6 +169,16 @@ test('a refused move puts the card back on the board', async ($, on) => {
 
   await ui.press({ key: 'card:md:0003-docs' })
   await ui.press({ key: 'move:claude' })
+  await clock.advance(300)
+
+  expect(toasts).toEqual([])
+  expect((await ui.find({ type: 'Text', text: /EACCES/ }))?.text).toContain(
+    '(attempt 1/4)',
+  )
+  for (let tries = 0; tries < 3; tries += 1) {
+    await ui.press({ key: 'retry' })
+    await clock.settle()
+  }
 
   expect(toasts).toHaveLength(1)
   expect(toasts[0]).toContain('Could not move #3 to Claude')
@@ -173,6 +186,7 @@ test('a refused move puts the card back on the board', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /^Backlog/ }))?.text).toMatch(
     /^Backlog/,
   )
+  expect(await ui.find({ key: 'retry' })).toBeUndefined()
   await ui.press({ key: 'back' })
   const keys = (await ui.findAll({ type: 'Button' })).map(button => button.key)
   expect(keys.slice(keys.indexOf('hdr:backlog'))).toEqual([

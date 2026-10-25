@@ -4,6 +4,7 @@ import { readUi } from './atoms'
 import { bootstrap, inBackground, openBoard, refreshAfter } from './board'
 import { guardEdit, guardWrite } from './guard'
 import { S } from './strings'
+import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
 import { handleBoardScroll, renderBoard } from './view-board'
 import { renderDetail } from './view-detail'
@@ -16,6 +17,7 @@ export const register: Register = on => {
     })
     for (const spec of TOOL_SPECS) await $.tool.register(spec)
     inBackground($, bootstrap($))
+    inBackground($, resumePendingSyncs($))
 
     return next(e)
   })
