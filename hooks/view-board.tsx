@@ -47,28 +47,36 @@ function toggleSection($: EngineInterface, column: KanbanColumn) {
   }))
 }
 
-// Moves a section's window by `delta(cap)` cards, kept within its list.
+// Moves a section's window by `delta(cap)` cards, kept within its list; resolves
+// whether the window shown moved.
 async function scrollSection(
   $: EngineInterface,
   column: KanbanColumn,
   bodyRows: number,
   delta: (cap: number) => number,
-) {
+): Promise<boolean> {
   const { cards } = await readBoard($)
   const len = sectionList(cards, column).length
 
+  const seen = { isMoved: false }
   await updateUi($, ui => {
     const cap = capFor(bodyRows, openCount(ui))
     const shown = clampOffset(ui.offsets[column], len, cap)
     const offset = clampOffset(shown + delta(cap), len, cap)
+    seen.isMoved = offset !== shown
 
     return offset === ui.offsets[column]
       ? ui
       : { ...ui, offsets: { ...ui.offsets, [column]: offset } }
   })
+
+  return seen.isMoved
 }
 
-/** Scrolls the section under the wheel; false leaves the move to the engine. */
+/**
+ * Scrolls the section under the wheel; false leaves the move to the engine, as it
+ * does for a section already at the end the wheel points to.
+ */
 export async function handleBoardScroll(
   $: EngineInterface,
   e: UiScrollInput,
@@ -82,9 +90,8 @@ export async function handleBoardScroll(
   if (column === undefined || ui.collapsed[column]) return false
 
   const step = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by)))
-  await scrollSection($, column, e.bodyRows, () => step)
 
-  return true
+  return scrollSection($, column, e.bodyRows, () => step)
 }
 
 /** Acts on what the board's Client posted: a click on a row or a card dropped. */

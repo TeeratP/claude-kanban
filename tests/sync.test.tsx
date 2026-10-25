@@ -116,6 +116,49 @@ test('the ticker stops itself once nothing is syncing', async ($, on) => {
   await ui.unmount()
 })
 
+test('a move made as the ticker reads that nothing shows keeps the ticker going', async ($, on) => {
+  const ticks: number[] = []
+  const gate: { hold?: Promise<void>; isHeld: boolean } = { isHeld: false }
+  on('state.set', ($, e, next) => {
+    if (e.key === 'tick') ticks.push(1)
+
+    return next(e)
+  })
+  // The read is answered, then the answer waits: the beat acts on a moment already past.
+  on('state.get', async ($, e, next) => {
+    const read = await next(e)
+    const hold = gate.hold
+    if (e.key === 'sync' && hold !== undefined) {
+      gate.hold = undefined
+      gate.isHeld = true
+      await hold
+    }
+
+    return read
+  })
+  const { clock, ui } = await open($, on, cards())
+  let release = () => {}
+
+  await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
+  // The mark is gone at 2300 ms; the beat at 2400 ms finds nothing showing.
+  await clock.advance(2399)
+  gate.hold = new Promise<void>(resolve => {
+    release = resolve
+  })
+  await clock.advance(1)
+  expect(gate.isHeld).toBe(true)
+
+  await $.tool.call({ ...MOVE, card: 1, to: 'claude' })
+  release()
+  await clock.settle()
+  const before = ticks.length
+  await clock.advance(1000)
+
+  expect(ticks.length).toBeGreaterThan(before)
+  await clock.advance(3000)
+  await ui.unmount()
+})
+
 test('a refused move shows a cross and a Retry that sends it again', async ($, on) => {
   const files = cards()
   const { clock, calls, toasts, ui } = await open($, on, files)
@@ -369,7 +412,8 @@ test('the work prompt goes out only once the backend has confirmed', async ($, o
 })
 
 test('a refused move submits no prompt, and nor does a move by Claude', async ($, on) => {
-  const { clock, calls, prompts, ui } = await open($, on, cards())
+  const files = cards()
+  const { clock, calls, prompts, ui } = await open($, on, files)
   calls.denyWrite = 'EACCES: read-only'
 
   await click(ui, DOCS)
@@ -379,10 +423,15 @@ test('a refused move submits no prompt, and nor does a move by Claude', async ($
     await ui.press({ key: 'retry' })
     await clock.settle()
   }
+  // The card is back in Backlog; the same move by the person would send the work prompt.
   calls.denyWrite = undefined
-  await $.tool.call({ ...MOVE, card: 1, to: 'claude' })
+  expect(
+    await $.tool.call({ tool: 'mcp__kanban__kanban_list', column: 'backlog' }),
+  ).toMatchObject({ result: expect.stringContaining('#3 [backlog]') })
+  await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(300)
 
+  expect(files[path(3, 'docs')]).toContain('status: claude')
   expect(prompts).toEqual([])
   await clock.advance(2000)
   await ui.unmount()
