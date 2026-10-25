@@ -1,14 +1,10 @@
 import type { EngineInterface, ToolSpec } from 'claude-code'
 
-import type {
-  KanbanBackendInfo,
-  KanbanBoard,
-  KanbanCard,
-  KanbanSection,
-} from '../types'
+import type { KanbanBackendInfo, KanbanBoard, KanbanCard } from '../types'
 import { readDetailState, updateDetailState } from './atoms'
 import { appendSection, createCard, readDetail } from './backend'
 import { ensureBoard, inBackground, refresh, setBoard } from './board'
+import { sectionHeading } from './check'
 import { formatHandoff, isFilled, isHandoffValid } from './handoff'
 import { sectionList } from './layout'
 import { COLUMNS, errorMessage, isColumn } from './model'
@@ -166,16 +162,12 @@ async function show(
 
   try {
     const { body, sections } = await readDetail($, found.info, found.card)
-    const heading = (one: KanbanSection) =>
-      one.kind === 'handoff'
-        ? S.handoffHeading(one.date)
-        : S.feedbackHeading(one.date)
 
     return {
       result: [
         S.listLine(found.card),
         body === '' ? S.noSpec : body,
-        ...sections.map(one => `## ${heading(one)}\n${one.text}`),
+        ...sections.map(one => `## ${sectionHeading(one)}\n${one.text}`),
       ].join('\n\n'),
     }
   } catch (error) {

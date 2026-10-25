@@ -1,9 +1,9 @@
 import type { KanbanSection } from '../types'
 
-const HEADER = /^## (Handoff|Feedback) \((\d{4}-\d{2}-\d{2})\)\s*$/
+const HEADER = /^## (Handoff|Feedback|Check run) \((\d{4}-\d{2}-\d{2})\)\s*$/
 const FIELD = /^\*\*(Did|Check|Changed|Need from you):\*\*\s*(.*)$/
 // The line starts of HEADER and FIELD, loosened so no marker-like line slips through escapeMarkers.
-const HEADER_START = /^## (?:Handoff|Feedback) \(/
+const HEADER_START = /^## (?:Handoff|Feedback|Check run) \(/
 const FIELD_START = /^\*\*(Did|Check|Changed|Need from you):\*\*/
 
 type Fields = NonNullable<KanbanSection['fields']>
@@ -79,7 +79,12 @@ export function parseSections(markdown: string): {
     const header = HEADER.exec(line)
     if (header !== null) {
       found.push({
-        kind: header[1] === 'Handoff' ? 'handoff' : 'feedback',
+        kind:
+          header[1] === 'Handoff'
+            ? 'handoff'
+            : header[1] === 'Feedback'
+              ? 'feedback'
+              : 'check',
         date: header[2] ?? '',
         lines: [],
       })

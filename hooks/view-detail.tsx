@@ -11,10 +11,12 @@ import {
 } from './atoms'
 import { appendSection, readDetail, readDiff } from './backend'
 import { ensureBackend } from './board'
+import { sectionHeading } from './check'
 import { formatFeedback } from './handoff'
 import { COLUMNS, MAX_ATTEMPTS, ageLabel, capDiff, errorMessage } from './model'
 import { S } from './strings'
 import { moveCard, moveOptions, retry } from './sync'
+import { renderCheck } from './view-check'
 
 type DetailView = Extract<KanbanView, { mode: 'detail' }>
 
@@ -231,6 +233,11 @@ export async function renderDetail(
     }
   }
 
+  const check =
+    isReady && tab === 'card' && detail.error === undefined
+      ? await renderCheck($, e, card, detail.sections, now)
+      : null
+
   return (
     <Box flexDirection="column">
       {back}
@@ -329,9 +336,10 @@ export async function renderDetail(
         detail.sections.map((section, index) => (
           <Markdown
             key={`section:${index}`}
-            text={`**${section.kind === 'handoff' ? S.handoffHeading(section.date) : S.feedbackHeading(section.date)}**\n\n${section.text}`}
+            text={`**${sectionHeading(section)}**\n\n${section.text}`}
           />
         ))}
+      {check}
     </Box>
   )
 }
