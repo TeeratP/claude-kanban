@@ -635,7 +635,7 @@ for (const surface of CLIENT_SURFACES) {
   })
 }
 
-test('the board view gives n to the add button and no other Button a hotkey that is also a Client key', async ($, on) => {
+test('the board view gives n to the add button, f to the filter button and no other Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
   // A suggestion adds its own buttons to the board view.
   await $.tool.call({
@@ -653,7 +653,7 @@ test('the board view gives n to the add button and no other Button a hotkey that
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],
   )
 
-  expect(hotkeys).toEqual(['n'])
+  expect(hotkeys).toEqual(['n', 'f'])
   // The keys the board's list takes when it has the keyboard.
   const clientKeys = ['j', 'k', 'm', 'h', 'c', 'b', 'd', '1', '2', '3', '4']
   expect(hotkeys.filter(key => clientKeys.includes(key))).toEqual([])

@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type { KanbanCard, KanbanColumn } from '../types'
 import { readBoard } from './atoms'
 import type { Place } from './board-client'
+import { filterCards } from './filter'
 import { sectionList } from './layout'
 import { isPendingId } from './model'
 import { moveCard, moveOptions } from './sync'
@@ -29,12 +30,17 @@ export function anchorFor(
  * section, or reorders it within its own. Left without a place, or dropped in
  * Done (which lists by update time), it goes last. A card still being made is
  * not on the backend: it is not dropped, and no place is taken from it.
+ *
+ * Under the board's filter `query`, `place` is among the cards the person sees,
+ * and the card goes right after the nearest of them above that place (first
+ * when none is above), ahead of the hidden cards that followed it.
  */
 export async function dropCard(
   $: EngineInterface,
   cardId: string,
   column: KanbanColumn,
   place?: Place,
+  query = '',
 ): Promise<void> {
   const { cards } = await readBoard($)
   const card = cards.find(one => one.id === cardId)
@@ -44,7 +50,9 @@ export async function dropCard(
   }
 
   const made = cards.filter(one => !isPendingId(one.id))
-  const others = sectionList(made, column).filter(one => one.id !== cardId)
+  const others = sectionList(filterCards(made, query), column).filter(
+    one => one.id !== cardId,
+  )
   const after =
     column === 'done' || place === undefined
       ? undefined
@@ -59,12 +67,15 @@ export async function dropCard(
 /**
  * Moves a card one place up or down in its section. Resolves its section, where
  * it ended up there and how many cards the section holds, or nothing when it
- * cannot move (at the end, in Done, or still being made).
+ * cannot move (at the end, in Done, or still being made). Under the board's
+ * filter `query` a place is among the cards the person sees: the card passes
+ * the visible one next to it, hidden cards in between staying where they are.
  */
 export async function shiftCard(
   $: EngineInterface,
   cardId: string,
   dir: 'up' | 'down',
+  query = '',
 ): Promise<
   { column: KanbanColumn; index: number; length: number } | undefined
 > {
@@ -75,12 +86,16 @@ export async function shiftCard(
   }
 
   const list = sectionList(
-    cards.filter(one => !isPendingId(one.id)),
+    filterCards(
+      cards.filter(one => !isPendingId(one.id)),
+      query,
+    ),
     card.column,
   )
-  const index =
-    list.findIndex(one => one.id === cardId) + (dir === 'up' ? -1 : 1)
-  if (index < 0 || index >= list.length) return undefined
+  // A card the filter hides has no place to move in.
+  const at = list.findIndex(one => one.id === cardId)
+  const index = at + (dir === 'up' ? -1 : 1)
+  if (at < 0 || index < 0 || index >= list.length) return undefined
 
   const others = list.filter(one => one.id !== cardId)
   await moveCard($, cardId, card.column, {

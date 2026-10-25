@@ -57,6 +57,8 @@ export const INITIAL_UI: KanbanUi = {
   offsets: { human: 0, claude: 0, backlog: 0, done: 0 },
   collapsed: { human: false, claude: false, backlog: false, done: true },
   draft: '',
+  filter: '',
+  isFilterOpen: false,
 }
 
 export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
