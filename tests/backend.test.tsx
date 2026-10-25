@@ -5,6 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import type { KanbanBoard, KanbanCard } from '../types'
 import { backendMode, detectBackend } from '../hooks/backend'
 import { CWD, PANE, RUN, boot, card, path } from './fakes'
+import { rowKeys } from './board-ui'
 import { fakeEngine, fakeProcess } from './fake-gh'
 import type { Route } from './fake-gh'
 
@@ -88,9 +89,7 @@ async function open($: Engine, on: On, extra: Route[], withFiles = files()) {
 async function board($: Engine) {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const toolbar = (await ui.findAll({ type: 'Text' }))[0]?.text ?? ''
-  const cards = (await ui.findAll({ type: 'Button' }))
-    .map(button => button.key ?? '')
-    .filter(key => key.startsWith('card:'))
+  const cards = (await rowKeys(ui)).filter(key => key.startsWith('card:'))
   await ui.unmount()
 
   return { toolbar, cards }
@@ -214,7 +213,7 @@ test(
     routes[0] = SIGNED_IN
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'refresh' })
-    const keys = (await ui.findAll({ type: 'Button' })).map(one => one.key)
+    const keys = await rowKeys(ui)
     await ui.unmount()
 
     expect(keys).toContain(GITHUB_CARD)
