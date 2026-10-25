@@ -2,6 +2,9 @@ import type { KanbanSection } from '../types'
 
 const HEADER = /^## (Handoff|Feedback) \((\d{4}-\d{2}-\d{2})\)\s*$/
 const FIELD = /^\*\*(Did|Check|Changed|Need from you):\*\*\s*(.*)$/
+// The line starts of HEADER and FIELD, loosened so no marker-like line slips through escapeMarkers.
+const HEADER_START = /^## (?:Handoff|Feedback) \(/
+const FIELD_START = /^\*\*(Did|Check|Changed|Need from you):\*\*/
 
 type Fields = NonNullable<KanbanSection['fields']>
 
@@ -33,12 +36,34 @@ function parseFields(text: string): Fields {
   return fields
 }
 
-/** The section Send back appends to a card: the person's feedback, dated. */
-export function formatFeedback(text: string, date: string): string {
-  return `## Feedback (${date})\n${text}`
+/**
+ * Makes free text safe to write inside a section: a line `parseSections` would read as a
+ * section header gets a leading backslash, and one it would read as a field marker gets its
+ * colon escaped. Both render as the literal text in Markdown and on GitHub; other lines
+ * are unchanged.
+ */
+export function escapeMarkers(text: string): string {
+  return text
+    .split('\n')
+    .map(line =>
+      HEADER_START.test(line)
+        ? `\\${line}`
+        : line.replace(FIELD_START, '**$1\\:**'),
+    )
+    .join('\n')
 }
 
-/** Splits a card file's markdown into its spec and its Handoff / Feedback sections. */
+/** The section Send back appends to a card: the person's feedback, dated. */
+export function formatFeedback(text: string, date: string): string {
+  return `## Feedback (${date})\n${escapeMarkers(text)}`
+}
+
+/**
+ * Splits a card file's markdown into its spec and its Handoff / Feedback sections.
+ * The first header line ends the spec, so a header line in a hand-written spec starts a
+ * section: the file has no other boundary. Text written through `formatHandoff` and
+ * `formatFeedback` is escaped and never does.
+ */
 export function parseSections(markdown: string): {
   body: string
   sections: KanbanSection[]
@@ -77,7 +102,7 @@ export function parseSections(markdown: string): {
 /** The Handoff section Claude writes when it hands a card to the person. */
 export function formatHandoff(fields: Fields, date: string): string {
   const line = (label: string, text: string) =>
-    `**${label}:** ${text}`.trimEnd()
+    `**${label}:** ${escapeMarkers(text)}`.trimEnd()
 
   return [
     `## Handoff (${date})`,
