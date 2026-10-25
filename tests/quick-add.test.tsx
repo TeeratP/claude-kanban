@@ -1,8 +1,8 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, Mounted } from 'claude-code/testing'
 
-import { click, marks, row, rowKeys } from './board-ui'
+import { click, keys, marks, row, rowIndex, rowKeys } from './board-ui'
 import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
 import { boardReply, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
@@ -208,6 +208,76 @@ for (const surface of SURFACES) {
     expect(Object.keys(files).filter(file => file.includes('once'))).toEqual([
       path(4, 'once'),
     ])
+    await ui.unmount()
+  })
+}
+
+for (const surface of SURFACES) {
+  test(`a card still being made can not be opened, moved, listed or cached, on the ${surface}`, async ($, on) => {
+    const { clock, calls, files, saved, ui } = await open($, on, surface)
+    let release = () => {}
+    calls.hold = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await ui.press({ key: 'add' })
+    const adding = ui.input({ key: TITLE, text: 'Not there yet' })
+    await clock.settle()
+    const pending = (await under(ui, 'hdr:backlog')).find(key =>
+      key.startsWith('card:new:'),
+    )
+    expect(pending).toBeDefined()
+    const key = pending ?? ''
+
+    // A click, Enter and a drop onto Claude do nothing.
+    await click(ui, key)
+    expect(await ui.find({ key: 'back' })).toBeUndefined()
+    if (surface !== 'vscode') {
+      const { pointer } = ui as unknown as Mounted<'terminal'>
+      const from = await rowIndex(ui, key)
+      const to = await rowIndex(ui, 'hdr:claude')
+      await keys(ui, 'down')
+      await pointer({ type: 'down', x: 2, y: from, button: 'left' })
+      await pointer({ type: 'move', x: 2, y: to, button: 'left' })
+      await pointer({ type: 'up', x: 2, y: to, button: 'left' })
+      await keys(ui, 'return')
+    }
+    await clock.advance(300)
+    expect(await ui.find({ key: 'back' })).toBeUndefined()
+    expect(await under(ui, 'hdr:claude')).not.toContain(key)
+    expect(await under(ui, 'hdr:backlog')).toContain(key)
+
+    // Claude's tools do not see it.
+    const listed = await $.tool.call({ tool: 'mcp__kanban__kanban_list' })
+    expect(listed).toHaveProperty('result')
+    expect(JSON.stringify(listed)).not.toContain('Not there yet')
+    expect(
+      await $.tool.call({ tool: 'mcp__kanban__kanban_show', card: 0 }),
+    ).toMatchObject({ deny: 'There is no kanban card #0.' })
+    expect(
+      await $.tool.call({
+        tool: 'mcp__kanban__kanban_move',
+        card: 0,
+        to: 'claude',
+      }),
+    ).toMatchObject({ deny: 'There is no kanban card #0.' })
+
+    // A load saves the cards for the next start, without it.
+    await ui.press({ key: 'refresh' })
+    const cached = JSON.parse(saved.get('cache:/work') ?? '{}') as {
+      cards?: { id: string }[]
+    }
+    expect(cached.cards?.map(one => one.id).sort()).toEqual([
+      'md:0001-login',
+      'md:0003-docs',
+    ])
+
+    release()
+    await adding
+    await clock.settle()
+    expect(
+      Object.keys(files).filter(file => file.includes('not-there')),
+    ).toHaveLength(1)
+    expect(calls.writes).toEqual([path(4, 'not-there-yet')])
     await ui.unmount()
   })
 }

@@ -12,7 +12,14 @@ import {
 import { appendSection, readDetail, readDiff } from './backend'
 import { ensureBackend } from './board'
 import { formatFeedback } from './handoff'
-import { COLUMNS, MAX_ATTEMPTS, ageLabel, capDiff, errorMessage } from './model'
+import {
+  COLUMNS,
+  MAX_ATTEMPTS,
+  ageLabel,
+  capDiff,
+  errorMessage,
+  isPendingId,
+} from './model'
 import { S } from './strings'
 import { moveCard, moveOptions, retry } from './sync'
 
@@ -42,6 +49,9 @@ function syncNote(entry: KanbanSync): string {
 
 /** Shows a card's detail and reads its spec and sections from the backend. */
 export async function openDetail($: EngineInterface, cardId: string) {
+  // A card still being made has no spec to show yet.
+  if (isPendingId(cardId)) return
+
   const view: KanbanView = { mode: 'detail', cardId, tab: 'card' }
   const loading: KanbanDetail = {
     cardId,

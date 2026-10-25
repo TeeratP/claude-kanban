@@ -9,7 +9,13 @@ import type {
 } from '../types'
 import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
-import { EMPTY_BOARD, PANE, errorMessage, isKanbanFile } from './model'
+import {
+  EMPTY_BOARD,
+  PANE,
+  errorMessage,
+  isKanbanFile,
+  isPendingId,
+} from './model'
 import { pauseLeft } from './rate-limit'
 import { S } from './strings'
 
@@ -176,7 +182,8 @@ async function saveCache($: EngineInterface, board: KanbanBoard) {
       shape: CACHE_SHAPE,
       mode: board.mode,
       backend: board.backend,
-      cards: board.cards,
+      // A card still being made would come back as a ghost at the next start.
+      cards: board.cards.filter(card => !isPendingId(card.id)),
     }
     await $.store.set(cacheKey(await $.session.cwd()), entry)
   } catch (error) {

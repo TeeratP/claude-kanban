@@ -5,12 +5,16 @@ import { updateQuickAdd, updateSync, updateUi } from './atoms'
 import { createCard } from './backend'
 import { ensureBackend, inBackground, refresh, setBoard } from './board'
 import { sectionList } from './layout'
-import { EMPTY_QUICK_ADD, errorMessage, withCard } from './model'
+import {
+  EMPTY_QUICK_ADD,
+  PENDING_PREFIX,
+  errorMessage,
+  isPendingId,
+  withCard,
+} from './model'
 import { S } from './strings'
 import { ensureTicker, expireLater } from './sync'
 
-// A card shown before its backend has made it has no number or file yet.
-const PENDING_PREFIX = 'new:'
 let added = 0
 
 type Field = 'title' | 'spec'
@@ -193,8 +197,7 @@ export async function dropUnfinishedAdds($: EngineInterface): Promise<void> {
     gone.clear()
     const kept: typeof sync = {}
     for (const [id, entry] of Object.entries(sync)) {
-      if (id.startsWith(PENDING_PREFIX) && entry.phase === 'pending')
-        gone.add(id)
+      if (isPendingId(id) && entry.phase === 'pending') gone.add(id)
       else kept[id] = entry
     }
 

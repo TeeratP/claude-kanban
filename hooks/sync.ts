@@ -10,7 +10,13 @@ import {
   refresh,
   setBoard,
 } from './board'
-import { MAX_ATTEMPTS, TICK_SHOWN_MS, errorMessage, maxOrder } from './model'
+import {
+  MAX_ATTEMPTS,
+  TICK_SHOWN_MS,
+  errorMessage,
+  isPendingId,
+  maxOrder,
+} from './model'
 import { S } from './strings'
 
 export type MoveOptions = {
@@ -94,6 +100,9 @@ export async function moveCard(
   to: KanbanColumn,
   opts?: MoveOptions,
 ): Promise<void> {
+  // A card still being made is not on the backend to be moved.
+  if (isPendingId(cardId)) return
+
   // The card is found inside the write: a read here could be an older moment.
   const seen: { from?: KanbanColumn; entry?: KanbanSync } = {}
   await setBoard($, board => {

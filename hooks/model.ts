@@ -47,6 +47,12 @@ export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
   spec: '',
 }
 
+// A card shown before its backend has made it carries this prefix in its id.
+export const PENDING_PREFIX = 'new:'
+
+/** Whether a card id is one shown before its backend has made the card. */
+export const isPendingId = (cardId: string) => cardId.startsWith(PENDING_PREFIX)
+
 export function isColumn(value: unknown): value is KanbanColumn {
   return COLUMNS.some(column => column === value)
 }
