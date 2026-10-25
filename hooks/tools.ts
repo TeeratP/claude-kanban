@@ -1,6 +1,6 @@
 import type { EngineInterface, ToolSpec } from 'claude-code'
 
-import { ensureBoard } from './board'
+import { announceHandoff, ensureBoard } from './board'
 import { sectionList } from './layout'
 import { COLUMNS, isColumn } from './model'
 import { S } from './strings'
@@ -75,6 +75,8 @@ async function move(
   if (card === undefined) return { deny: S.noSuchCard(number) }
 
   const moved = await moveCard($, card.id, to)
+  if (moved.ok && to === 'human' && card.column !== 'human')
+    announceHandoff($, card)
 
   return moved.ok
     ? { result: S.moved(card, to) }
