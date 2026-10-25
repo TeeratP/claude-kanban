@@ -4,6 +4,7 @@ import type {
   KanbanActivity,
   KanbanCard,
   KanbanCardActivity,
+  KanbanQueue,
   KanbanRound,
 } from '../types'
 import type { Seg } from './board-client'
@@ -151,16 +152,21 @@ export function totalLabel(totals: Totals): string {
   ].join(S.statsSep)
 }
 
-/** The ids of the Claude cards that get a second row: those Claude has worked on. */
+/**
+ * The ids of the Claude cards that get a second row: those Claude has worked on,
+ * except a card waiting in the queue, which is not being worked on.
+ */
 export function detailIds(
   cards: readonly KanbanCard[],
   activity: KanbanActivity,
+  held: KanbanQueue['held'],
 ): Set<string> {
   return new Set(
     cards
       .filter(
         card =>
           card.column === 'claude' &&
+          held[card.id] === undefined &&
           (activity.cards[card.id]?.rounds.length ?? 0) > 0,
       )
       .map(card => card.id),

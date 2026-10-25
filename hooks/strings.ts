@@ -86,8 +86,8 @@ export const S = {
     card: 'The card number, as shown by kanban_list.',
     to: 'The column to move the card to.',
   },
-  listLine: (card: KanbanCard) =>
-    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''} updated ${card.updatedAt.slice(0, 10)}`,
+  listLine: (card: KanbanCard, isQueued = false) =>
+    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''}${isQueued ? ' (queued)' : ''} updated ${card.updatedAt.slice(0, 10)}`,
   boardUnavailable: (reason?: string) =>
     `The kanban board could not be loaded${reason === undefined ? '' : `: ${reason}`}.`,
   listEmpty: 'No cards on the board.',
@@ -302,4 +302,13 @@ export const S = {
   roundHeading: (n: number) => `Round ${n}`,
   activityFailed: (reason: string) =>
     `kanban: could not record Claude's activity: ${reason}`,
+
+  // #20
+  claudeCount: (running: number, limit: number, queued: number) =>
+    `${running}/${limit}${queued === 0 ? '' : ` · ${queued} queued`}`,
+  queuedMark: (place: number) => `queued ${place}`,
+  queueSaveFailed: (reason: string) =>
+    `kanban: could not save the queue: ${reason}`,
+  queueRestoreFailed: (reason: string) =>
+    `kanban: could not read the saved queue: ${reason}`,
 }

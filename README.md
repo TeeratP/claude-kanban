@@ -25,7 +25,7 @@ At the prompt of a terminal session:
 /plugin install kanban --marketplace TeeratP/claude-kanban
 ```
 
-Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)).
+Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)) and the `claudeLimit` option (see [How many cards Claude works on at once](#how-many-cards-claude-works-on-at-once)).
 
 From a shell:
 
@@ -55,9 +55,17 @@ A move shows at once, then syncs in the background: `⟳` pulses while it is sen
 
 ### Who is working on a card
 
-A card in Claude that Claude has worked on gets a dim second row under it: a coloured dot for each agent that took part (`Claude` for the main session, or the subagent's name or type; the same agent always gets the same colour), the name of the one that acted last, what it is doing (`⟳ Edit src/auth.ts`, `⟳ Bash npm test`, or `idle 3m` once nothing has run for a minute) and the cost so far, for example `12m · 48k tok`. The row fits the pane: the stats keep their room first, the activity takes what is left (a path loses its front before its file name) and a long agent name is shortened. The card's own row never changes, so rows stay one line each.
+A card in Claude that Claude has worked on gets a dim second row under it: a coloured dot for each agent that took part (`Claude` for the main session, or the subagent's name or type; the same agent always gets the same colour), the name of the one that acted last, what it is doing (`⟳ Edit src/auth.ts`, `⟳ Bash npm test`, or `idle 3m` once nothing has run for a minute) and the cost so far, for example `12m · 48k tok`. The row fits the pane: the stats keep their room first, the activity takes what is left (a path loses its front before its file name) and a long agent name is shortened. The card's own row never changes, so rows stay one line each. A card waiting in the queue (see below) has no second row until it starts.
 
 A turn belongs to the card whose work or resume prompt started it, or to the card in Claude that Claude last touched with `kanban_show`, `kanban_handoff` or `kanban_move`; subagents it spawns work for the same card. Time counts while a turn runs on the card, tokens come from each model request in it (input and output, with tokens written to the cache counted as input; cache reads are shown apart, in the detail view). A round is one trip through Claude: it ends when the card leaves Claude and a new one starts when the card is worked on again. Totals are kept per directory and card, so they survive a restart. Open the card to see the agents by name and a breakdown by round.
+
+### How many cards Claude works on at once
+
+The `claudeLimit` setting is a whole number, `1` by default; `0` means no limit. You set it on the settings screen at install and can change it later in the plugin's settings in the config menu (the plugin reloads with the new value). A decimal is rounded down; a negative value or anything but a number counts as unset (`1`).
+
+When Claude is at its limit and you move another card to Claude (the moves that prompt Claude: Backlog to Claude, Send back, and answering a question), the card goes into the Claude section marked `queued N` and dim, and no prompt is sent. The Claude header reads `Claude 1/1 · 2 queued`. When a card leaves Claude (to Human, Done or Backlog, or its move to Claude is given up), the backend confirms that, and the top queued card starts: its work or resume prompt is sent then, never two at once. Queue order is the order of the section. Moving a queued card out of Claude takes it out of the queue.
+
+A queued card is in Status In progress on GitHub like any card in Claude: a column means who holds the ball. The queue itself is local, saved per working directory and `backend` setting, so it survives a restart; the waiting cards start at the first load of the board once a slot is free. Lowering the limit stops no card that is already working. Cards Claude moves itself with `kanban_move` are never queued (they carry no prompt), though they use up a slot; `kanban_list` marks a waiting card `(queued)` so Claude leaves it alone.
 
 ## Backends
 

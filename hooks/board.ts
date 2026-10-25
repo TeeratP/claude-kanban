@@ -10,6 +10,7 @@ import type {
 import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
 import { EMPTY_BOARD, PANE, errorMessage, isKanbanFile } from './model'
+import { releaseQueued } from './queue'
 import { pauseLeft } from './rate-limit'
 import { S } from './strings'
 
@@ -308,6 +309,8 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     })
     announceHumanChanges($, seen.before, board)
     await saveCache($, board)
+    // A card may have left Claude behind our back.
+    inBackground($, releaseQueued($))
 
     return board
   } catch (error) {

@@ -389,27 +389,31 @@ test('a move that fails after another was asked for sends the newer one', async 
   await ui.unmount()
 })
 
-test('the work prompt goes out only once the backend has confirmed', async ($, on) => {
-  const { clock, calls, prompts, ui } = await open($, on, cards())
-  let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
-    release = resolve
-  })
+test(
+  'the work prompt goes out only once the backend has confirmed',
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const { clock, calls, prompts, ui } = await open($, on, cards())
+    let release = () => {}
+    calls.hold = new Promise<void>(resolve => {
+      release = resolve
+    })
 
-  await click(ui, DOCS)
-  await ui.press({ key: 'move:claude' })
-  await clock.advance(300)
-  expect(prompts).toEqual([])
+    await click(ui, DOCS)
+    await ui.press({ key: 'move:claude' })
+    await clock.advance(300)
+    expect(prompts).toEqual([])
 
-  release()
-  await clock.settle()
+    release()
+    await clock.settle()
 
-  expect(prompts).toEqual([
-    'Work on kanban card #3 "Write docs": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it to human with mcp__kanban__kanban_move.',
-  ])
-  await clock.advance(2000)
-  await ui.unmount()
-})
+    expect(prompts).toEqual([
+      'Work on kanban card #3 "Write docs": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it to human with mcp__kanban__kanban_move.',
+    ])
+    await clock.advance(2000)
+    await ui.unmount()
+  },
+)
 
 test('a refused move submits no prompt, and nor does a move by Claude', async ($, on) => {
   const files = cards()

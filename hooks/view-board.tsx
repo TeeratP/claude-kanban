@@ -5,6 +5,7 @@ import { detailIds, detailSegs, segProps } from './activity-view'
 import {
   readActivity,
   readBoard,
+  readQueue,
   readPausedUntil,
   readSync,
   readTick,
@@ -26,6 +27,7 @@ import {
 } from './layout'
 import type { Row } from './layout'
 import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
+import { headerCount, queuePlace, queueView } from './queue'
 import { minutesLeft } from './rate-limit'
 import { S } from './strings'
 import { moveCard, moveOptions, retryAll } from './sync'
@@ -68,7 +70,11 @@ async function scrollSection(
 ): Promise<boolean> {
   const { cards } = await readBoard($)
   const len = sectionList(cards, column).length
-  const details = detailIds(cards, await readActivity($))
+  const details = detailIds(
+    cards,
+    await readActivity($),
+    (await readQueue($)).held,
+  )
 
   const seen = { isMoved: false }
   await updateUi($, ui => {
@@ -105,7 +111,7 @@ export async function handleBoardScroll(
     cards,
     ui,
     bodyRows: e.bodyRows,
-    details: detailIds(cards, await readActivity($)),
+    details: detailIds(cards, await readActivity($), (await readQueue($)).held),
   })
   const column = hitTest(rows, e.pointer.row + lastBody.offset)
   if (column === undefined || ui.collapsed[column]) return false
@@ -155,6 +161,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const ui = await readUi($)
   const sync = await readSync($)
   const tick = await readTick($)
+  const queued = await readQueue($)
+  const queue = queueView(queued, board.cards, sync)
   const pausedUntil = await readPausedUntil($)
   const activity = await readActivity($)
   const now = await $.clock.now()
@@ -168,7 +176,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     cards: board.cards,
     ui,
     bodyRows: scroll.bodyRows,
-    details: detailIds(board.cards, activity),
+    details: detailIds(board.cards, activity, queued.held),
   })
   const detailOf = (card: KanbanCard) => {
     const one = activity.cards[card.id]
@@ -236,7 +244,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           >
             {ui.collapsed[column] ? S.expand : S.collapse}{' '}
             <Text weight="bold">{S.col[column]}</Text>{' '}
-            <Text dimColor>{S.count(row.shown, row.total)}</Text>
+            <Text dimColor>
+              {headerCount(row.column, row.shown, row.total, queue)}
+            </Text>
           </Button>
         )
       }
@@ -266,10 +276,11 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         const entry = sync[card.id]
         const glyph =
           entry === undefined ? undefined : glyphOf(entry, tick, now)
+        const place = queuePlace(queue, card.id)
         const line = cardLine(
           card,
           columns,
-          glyph?.text ?? ' ',
+          glyph?.text ?? (place === undefined ? ' ' : S.queuedMark(place)),
           ageLabel(card.updatedAt, now),
         )
         const tint =
@@ -279,7 +290,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           <Button
             key={`card:${card.id}`}
             plain
-            dimColor={card.column === 'done'}
+            dimColor={card.column === 'done' || place !== undefined}
             onPress={() => openDetail($, card.id)}
           >
             {line.left}
@@ -335,6 +346,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       },
       ageOf: card => ageLabel(card.updatedAt, now),
       detailOf,
+      queue,
     }),
     columns,
   }

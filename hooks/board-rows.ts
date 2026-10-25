@@ -3,6 +3,8 @@ import type { RowView, Seg } from './board-client'
 import { cardLine } from './layout'
 import type { Row } from './layout'
 import { COLUMNS, cellWidth, isColumn, truncate } from './model'
+import { headerCount, queuePlace } from './queue'
+import type { QueueView } from './queue'
 import { S } from './strings'
 
 export type RowViewInput = {
@@ -16,6 +18,8 @@ export type RowViewInput = {
   ageOf: (card: KanbanCard) => string
   /** The pieces of a Claude card's second row. */
   detailOf: (card: KanbanCard) => Seg[]
+  /** Claude's limit and who waits for it. */
+  queue: QueueView
 }
 
 /** A message the board's Client posts, checked: it came from code, not a fact. */
@@ -47,7 +51,7 @@ const moveKeysOf = (column: KanbanColumn) => [
 
 /** The list rows (everything under the toolbar) as the Client draws them. */
 export function toRowViews(input: RowViewInput): RowView[] {
-  const { columns, collapsed, glyphOf, ageOf, detailOf } = input
+  const { columns, collapsed, glyphOf, ageOf, detailOf, queue } = input
   const views: RowView[] = []
 
   for (const row of input.rows) {
@@ -67,7 +71,9 @@ export function toRowViews(input: RowViewInput): RowView[] {
             seg(`${collapsed[row.column] ? S.expand : S.collapse} `),
             seg(S.col[row.column], { bold: true }),
             seg(' '),
-            seg(S.count(row.shown, row.total), { dim: true }),
+            seg(headerCount(row.column, row.shown, row.total, queue), {
+              dim: true,
+            }),
           ]),
         })
         break
@@ -86,9 +92,11 @@ export function toRowViews(input: RowViewInput): RowView[] {
       case 'card': {
         const { card } = row
         const glyph = glyphOf(card)
-        const line = cardLine(card, columns, glyph?.text ?? ' ', ageOf(card))
-        // A done card is dim all through.
-        const dim = card.column === 'done'
+        const place = queuePlace(queue, card.id)
+        const mark = place === undefined ? ' ' : S.queuedMark(place)
+        const line = cardLine(card, columns, glyph?.text ?? mark, ageOf(card))
+        // A done card and a queued one are dim all through.
+        const dim = card.column === 'done' || place !== undefined
         views.push({
           key: `card:${card.id}`,
           kind: 'card',

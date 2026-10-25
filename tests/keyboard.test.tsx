@@ -180,63 +180,71 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
-  test(`m then a section key moves the card, as a drop does, on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
-    await goTo(ui, DOCS)
+  test(
+    `m then a section key moves the card, as a drop does, on the ${surface}`,
+    { options: { claudeLimit: 0 } },
+    async ($, on) => {
+      const { clock, ui, files } = await start($, on, surface)
+      await goTo(ui, DOCS)
 
-    await keys(ui, 'm')
-    expect((await row(ui, 'hdr:human'))?.text).toBe('▾ Human 1  1/h')
-    expect((await row(ui, 'hdr:claude'))?.text).toBe('▾ Claude 1  2/c')
-    expect((await row(ui, 'hdr:done'))?.text).toBe('▸ Done 1  4/d')
-    expect((await row(ui, 'hdr:backlog'))?.text).toBe('▾ Backlog 1')
+      await keys(ui, 'm')
+      expect((await row(ui, 'hdr:human'))?.text).toBe('▾ Human 1  1/h')
+      expect((await row(ui, 'hdr:claude'))?.text).toBe('▾ Claude 1  2/c')
+      expect((await row(ui, 'hdr:done'))?.text).toBe('▸ Done 1  4/d')
+      expect((await row(ui, 'hdr:backlog'))?.text).toBe('▾ Backlog 1')
 
-    await keys(ui, 'h')
-    const keysNow = await rowKeys(ui)
-    expect(keysNow.slice(keysNow.indexOf('hdr:human') + 1, 3)).toEqual([
-      LOGIN,
-      DOCS,
-    ])
-    expect((await row(ui, 'hdr:human'))?.text).toBe('▾ Human 2')
-    // The cursor follows the card into its new section.
-    expect(await litRows(ui)).toEqual([DOCS])
-    await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: human')
+      await keys(ui, 'h')
+      const keysNow = await rowKeys(ui)
+      expect(keysNow.slice(keysNow.indexOf('hdr:human') + 1, 3)).toEqual([
+        LOGIN,
+        DOCS,
+      ])
+      expect((await row(ui, 'hdr:human'))?.text).toBe('▾ Human 2')
+      // The cursor follows the card into its new section.
+      expect(await litRows(ui)).toEqual([DOCS])
+      await clock.advance(SYNC_PAUSE)
+      expect(files[path(3, 'docs')]).toContain('status: human')
 
-    await keys(ui, 'm', '3')
-    await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: backlog')
-    expect(await litRows(ui)).toEqual([DOCS])
+      await keys(ui, 'm', '3')
+      await clock.advance(SYNC_PAUSE)
+      expect(files[path(3, 'docs')]).toContain('status: backlog')
+      expect(await litRows(ui)).toEqual([DOCS])
 
-    // Done is folded: the card is out of sight and the cursor rests near it.
-    await keys(ui, 'm', 'd')
-    await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: done')
-    expect(await row(ui, DOCS)).toBeUndefined()
-    expect(await litRows(ui)).toHaveLength(1)
-    await ui.unmount()
-  })
+      // Done is folded: the card is out of sight and the cursor rests near it.
+      await keys(ui, 'm', 'd')
+      await clock.advance(SYNC_PAUSE)
+      expect(files[path(3, 'docs')]).toContain('status: done')
+      expect(await row(ui, DOCS)).toBeUndefined()
+      expect(await litRows(ui)).toHaveLength(1)
+      await ui.unmount()
+    },
+  )
 
-  test(`a card moved from Backlog to Claude by key asks Claude to work on it, any other move does not on the ${surface}`, async ($, on) => {
-    const { clock, ui, prompts, files } = await start($, on, surface)
+  test(
+    `a card moved from Backlog to Claude by key asks Claude to work on it, any other move does not on the ${surface}`,
+    { options: { claudeLimit: 0 } },
+    async ($, on) => {
+      const { clock, ui, prompts, files } = await start($, on, surface)
 
-    await goTo(ui, LOGIN)
-    await keys(ui, 'm', 'c')
-    await clock.advance(SYNC_PAUSE)
-    expect(files[path(1, 'login')]).toContain('status: claude')
-    expect(prompts).toEqual([])
+      await goTo(ui, LOGIN)
+      await keys(ui, 'm', 'c')
+      await clock.advance(SYNC_PAUSE)
+      expect(files[path(1, 'login')]).toContain('status: claude')
+      expect(prompts).toEqual([])
 
-    await goTo(ui, DOCS)
-    await keys(ui, 'm', '2')
-    expect(prompts).toEqual([])
-    await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: claude')
-    expect(prompts).toEqual([
-      expect.stringMatching(
-        /^Work on kanban card #3 "Write docs": read it with/,
-      ),
-    ])
-    await ui.unmount()
-  })
+      await goTo(ui, DOCS)
+      await keys(ui, 'm', '2')
+      expect(prompts).toEqual([])
+      await clock.advance(SYNC_PAUSE)
+      expect(files[path(3, 'docs')]).toContain('status: claude')
+      expect(prompts).toEqual([
+        expect.stringMatching(
+          /^Work on kanban card #3 "Write docs": read it with/,
+        ),
+      ])
+      await ui.unmount()
+    },
+  )
 
   test(`any other key, a click or the card's own section ends a move with nothing moved on the ${surface}`, async ($, on) => {
     const { clock, ui, files } = await start($, on, surface)

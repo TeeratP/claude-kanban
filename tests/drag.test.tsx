@@ -79,30 +79,34 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
-  test(`dropping a Backlog card on Claude asks Claude to work on it, any other drop does not on the ${surface}`, async ($, on) => {
-    const { clock, ui, prompts } = await start($, on, surface)
-    const drop = async (card: string, header: string) => {
-      const from = await rowIndex(ui, card)
-      const to = await rowIndex(ui, header)
-      await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
-      await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
-      await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
-    }
+  test(
+    `dropping a Backlog card on Claude asks Claude to work on it, any other drop does not on the ${surface}`,
+    { options: { claudeLimit: 0 } },
+    async ($, on) => {
+      const { clock, ui, prompts } = await start($, on, surface)
+      const drop = async (card: string, header: string) => {
+        const from = await rowIndex(ui, card)
+        const to = await rowIndex(ui, header)
+        await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+        await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
+        await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
+      }
 
-    await drop(LOGIN, 'hdr:claude')
-    await clock.advance(SYNC_PAUSE)
-    expect(prompts).toEqual([])
+      await drop(LOGIN, 'hdr:claude')
+      await clock.advance(SYNC_PAUSE)
+      expect(prompts).toEqual([])
 
-    await drop(DOCS, 'hdr:claude')
-    expect(prompts).toEqual([])
-    await clock.advance(SYNC_PAUSE)
-    expect(prompts).toEqual([
-      expect.stringMatching(
-        /^Work on kanban card #3 "Write docs": read it with/,
-      ),
-    ])
-    await ui.unmount()
-  })
+      await drop(DOCS, 'hdr:claude')
+      expect(prompts).toEqual([])
+      await clock.advance(SYNC_PAUSE)
+      expect(prompts).toEqual([
+        expect.stringMatching(
+          /^Work on kanban card #3 "Write docs": read it with/,
+        ),
+      ])
+      await ui.unmount()
+    },
+  )
 
   test(`a drag highlights the header it is over and dims the card on the ${surface}`, async ($, on) => {
     const { clock, ui, files } = await start($, on, surface)
