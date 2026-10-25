@@ -77,4 +77,27 @@ export const S = {
     `"${String(to)}" is not a column; use human, claude, backlog or done.`,
   badCard: 'card must be a whole number.',
   toolFailed: (name: string) => `${name} failed; see the debug log.`,
+
+  // #7
+  approve: 'Approve',
+  sendBack: 'Send back',
+  park: 'Park',
+  feedbackLabel: 'Feedback',
+  feedbackPlaceholder: 'What should Claude change?',
+  feedbackFirst: 'Write the feedback first, then send the card back.',
+  feedbackFailed: (reason: string) => `Could not save the feedback: ${reason}`,
+  sendBackNoField:
+    'Send back is unavailable here: this screen has no text field. Use the terminal or desktop.',
+  tabCard: 'Card',
+  tabDiff: 'Diff',
+  noDiff: 'No diff for this card.',
+  diffFailed: (reason: string) => `Could not read the diff: ${reason}`,
+  diffCut: (omitted: number) =>
+    `… diff cut, ${omitted} more characters not shown.`,
+  workPrompt: (n: number, title: string) =>
+    `Work on kanban card #${n} "${title}": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it to human with mcp__kanban__kanban_move.`,
+  resumePrompt: (n: number) =>
+    `Resume kanban card #${n}: read the newest feedback (mcp__kanban__kanban_show) and continue.`,
+  promptFailed: (reason: string) =>
+    `kanban: could not send the prompt to Claude: ${reason}`,
 }

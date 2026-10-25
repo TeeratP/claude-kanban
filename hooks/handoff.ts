@@ -33,6 +33,11 @@ function parseFields(text: string): Fields {
   return fields
 }
 
+/** The section Send back appends to a card: the person's feedback, dated. */
+export function formatFeedback(text: string, date: string): string {
+  return `## Feedback (${date})\n${text}`
+}
+
 /** Splits a card file's markdown into its spec and its Handoff / Feedback sections. */
 export function parseSections(markdown: string): {
   body: string

@@ -55,6 +55,18 @@ export async function readDetail(
   throw new Error(S.githubUnavailable)
 }
 
+/** The card's change as a unified diff; undefined when it has none. */
+export async function readDiff(
+  _$: EngineInterface,
+  info: KanbanBackendInfo,
+  _card: KanbanCard,
+): Promise<string | undefined> {
+  if (info.kind === 'local') return undefined
+
+  // The GitHub branch (`gh pr diff`) arrives with the GitHub backend.
+  return undefined
+}
+
 /** Picks the backend for this directory; local until the GitHub backend lands. */
 export async function detectBackend(
   _$: EngineInterface,
