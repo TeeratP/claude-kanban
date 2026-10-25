@@ -786,3 +786,51 @@ test('a card that asks a question frees its slot for the queue', async ($, on) =
   await clock.advance(2500)
   await ui.unmount()
 })
+
+// #28: a move out of Claude that was refused still holds its slot.
+test('a refused move out of Claude keeps its slot: the queued card does not start until the move is confirmed, nor when it snaps back', async ($, on) => {
+  const { clock, calls, ui, prompts, toasts } = await open(
+    $,
+    on,
+    queuedFiles(),
+    'terminal',
+    saved({ 'md:0002-beta': 'work' }),
+  )
+  calls.denyWrite = 'EACCES: read-only'
+
+  await $.tool.call({ ...MOVE, card: 1, to: 'human' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+
+  // Refused once: Alpha shows in Human but may still snap back to Claude.
+  expect(await text(ui, ALPHA)).toContain('✕')
+  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(prompts).toEqual([])
+
+  // Tried again until the card goes back: still the one running.
+  for (let tries = 0; tries < 3; tries += 1) {
+    await click(ui, ALPHA)
+    await ui.press({ key: 'retry' })
+    await ui.press({ key: 'back' })
+    await clock.settle()
+  }
+  expect(toasts).toHaveLength(1)
+  expect(toasts[0]).toMatch(
+    /^Could not move #1 to Human, so it is back in Claude/,
+  )
+  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await text(ui, BETA)).toContain('queued 1')
+  expect(prompts).toEqual([])
+
+  // Once the backend takes the move, the slot is free.
+  calls.denyWrite = undefined
+  await $.tool.call({ ...MOVE, card: 1, to: 'human' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+  expect(prompts).toEqual([
+    expect.stringMatching(/^Work on kanban card #2 "Beta"/),
+  ])
+  await clock.advance(2500)
+  expect(prompts).toHaveLength(1)
+  await ui.unmount()
+})

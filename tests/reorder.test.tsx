@@ -13,8 +13,8 @@ import {
 } from './board-ui'
 import type { BoardUi } from './board-ui'
 import { boardReply, fakeProcess, issueNode, queryOf } from './fake-gh'
-import type { Route } from './fake-gh'
-import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
+import type { FakeIssue, Route } from './fake-gh'
+import { HANDED_OFF, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 import type { Files } from './fakes'
 
 const WITH_CLIENT = ['terminal', 'desktop'] as const
@@ -860,9 +860,14 @@ const github = (): Route[] => [
   { match: ['gh', 'project', 'item-edit'], reply: {} },
 ]
 
-async function startGithub($: Engine, on: On) {
+async function startGithub(
+  $: Engine,
+  on: On,
+  routes: Route[] = github(),
+  hold?: (argv: readonly string[]) => Promise<void> | undefined,
+) {
   const world = boot(on, { 'CLAUDE.md': KANBAN_MD })
-  const commands = fakeProcess(on, github())
+  const commands = fakeProcess(on, routes, hold)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -958,3 +963,446 @@ test(
     await ui.unmount()
   },
 )
+
+// #28: a reorder keeps what the move it follows is still to do.
+test(
+  'a card moved to Claude and reordered before the move is confirmed still gets its work prompt, once',
+  // Claude already has a card; at the default limit of one the prompt would be held.
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const { clock, ui, files, prompts } = await start($, on, 'terminal')
+
+    await place(ui, 'md:0004-docs', 'claude', {
+      at: 'after',
+      cardId: 'md:0003-tests',
+    })
+    await place(ui, 'md:0004-docs', 'claude', { at: 'top' })
+    expect(await section(ui, 'hdr:claude', 'hdr:backlog')).toEqual([
+      DOCS,
+      API,
+      TESTS,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+
+    expect(files[path(4, 'docs')]).toContain('status: claude')
+    expect(orderOf(files, 4, 'docs')).toBeLessThan(orderOf(files, 2, 'api'))
+    expect(prompts).toEqual([
+      expect.stringMatching(/^Work on kanban card #4 "Write docs"/),
+    ])
+    await clock.advance(2000)
+    expect(prompts).toHaveLength(1)
+    await ui.unmount()
+  },
+)
+
+test(
+  'a card reordered while its move to Claude is on its way still gets its work prompt, once',
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const { clock, calls, ui, files, prompts } = await start($, on, 'terminal')
+    let release = () => {}
+    calls.hold = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    await place(ui, 'md:0004-docs', 'claude', {
+      at: 'after',
+      cardId: 'md:0003-tests',
+    })
+    await clock.advance(SYNC_PAUSE)
+    // The write is out and waiting; the person reorders the card meanwhile.
+    await place(ui, 'md:0004-docs', 'claude', { at: 'top' })
+    await clock.advance(SYNC_PAUSE)
+    expect(prompts).toEqual([])
+
+    release()
+    await clock.settle()
+
+    expect(files[path(4, 'docs')]).toContain('status: claude')
+    expect(orderOf(files, 4, 'docs')).toBeLessThan(orderOf(files, 2, 'api'))
+    expect(prompts).toEqual([
+      expect.stringMatching(/^Work on kanban card #4 "Write docs"/),
+    ])
+    await clock.advance(2000)
+    expect(prompts).toHaveLength(1)
+    await ui.unmount()
+  },
+)
+
+test(
+  'a card sent back and reordered before the move is confirmed still gets its resume prompt, once',
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const files: Files = {
+      ...board(),
+      [path(8, 'review')]: card(
+        8,
+        { status: 'human', title: 'Review me' },
+        HANDED_OFF,
+      ),
+    }
+    const { clock, ui, prompts } = await start($, on, 'terminal', files)
+
+    await click(ui, 'card:md:0008-review')
+    await ui.input({ key: 'feedback', text: 'Add a test' })
+    await place(ui, 'md:0008-review', 'claude', { at: 'top' })
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+
+    expect(files[path(8, 'review')]).toContain('status: claude')
+    expect(prompts).toEqual([
+      expect.stringMatching(/^Resume kanban card #8: read the newest feedback/),
+    ])
+    await clock.advance(2000)
+    expect(prompts).toHaveLength(1)
+    await ui.unmount()
+  },
+)
+
+test('a question reordered in Human before the move is confirmed is still announced, once', async ($, on) => {
+  const files: Files = {
+    ...board(),
+    [path(8, 'review')]: card(
+      8,
+      { status: 'human', title: 'Review me', order: 80 },
+      HANDED_OFF,
+    ),
+  }
+  const { clock, ui, toasts, notices } = await start($, on, 'terminal', files)
+
+  await $.tool.call({
+    tool: 'mcp__kanban__kanban_ask',
+    card: 2,
+    question: 'Which database should the tests use?',
+  })
+  await place(ui, 'md:0002-api', 'human', { at: 'top' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+
+  expect(files[path(2, 'api')]).toContain('status: human')
+  expect(toasts).toEqual([
+    'Claude asks: Which database should the tests use? (#2)',
+  ])
+  expect(notices).toEqual(toasts)
+  await clock.advance(2000)
+  expect(toasts).toHaveLength(1)
+  await ui.unmount()
+})
+
+// #28: a card that changes section on GitHub is placed in it, so the order
+// the board shows is the order a reload gives.
+const STATUS_OF_OPTION: Record<string, string> = {
+  '1a1cd0bb': 'Backlog',
+  b15c285e: 'In progress',
+  '5f34c9ff': 'In review',
+  '201b4a64': 'Done',
+}
+
+// A GitHub board that keeps what is done to it: a Status edit changes an
+// issue's section and a position mutation moves its item.
+function liveGithub(issues: FakeIssue[]): Route[] {
+  const itemOf = (issue: FakeIssue) => `PVTI_${issue.number}`
+  const fieldOf = (argv: readonly string[], name: string) =>
+    argv.find(part => part.startsWith(`${name}=`))?.slice(name.length + 1)
+
+  return [
+    { match: ['gh', 'auth', 'status'], reply: {} },
+    {
+      match: ['git', 'remote', 'get-url', 'origin'],
+      reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
+    },
+    {
+      match: ['gh', 'api', 'graphql'],
+      reply: argv => {
+        if (!queryOf(argv).includes(POSITION)) {
+          return boardReply(issues.map(issueNode))(argv)
+        }
+
+        const at = issues.findIndex(
+          one => itemOf(one) === fieldOf(argv, 'itemId'),
+        )
+        const moved = issues.splice(at, 1)
+        const after = fieldOf(argv, 'afterId')
+        issues.splice(
+          after === undefined
+            ? 0
+            : issues.findIndex(one => itemOf(one) === after) + 1,
+          0,
+          ...moved,
+        )
+
+        return { stdout: '{"data":{"updateProjectV2ItemPosition":{}}}' }
+      },
+    },
+    {
+      match: ['gh', 'project', 'item-edit'],
+      reply: argv => {
+        const issue = issues.find(one => itemOf(one) === argv[4])
+        const option = argv[argv.indexOf('--single-select-option-id') + 1]
+        if (issue !== undefined && option !== undefined) {
+          issue.status = STATUS_OF_OPTION[option] ?? issue.status
+        }
+
+        return {}
+      },
+    },
+    { match: ['gh', 'issue', 'edit'], reply: {} },
+  ]
+}
+
+const ready = (number: number, status = 'Backlog'): FakeIssue => ({
+  number,
+  status,
+  labels: ['ai'],
+})
+
+// Moves a card to Claude with no place asked, as the Move buttons do.
+const sendToClaude = (ui: Parameters<typeof place>[0], number: number) =>
+  place(ui, `gh:${number}`, 'claude', undefined)
+
+const lastPosition = (commands: readonly { argv: readonly string[] }[]) =>
+  positions(commands).at(-1)?.slice(5)
+
+test(
+  'a card moved to another section on GitHub with no place goes after the last card there',
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const issues = [ready(1), ready(2), ready(3), ready(4, 'In progress')]
+    const { clock, ui, commands } = await startGithub($, on, liveGithub(issues))
+    const sent = commands.length
+
+    await sendToClaude(ui, 2)
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+
+    const argvs = commands.slice(sent).map(command => command.argv)
+    expect(argvs.map(argv => argv.slice(0, 3).join(' '))).toEqual([
+      'gh issue edit',
+      'gh project item-edit',
+      'gh api graphql',
+    ])
+    expect(lastPosition(commands)).toEqual([
+      '-f',
+      'projectId=PVT_kwHOAcCsLc4BorgL',
+      '-f',
+      'itemId=PVTI_2',
+      '-f',
+      'afterId=PVTI_4',
+    ])
+    await clock.advance(2000)
+    await ui.unmount()
+  },
+)
+
+test(
+  'a card moved into an empty section on GitHub is positioned first there',
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const issues = [ready(1), ready(2), ready(3)]
+    const { clock, ui, commands } = await startGithub($, on, liveGithub(issues))
+
+    await sendToClaude(ui, 2)
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+
+    expect(positions(commands)).toHaveLength(1)
+    expect(lastPosition(commands)).toEqual([
+      '-f',
+      'projectId=PVT_kwHOAcCsLc4BorgL',
+      '-f',
+      'itemId=PVTI_2',
+    ])
+    await clock.advance(2000)
+    await ui.unmount()
+  },
+)
+
+test('cards moved to Claude on GitHub keep their queue order after a reload', async ($, on) => {
+  const issues = [ready(1), ready(2), ready(3), ready(4, 'In progress')]
+  const { clock, ui } = await startGithub($, on, liveGithub(issues))
+
+  // Not the order the project holds them in.
+  for (const number of [3, 1, 2]) {
+    await sendToClaude(ui, number)
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+  }
+  await clock.advance(2500)
+
+  const queue = async () => ({
+    claude: await section(ui, 'hdr:claude', 'hdr:backlog'),
+    places: await Promise.all(
+      [3, 1, 2].map(
+        async number =>
+          /queued \d+/.exec(
+            (await row(ui, `card:gh:${number}`))?.text ?? '',
+          )?.[0],
+      ),
+    ),
+  })
+  const shown = {
+    claude: ['card:gh:4', 'card:gh:3', 'card:gh:1', 'card:gh:2'],
+    places: ['queued 1', 'queued 2', 'queued 3'],
+  }
+  expect(await queue()).toEqual(shown)
+
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  await clock.advance(2500)
+
+  expect(await queue()).toEqual(shown)
+  await ui.unmount()
+})
+
+test('a place that has left its section falls back to the last card there, never to a card still being made', async ($, on) => {
+  const issues = [ready(1), ready(2), ready(4, 'In progress')]
+  let release = () => {}
+  const created = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, ui, commands } = await startGithub(
+    $,
+    on,
+    [
+      ...liveGithub(issues),
+      { match: ['gh', 'label', 'list'], reply: { stdout: 'ai\ntriage\n' } },
+      {
+        match: ['gh', 'issue', 'create'],
+        reply: {
+          stdout: 'https://github.com/TeeratP/claude-kanban/issues/30\n',
+        },
+      },
+      {
+        match: ['gh', 'project', 'item-add'],
+        reply: { stdout: JSON.stringify({ id: 'PVTI_30', type: 'Issue' }) },
+      },
+    ],
+    argv => (argv[2] === 'create' ? created : undefined),
+  )
+  // Backlog now holds Issue 1, Issue 2 and a card still being made.
+  await ui.press({ key: 'add' })
+  const adding = ui.input({ key: 'add:title', text: 'Write docs' })
+  await clock.settle()
+  expect(
+    (await section(ui, 'hdr:backlog', 'hdr:done')).some(key =>
+      key.startsWith('card:new:'),
+    ),
+  ).toBe(true)
+
+  // Issue 1 is put after Issue 2, which leaves Backlog before the move is sent.
+  await place(ui, 'gh:1', 'backlog', { at: 'after', cardId: 'gh:2' })
+  await place(ui, 'gh:2', 'claude', { at: 'top' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+
+  // Nothing is left to go after, so Issue 1 goes first.
+  expect(
+    positions(commands).filter(argv => argv.includes('itemId=PVTI_1')),
+  ).toEqual([
+    [
+      'gh',
+      'api',
+      'graphql',
+      '-f',
+      queryOf(positions(commands)[0] ?? []),
+      '-f',
+      'projectId=PVT_kwHOAcCsLc4BorgL',
+      '-f',
+      'itemId=PVTI_1',
+    ],
+  ])
+  release()
+  await adding
+  await clock.settle()
+  await clock.advance(2500)
+  await ui.unmount()
+})
+
+// #28: local renumbering takes turns, so two cards dropped into the same full
+// section within one pause both keep their place.
+test(
+  'two cards dropped into a section with no gap within one pause both keep their order on disk',
+  { options: { claudeLimit: 0 } },
+  async ($, on) => {
+    const files: Files = {
+      [path(1, 'first')]: card(1, { status: 'claude', order: 1 }),
+      [path(2, 'second')]: card(2, { status: 'claude', order: 2 }),
+      [path(3, 'x')]: card(3, { title: 'Card X', order: 10 }),
+      [path(4, 'y')]: card(4, { title: 'Card Y', order: 11 }),
+    }
+    const { clock, ui, calls } = await start($, on, 'terminal', files)
+    // A slow disk: both moves have read the files before either has written.
+    let release = () => {}
+    calls.hold = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    await place(ui, 'md:0003-x', 'claude', {
+      at: 'after',
+      cardId: 'md:0001-first',
+    })
+    await place(ui, 'md:0004-y', 'claude', {
+      at: 'after',
+      cardId: 'md:0001-first',
+    })
+    const shown = await section(ui, 'hdr:claude', 'hdr:backlog')
+    expect(shown).toEqual([
+      'card:md:0001-first',
+      'card:md:0004-y',
+      'card:md:0003-x',
+      'card:md:0002-second',
+    ])
+    await clock.advance(SYNC_PAUSE)
+    release()
+    await clock.settle()
+
+    // The disk holds the order the board shows, with no two cards tied.
+    const orders = [
+      orderOf(files, 1, 'first'),
+      orderOf(files, 4, 'y'),
+      orderOf(files, 3, 'x'),
+      orderOf(files, 2, 'second'),
+    ]
+    expect(
+      orders.every((order, i) => i === 0 || order > (orders[i - 1] ?? 0)),
+    ).toBe(true)
+    await ui.press({ key: 'refresh' })
+    await clock.settle()
+    expect(await section(ui, 'hdr:claude', 'hdr:backlog')).toEqual(shown)
+    await clock.advance(2000)
+    await ui.unmount()
+  },
+)
+
+test('a card added while a card is moved into the same section does not share its order', async ($, on) => {
+  const files: Files = {
+    [path(1, 'a')]: card(1, { status: 'claude', title: 'In Claude' }),
+    [path(2, 'b')]: card(2, { title: 'In Backlog', order: 20 }),
+  }
+  const { clock, ui, calls } = await start($, on, 'terminal', files)
+  // A slow disk: both have read the files before either has written.
+  let release = () => {}
+  calls.hold = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  await ui.press({ key: 'add' })
+  const adding = ui.input({ key: 'add:title', text: 'Write docs' })
+  await clock.settle()
+  await place(ui, 'md:0001-a', 'backlog', undefined)
+  await clock.advance(SYNC_PAUSE)
+  release()
+  await adding
+  await clock.settle()
+
+  const created = Object.keys(files).find(file => file.includes('write-docs'))
+  const orders = [
+    orderOf(files, 2, 'b'),
+    orderOf(files, 1, 'a'),
+    Number(/\norder: (\S+)\n/.exec(files[created ?? ''] ?? '')?.[1]),
+  ]
+  expect(new Set(orders).size).toBe(3)
+  await clock.advance(2500)
+  await ui.unmount()
+})

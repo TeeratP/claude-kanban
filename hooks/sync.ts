@@ -86,7 +86,7 @@ function retarget(
   isInFlight: boolean,
   opts: MoveOptions | undefined,
 ): KanbanSync | undefined {
-  const confirm = {
+  const asked = {
     ...(opts?.onConfirm === undefined ? {} : { onConfirm: opts.onConfirm }),
     ...(opts?.announce === true ? { announce: true } : {}),
   }
@@ -98,17 +98,25 @@ function retarget(
       ...where(after),
       phase: 'pending',
       attempts: 0,
-      ...confirm,
+      ...asked,
     }
 
   const {
     error: _error,
     queued: _queued,
     queuedAfter: _queuedAfter,
-    onConfirm: _prompt,
-    announce: _announce,
+    onConfirm,
+    announce,
     ...rest
   } = entry
+  // A reorder in the section the card is bound for keeps what its arrival
+  // calls for; only leaving that section drops it.
+  const isReorder = to === (entry.queued ?? entry.to)
+  const confirm = {
+    ...(isReorder && onConfirm !== undefined ? { onConfirm } : {}),
+    ...(isReorder && announce === true ? { announce } : {}),
+    ...asked,
+  }
   // A call on its way finishes first; the move is sent after it.
   if (isInFlight) {
     const isAsked = to !== entry.to || after !== entry.after
@@ -334,18 +342,29 @@ async function dispatch($: EngineInterface, cardId: string): Promise<void> {
 }
 
 // The card this move goes after, as the board has it now: null for first, the
-// section's last when that card is gone, nothing when no place was asked.
+// section's last when that card is gone, nothing when no place was asked. A card
+// arriving in another section with no place asked goes last there on GitHub,
+// where the project keeps the order a reload gives (a local card takes the next
+// order on its own). A card still being made is not on the backend to go after.
 function anchorOf(
   cards: readonly KanbanCard[],
   cardId: string,
   sent: KanbanSync,
+  isGithub: boolean,
 ): KanbanCard | null | undefined {
-  if (sent.after === undefined) return undefined
   if (sent.after === null) return null
 
-  const others = sectionList(cards, sent.to).filter(one => one.id !== cardId)
+  const isArrival = isGithub && sent.from !== sent.to && sent.to !== 'done'
+  if (sent.after === undefined && !isArrival) return undefined
 
-  return others.find(one => one.id === sent.after) ?? others.at(-1) ?? null
+  const others = sectionList(cards, sent.to).filter(
+    one => one.id !== cardId && !isPendingId(one.id),
+  )
+  const last = others.at(-1) ?? null
+
+  return sent.after === undefined
+    ? last
+    : (others.find(one => one.id === sent.after) ?? last)
 }
 
 // Resolves whether the person asked for another move while this one was out.
@@ -375,7 +394,7 @@ async function send($: EngineInterface, cardId: string): Promise<boolean> {
       info,
       { ...card, column: sent.from },
       sent.to,
-      anchorOf(cards, card.id, sent),
+      anchorOf(cards, card.id, sent, info.kind === 'github'),
     )
   } catch (error) {
     return settle($, card, sent, { reason: errorMessage(error) })
