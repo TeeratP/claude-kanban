@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { KanbanCard, KanbanColumn, KanbanDetail } from '../types'
-import { escapeMarkers, parseSections } from './handoff'
+import { escapeMarkers, gistOf, parseSections, questionOf } from './handoff'
 import { KANBAN_DIR, isColumn, maxOrder } from './model'
 import { S } from './strings'
 
@@ -145,6 +145,17 @@ async function readCard($: EngineInterface, card: KanbanCard): Promise<Parsed> {
   return parsed
 }
 
+// A card in Human whose newest section is an unanswered question carries it.
+function withQuestion({ card, body }: Parsed): KanbanCard {
+  if (card.column !== 'human') return card
+
+  const ask = questionOf(parseSections(body).sections)
+
+  return ask === undefined
+    ? card
+    : { ...card, tag: 'question', question: gistOf(ask.text) }
+}
+
 export async function loadLocal($: EngineInterface): Promise<KanbanCard[]> {
   if (!(await $.fs.exists(KANBAN_DIR))) return []
 
@@ -155,7 +166,7 @@ export async function loadLocal($: EngineInterface): Promise<KanbanCard[]> {
       .map(entry => readParsed($, entry.name, entry.mtimeMs)),
   )
 
-  return parsed.flatMap(one => (one === null ? [] : [one.card]))
+  return parsed.flatMap(one => (one === null ? [] : [withQuestion(one)]))
 }
 
 export async function moveLocal(

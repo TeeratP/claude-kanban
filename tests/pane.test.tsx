@@ -24,6 +24,7 @@ test('the session start registers the command and every tool', async ($, on) => 
     'kanban_handoff',
     'kanban_move',
     'kanban_create',
+    'kanban_ask',
   ])
 })
 

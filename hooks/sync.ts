@@ -15,7 +15,7 @@ import { S } from './strings'
 
 export type MoveOptions = {
   /** A prompt for Claude to submit once the backend has confirmed the move. */
-  onConfirm?: 'work' | 'resume'
+  onConfirm?: 'work' | 'resume' | 'answer'
   /** Tell the person the card is theirs once the backend has confirmed the move. */
   announce?: boolean
 }
@@ -23,6 +23,20 @@ export type MoveOptions = {
 /** The options for a move the person makes: Backlog to Claude asks Claude to start work. */
 export function moveOptions(from: KanbanColumn, to: KanbanColumn): MoveOptions {
   return from === 'backlog' && to === 'claude' ? { onConfirm: 'work' } : {}
+}
+
+function promptFor(
+  kind: NonNullable<MoveOptions['onConfirm']>,
+  card: KanbanCard,
+): string {
+  switch (kind) {
+    case 'work':
+      return S.workPrompt(card.number, card.title)
+    case 'resume':
+      return S.resumePrompt(card.number)
+    case 'answer':
+      return S.answerPrompt(card.number)
+  }
 }
 
 const DEBOUNCE_MS = 300
@@ -378,7 +392,7 @@ async function settle(
       if (sent.to === 'human') return merged
 
       // Only a card in Human carries a tag; one leaving it must not keep it.
-      const { tag: _tag, ...untagged } = merged
+      const { tag: _tag, question: _question, ...untagged } = merged
 
       return untagged
     }
@@ -393,12 +407,7 @@ async function settle(
     if (seen.announce === true) announceHandoff($, card)
     if (seen.onConfirm !== undefined) {
       $.prompt
-        .submit({
-          text:
-            seen.onConfirm === 'work'
-              ? S.workPrompt(card.number, card.title)
-              : S.resumePrompt(card.number),
-        })
+        .submit({ text: promptFor(seen.onConfirm, card) })
         .catch((error: unknown) =>
           $.ui.log(S.promptFailed(errorMessage(error))),
         )
