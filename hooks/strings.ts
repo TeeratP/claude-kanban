@@ -18,6 +18,7 @@ const SECTION_NAME = {
   feedback: 'Feedback',
   question: 'Question',
   answer: 'Answer',
+  check: 'Check run',
 } satisfies Record<KanbanSection['kind'], string>
 
 const BACKEND = { github: 'GitHub', local: 'Local' } as const
@@ -222,6 +223,30 @@ export const S = {
   // #11
   keyHint: '↑↓ ⏎ open · m move',
   moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
+
+  // #19
+  checkHeading: 'Check',
+  runCheck: (command: string) => `Run check: ${command}`,
+  checkRunning: (command: string, elapsed: string) =>
+    `⟳ Running ${command} · ${elapsed}`,
+  checkPassed: (code: number, took: string) =>
+    `✓ Passed · exit ${code} · ${took}`,
+  checkFailed: (code: number, took: string) =>
+    `✕ Failed · exit ${code} · ${took}`,
+  checkTimedOut: (minutes: number) => `✕ Timed out after ${minutes} min`,
+  checkNotRun: (reason: string) => `✕ Could not run: ${reason}`,
+  checkLost: '✕ The run was lost when the plugin reloaded. Run it again.',
+  checkRan: (age: string) => (age === 'now' ? 'just now' : `${age} ago`),
+  checkEarlier: (n: number) =>
+    `… ${n} earlier ${n === 1 ? 'line' : 'lines'} not shown`,
+  checkCapped: '… the output was cut at 4 MiB; its end is not shown',
+  attachToCard: 'Attach to card',
+  checkSaving: 'Saving to the card…',
+  checkSaved: '✓ Saved on the card',
+  checkSaveFailed: (reason: string) =>
+    `Could not save the run on the card: ${reason}`,
+  checkField: { command: 'Command', result: 'Result', output: 'Output' },
+  checkLogFailed: (reason: string) => `kanban: a check run failed: ${reason}`,
 
   // #15
   // Short: they share a 44-column toolbar with the backend label.

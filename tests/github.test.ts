@@ -1814,6 +1814,15 @@ test("load tags a Human card whose newest section is the signed-in user's questi
         comments: [{ body: QUESTION(), author: null }],
       }),
       issueNode({ number: 9, status: 'In review' }),
+      // A recorded check run is not an answer.
+      issueNode({
+        number: 10,
+        status: 'In review',
+        comments: [
+          { body: QUESTION() },
+          { body: '## Check run (2026-10-26)\n**Result:** ✓ Passed' },
+        ],
+      }),
     ]),
   ])
 
@@ -1829,6 +1838,7 @@ test("load tags a Human card whose newest section is the signed-in user's questi
     [7, 'question', 'Which branch should this target?'],
     [8, 'review', undefined],
     [9, 'review', undefined],
+    [10, 'question', 'Which branch should this target?'],
   ])
 })
 

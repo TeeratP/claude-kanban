@@ -1,7 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { KanbanBoard, KanbanDetail, KanbanSync, KanbanUi } from '../types'
+import type {
+  KanbanBoard,
+  KanbanCheckRun,
+  KanbanDetail,
+  KanbanSync,
+  KanbanUi,
+} from '../types'
 import { EMPTY_BOARD, INITIAL_UI } from './model'
 
 // The scan that lists what a module reads and writes only accepts an atom
@@ -24,6 +30,13 @@ const sync = atom(
 const detail = atom({ plugin: 'kanban', key: 'detail' } as const, null, {
   shape: 'detail-2',
 })
+const check = atom(
+  { plugin: 'kanban', key: 'check' } as const,
+  {},
+  {
+    shape: 'check-1',
+  },
+)
 const tick = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
 // When GitHub loads may resume after the rate limit ran low (0: not paused).
 const pausedUntil = atom({ plugin: 'kanban', key: 'pausedUntil' } as const, 0)
@@ -87,6 +100,21 @@ export function updateTick(
   change: (value: number) => number,
 ): Promise<number> {
   return update($, tick, change)
+}
+
+export function readCheck(
+  $: EngineInterface,
+): Promise<Record<string, KanbanCheckRun>> {
+  return read($, check)
+}
+
+export function updateCheck(
+  $: EngineInterface,
+  change: (
+    value: Record<string, KanbanCheckRun>,
+  ) => Record<string, KanbanCheckRun>,
+): Promise<Record<string, KanbanCheckRun>> {
+  return update($, check, change)
 }
 
 export function readPausedUntil($: EngineInterface): Promise<number> {

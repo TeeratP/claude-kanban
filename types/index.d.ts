@@ -65,7 +65,7 @@ export type KanbanUi = {
   draft: string
 }
 export type KanbanSection = {
-  kind: 'handoff' | 'feedback' | 'question' | 'answer'
+  kind: 'handoff' | 'feedback' | 'question' | 'answer' | 'check'
   date: string
   text: string
   fields?: { did: string; check: string; changed: string; need: string }
@@ -82,6 +82,21 @@ export type KanbanDetail = {
   diffError?: string
   error?: string
 }
+export type KanbanCheckOutcome =
+  'running' | 'passed' | 'failed' | 'timeout' | 'error'
+export type KanbanCheckRun = {
+  cardId: string
+  command: string
+  outcome: KanbanCheckOutcome
+  startedAt: number
+  durationMs: number
+  exitCode: number
+  output: string
+  omitted: number
+  isCut: boolean
+  record: 'none' | 'saving' | 'saved' | 'failed'
+  error: string
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -90,6 +105,7 @@ declare module 'claude-code' {
       ui: Shaped<KanbanUi>
       sync: Shaped<Record<string, KanbanSync>>
       detail: Shaped<KanbanDetail | null>
+      check: Shaped<Record<string, KanbanCheckRun>>
       tick: number
       pausedUntil: number
       viewer: string

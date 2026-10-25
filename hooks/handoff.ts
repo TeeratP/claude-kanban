@@ -2,10 +2,10 @@ import type { KanbanSection } from '../types'
 import { truncate } from './model'
 
 const HEADER =
-  /^## (Handoff|Feedback|Question|Answer) \((\d{4}-\d{2}-\d{2})\)\s*$/
+  /^## (Handoff|Feedback|Question|Answer|Check run) \((\d{4}-\d{2}-\d{2})\)\s*$/
 const FIELD = /^\*\*(Did|Check|Changed|Need from you):\*\*\s*(.*)$/
 // The line starts of HEADER and FIELD, loosened so no marker-like line slips through escapeMarkers.
-const HEADER_START = /^## (?:Handoff|Feedback|Question|Answer) \(/
+const HEADER_START = /^## (?:Handoff|Feedback|Question|Answer|Check run) \(/
 const FIELD_START = /^\*\*(Did|Check|Changed|Need from you):\*\*/
 
 type Fields = NonNullable<KanbanSection['fields']>
@@ -15,6 +15,7 @@ const KIND: Record<string, KanbanSection['kind']> = {
   Feedback: 'feedback',
   Question: 'question',
   Answer: 'answer',
+  'Check run': 'check',
 }
 
 const FIELD_KEY: Record<string, keyof Fields> = {
@@ -79,7 +80,7 @@ export function formatAnswer(text: string, date: string): string {
 
 /**
  * Splits a card file's markdown into its spec and its Handoff / Feedback / Question /
- * Answer sections.
+ * Answer / Check run sections.
  * The first header line ends the spec, so a header line in a hand-written spec starts a
  * section: the file has no other boundary. Text written through the `format…` functions
  * is escaped and never does.
@@ -167,12 +168,15 @@ export function isHandoffValid(all: readonly KanbanSection[]): boolean {
 
 /**
  * The question the person is being asked: the newest counted section, when it is a
- * question. Anything after it, such as an answer or feedback, closes it.
+ * question. Anything after it, such as an answer or feedback, closes it; a recorded check
+ * run does not.
  */
 export function questionOf(
   all: readonly KanbanSection[],
 ): KanbanSection | undefined {
-  const newest = all.findLast(one => one.byOther === undefined)
+  const newest = all.findLast(
+    one => one.byOther === undefined && one.kind !== 'check',
+  )
 
   return newest?.kind === 'question' ? newest : undefined
 }

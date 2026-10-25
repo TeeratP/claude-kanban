@@ -588,7 +588,7 @@ export async function moveGithub(
   }
 }
 
-/** Adds a Handoff, Feedback, Question or Answer section to the issue as a comment. */
+/** Adds a Handoff, Feedback, Question, Answer or Check run section to the issue as a comment. */
 export async function appendGithub(
   $: EngineInterface,
   info: KanbanGithub,
@@ -611,7 +611,7 @@ export async function appendGithub(
   )
 }
 
-const SECTION_COMMENT = /^## (?:Handoff|Feedback|Question|Answer) \(/
+const SECTION_COMMENT = /^## (?:Handoff|Feedback|Question|Answer|Check run) \(/
 
 /** The signed-in GitHub login, asked for once per session. */
 export async function viewerLogin($: EngineInterface): Promise<string> {
@@ -657,8 +657,8 @@ function sectionsOf(
 }
 
 /**
- * The issue body as the spec, and its Handoff / Feedback / Question / Answer comments as
- * sections, oldest first (see `sectionsOf` for whose count).
+ * The issue body as the spec, and its Handoff / Feedback / Question / Answer / Check run
+ * comments as sections, oldest first (see `sectionsOf` for whose count).
  */
 export async function detailGithub(
   $: EngineInterface,

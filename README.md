@@ -162,6 +162,7 @@ Open a card in Human to review it. The detail view has:
 - **Approve:** moves the card to Done. On GitHub this closes the issue.
 - **Send back:** type feedback in the box first, then press the button. The feedback is appended to the card (a `## Feedback (date)` section, or an issue comment on GitHub), the card moves to Claude, and once that move is confirmed Claude is prompted to resume the card: read the newest feedback and continue. An empty box shows a toast and moves nothing.
 - **Park:** moves the card to Backlog.
+- **Run check:** shown when the newest handoff's **Check** holds a command, as an inline code span (`` `npm test` ``) or a fenced `sh` / `bash` block. The button shows the exact command; nothing runs until you press it, and Claude cannot start it. It runs through `sh -c` in the session's directory and ends at 5 minutes. The result row shows ✓ or ✕, the exit code, the time and the last 20 lines of output. A local card gets a `## Check run (date)` section at once; on GitHub the run is posted as an issue comment only when you press **Attach to card**. There is no Stop: the engine cannot cancel a run in progress.
 
 Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
 
