@@ -2,5 +2,8 @@
   "name": "kanban",
   "version": "0.1.0",
   "description": "A kanban side pane: Human, Claude, Backlog and Done columns over GitHub Projects or local .kanban/ cards.",
+  "author": {
+    "name": "TeeratP"
+  },
   "types": "./types/index.d.ts"
 }
