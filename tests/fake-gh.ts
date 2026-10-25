@@ -36,6 +36,7 @@ export function fakeEngine(
   files: Record<string, string> = {},
 ) {
   const calls: Call[] = []
+  const timeouts: (number | undefined)[] = []
   const logs: string[] = []
   const $ = {
     fs: {
@@ -53,19 +54,23 @@ export function fakeEngine(
       },
     },
     process: {
-      run: async (argv: readonly string[], init?: { stdin?: string }) => {
+      run: async (
+        argv: readonly string[],
+        init?: { stdin?: string; timeoutMs?: number },
+      ) => {
         const call = {
           argv,
           ...(init?.stdin === undefined ? {} : { stdin: init.stdin }),
         }
         calls.push(call)
+        timeouts.push(init?.timeoutMs)
 
         return answer(routes, call)
       },
     },
   } as unknown as EngineInterface
 
-  return { $, calls, logs }
+  return { $, calls, timeouts, logs }
 }
 
 /**

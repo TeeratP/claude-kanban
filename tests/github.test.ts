@@ -513,10 +513,113 @@ test("load joins the board items with the issue list and drops what is not this 
       '--state',
       'all',
       '--limit',
-      '500',
+      '3000',
     ],
   ])
   expect(calls[1]?.argv.at(-1)).toContain('closedByPullRequestsReferences')
+})
+
+// A `gh` that pages like the real one: it stops at `--limit` entries. The board
+// is `depth` cards deep; entries are in the shape gh prints after the `--jq` trim.
+const limitOf = (argv: readonly string[]) =>
+  Number(argv[argv.indexOf('--limit') + 1])
+
+function boardOf(depth: number, titleLength: number): Route[] {
+  const upTo = (argv: readonly string[]) =>
+    Array.from({ length: Math.min(depth, limitOf(argv)) }, (_, i) => i + 1)
+  const title = (number: number) => String(number).padStart(titleLength, 't')
+
+  return [
+    {
+      match: ['gh', 'project', 'item-list'],
+      reply: argv => ({
+        stdout: JSON.stringify({
+          items: upTo(argv).map(number => ({
+            id: `PVTI_lAHOAcCsLc4BorgLzgX${String(number).padStart(6, '0')}`,
+            title: title(number),
+            status: 'In progress',
+            content: {
+              type: 'Issue',
+              number,
+              title: title(number),
+              url: `https://github.com/TeeratP/claude-kanban/issues/${number}`,
+              repository: 'TeeratP/claude-kanban',
+            },
+          })),
+        }),
+      }),
+    },
+    {
+      match: ['gh', 'issue', 'list'],
+      reply: argv => ({
+        stdout: JSON.stringify(
+          upTo(argv).map(number => ({
+            number,
+            state: 'OPEN',
+            createdAt: '2026-10-03T10:00:00Z',
+            updatedAt: '2026-10-13T10:00:00Z',
+            labels: [{ name: 'ai' }, { name: 'p1' }, { name: 'enhancement' }],
+            closedByPullRequestsReferences: [
+              {
+                number: number + 1,
+                repository: {
+                  name: 'claude-kanban',
+                  owner: { login: 'TeeratP' },
+                },
+              },
+            ],
+          })),
+        ),
+      }),
+    },
+  ]
+}
+
+test('a board past 500 items loads every card, oldest and newest', async () => {
+  const { $ } = fakeEngine(boardOf(1200, 40))
+
+  const cards = await loadGithub($, CFG)
+
+  expect(cards.map(card => card.number)).toEqual(
+    Array.from({ length: 1200 }, (_, index) => index + 1),
+  )
+  expect(cards[0]?.prNumbers).toEqual([2])
+})
+
+test('both lists are trimmed with --jq and get longer than the default 30 s', async () => {
+  const { $, calls, timeouts } = fakeEngine(boardOf(3, 40))
+
+  await loadGithub($, CFG)
+
+  expect(calls).toHaveLength(2)
+  for (const call of calls) expect(call.argv).toContain('--jq')
+  for (const timeoutMs of timeouts) {
+    expect(timeoutMs).toBeGreaterThan(30000)
+  }
+})
+
+test("a full board of 256-character titles keeps a quarter of the engine's 4 MiB stdout cap free", async () => {
+  const sizes: number[] = []
+  const routes = boardOf(100000, 256).map((route): Route => ({
+    ...route,
+    reply: argv => {
+      const reply =
+        typeof route.reply === 'function' ? route.reply(argv) : route.reply
+      sizes.push(new TextEncoder().encode(reply.stdout ?? '').length)
+
+      return reply
+    },
+  }))
+  const { $, calls } = fakeEngine(routes)
+
+  const cards = await loadGithub($, CFG)
+
+  // The board is deeper than the ceiling, so gh stops at the limit asked for.
+  const limit = limitOf(calls[0]?.argv ?? [])
+  expect(limit).toBeGreaterThan(500)
+  expect(cards).toHaveLength(limit)
+  expect(sizes).toHaveLength(2)
+  for (const size of sizes) expect(size).toBeLessThan(3 * 1024 * 1024)
 })
 
 test('load names the failing command when gh exits non-zero', async () => {
