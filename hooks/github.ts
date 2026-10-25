@@ -326,46 +326,65 @@ function parseIssues(stdout: string, repo: string): Map<number, Issue> {
   return issues
 }
 
-// Trims each board item to the fields read: bodies would bury a big board in
-// output and past the 4 MiB the engine keeps.
+// Trims each entry to the fields read: bodies, label colors and node ids would
+// bury a big board in output and past the 4 MiB the engine keeps.
 const ITEM_FILTER =
   '{items: [.items[] | {id, title, status, content: (.content | {type, number, title, url, repository})}]}'
 const ISSUE_FIELDS =
   'number,labels,state,updatedAt,createdAt,closedByPullRequestsReferences'
+const ISSUE_FILTER =
+  '[.[] | {number, state, createdAt, updatedAt, labels: [.labels[] | {name}], closedByPullRequestsReferences: [.closedByPullRequestsReferences[] | {number, repository: (.repository | {name, owner: {login: .owner.login}})}]}]'
+
+// gh pages `--limit` on its own, 100 entries per request, so this is a ceiling
+// on a board and not a page size. Trimmed, 3000 entries come to about 1.2 MiB.
+const LIST_LIMIT = 3000
+// A page takes two to three seconds, so the 30 s default gives out near 1000 items.
+const LIST_TIMEOUT_MS = 180000
 
 /** Board cards: the project's issues of this repo, with labels, state and PRs from the issue list. */
 export async function loadGithub(
   $: EngineInterface,
   info: KanbanGithub,
 ): Promise<KanbanCard[]> {
+  const init = { timeoutMs: LIST_TIMEOUT_MS }
   const [itemsOut, issuesOut] = await Promise.all([
-    runCommand($, [
-      'gh',
-      'project',
-      'item-list',
-      String(info.projectNumber),
-      '--owner',
-      info.owner,
-      '--format',
-      'json',
-      '--limit',
-      '500',
-      '--jq',
-      ITEM_FILTER,
-    ]),
-    runCommand($, [
-      'gh',
-      'issue',
-      'list',
-      '--repo',
-      info.repo,
-      '--state',
-      'all',
-      '--limit',
-      '500',
-      '--json',
-      ISSUE_FIELDS,
-    ]),
+    runCommand(
+      $,
+      [
+        'gh',
+        'project',
+        'item-list',
+        String(info.projectNumber),
+        '--owner',
+        info.owner,
+        '--format',
+        'json',
+        '--limit',
+        String(LIST_LIMIT),
+        '--jq',
+        ITEM_FILTER,
+      ],
+      init,
+    ),
+    runCommand(
+      $,
+      [
+        'gh',
+        'issue',
+        'list',
+        '--repo',
+        info.repo,
+        '--state',
+        'all',
+        '--limit',
+        String(LIST_LIMIT),
+        '--json',
+        ISSUE_FIELDS,
+        '--jq',
+        ISSUE_FILTER,
+      ],
+      init,
+    ),
   ])
   const issues = parseIssues(issuesOut, info.repo)
   const items = parseItems(itemsOut).filter(
