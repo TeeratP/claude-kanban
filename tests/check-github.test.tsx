@@ -6,6 +6,7 @@ import { click } from './board-ui'
 import { boardRoute, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
 import { PANE, RUN, boot } from './fakes'
+import { GH_VERSION } from './zero'
 
 const REPO = 'TeeratP/claude-kanban'
 
@@ -35,6 +36,7 @@ const comment = (body: string, author: string, hour: number): Comment => ({
 
 // How the board and the issue are read is the GitHub backend's; these tests are about the Check block.
 const github = (comments: Comment[]): Route[] => [
+  GH_VERSION,
   { match: ['gh', 'auth', 'status'], reply: {} },
   {
     match: ['git', 'remote', 'get-url', 'origin'],

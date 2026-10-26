@@ -246,6 +246,7 @@ test('on GitHub Add creates the issue with the triage label, adds it to the boar
   await clock.settle()
 
   expect(writes(calls)).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
     LABEL_LIST,

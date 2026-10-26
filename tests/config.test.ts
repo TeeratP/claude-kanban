@@ -12,7 +12,7 @@ const REMOTE: Route = {
   match: ['git', 'remote', 'get-url', 'origin'],
   reply: { stdout: 'git@github.com:TeeratP/attend-baby.git' },
 }
-const ROUTES = [SIGNED_IN, REMOTE]
+const ROUTES = [GH_VERSION, SIGNED_IN, REMOTE]
 
 const FIELDS = JSON.stringify({
   fields: [
@@ -102,6 +102,7 @@ test('detect follows the CLAUDE.md import to AGENTS.md (punn) and needs no gh lo
     options: PUNN_OPTIONS,
   })
   expect(calls.map(call => call.argv.slice(0, 3))).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url'],
   ])
@@ -263,7 +264,7 @@ test('a file that cannot be read is skipped, logged, and the rest still count', 
 })
 
 test('auto marks a local fallback when a board is mentioned but cannot be read and none is found, and logs why', async () => {
-  const { $, logs, calls } = fakeEngine([...ROUTES, GH_VERSION, graphql()], {
+  const { $, logs, calls } = fakeEngine([...ROUTES, graphql()], {
     'AGENTS.md':
       'Board id: `PVT_kwHOAcCsLc4Bbjg2`, number written down elsewhere.',
   })
@@ -286,11 +287,12 @@ test('auto marks a local fallback when a board is mentioned but cannot be read a
 })
 
 test('auto does not mark a local fallback that mentions no board, or one gh refused', async () => {
-  const plain = fakeEngine([...ROUTES, GH_VERSION, graphql()], {
+  const plain = fakeEngine([...ROUTES, graphql()], {
     'CLAUDE.md': '# Notes\n\nA job board app.\n',
   })
   const refused = fakeEngine(
     [
+      GH_VERSION,
       {
         match: ['gh', 'auth', 'status'],
         reply: { exitCode: 1, stderr: 'not logged in' },
@@ -312,7 +314,7 @@ test('auto does not mark a local fallback that mentions no board, or one gh refu
 })
 
 test('github mode with a board it cannot read looks for one itself, and says what the files need when none is linked', async () => {
-  const { $ } = fakeEngine([...ROUTES, GH_VERSION, graphql()], {
+  const { $ } = fakeEngine([...ROUTES, graphql()], {
     'AGENTS.md': 'Board id: `PVT_kwHOAcCsLc4Bbjg2`',
   })
 

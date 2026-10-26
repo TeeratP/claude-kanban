@@ -353,9 +353,10 @@ test('a project whose Status field cannot be used is named under github', async 
   })
 })
 
-test('explicit config wins: a named repo and board make no lookup and run no gh --version', async () => {
+test('explicit config wins: a named repo and board make no board lookup', async () => {
   const { $, calls } = detect(
     [
+      GH_VERSION,
       SIGNED_IN,
       remote('git@github.com:TeeratP/claude-kanban.git'),
       graphql({ linked: [SHARED] }),
@@ -369,17 +370,18 @@ test('explicit config wins: a named repo and board make no lookup and run no gh 
     projectNumber: 7,
   })
   expect(await detectBackend($, 'auto')).not.toHaveProperty('isDetected')
-  expect(lines(calls).slice(0, 2)).toEqual([
+  expect(lines(calls).slice(0, 3)).toEqual([
+    'gh --version',
     'gh auth status',
     'git remote get-url origin',
   ])
-  expect(lines(calls).some(line => line.includes('--version'))).toBe(false)
   expect(lines(calls).some(line => line.startsWith('gh api'))).toBe(false)
 })
 
 test('explicit config with AGENTS.md behind an import still wins (punn)', async () => {
   const { $ } = detect(
     [
+      GH_VERSION,
       SIGNED_IN,
       remote('git@github.com:TeeratP/attend-baby.git'),
       graphql({ linked: [CAST] }),
