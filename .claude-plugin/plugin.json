@@ -1,7 +1,7 @@
 {
   "name": "kanban",
-  "version": "0.5.0",
-  "description": "A kanban side pane: Active (Backlog, Human, Claude) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards.",
+  "version": "0.5.1",
+  "description": "A kanban side pane: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards.",
   "author": {
     "name": "TeeratP"
   },

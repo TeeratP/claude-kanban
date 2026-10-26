@@ -156,3 +156,4 @@ Spec: `docs/design-groups-polish.md`.
 142. **0.5.0 released** with #27, #29, #30, #41, #42, #43, #44 and #45. Tunables still hard-coded: the poll interval and the newest limit are #46. (orchestrator)
 143. **The `/config` hooks match any key and dispatch on `ownField`**, because a marketplace install names the row `kanban@claude-kanban.backend`, not `kanban.backend`. (#47)
 144. **Where the board Client is mounted, it alone owns `s`.** The Settings button there has no hotkey, which removes the `m s` race and the carry flag (ui shape `ui-6`). So a bare `s` opens Settings only while the pane has the keys; the button is always clickable. Surfaces without a Client keep the button hotkey. (#47)
+145. **Active is Backlog, Claude, Human (user request; supersedes 100/119's order).** (#48)

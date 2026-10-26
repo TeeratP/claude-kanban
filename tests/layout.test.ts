@@ -77,13 +77,13 @@ function block(rows: Row[], column: KanbanColumn): Row[] {
   return rows.slice(from, to < 0 ? rows.length : to)
 }
 
-test('the groups hold Backlog, Human, Claude and Done, Cancelled, Suspended, and the move keys follow COLUMNS', () => {
-  expect(GROUPS.active).toEqual(['backlog', 'human', 'claude'])
+test('the groups hold Backlog, Claude, Human and Done, Cancelled, Suspended, and the move keys follow COLUMNS', () => {
+  expect(GROUPS.active).toEqual(['backlog', 'claude', 'human'])
   expect(GROUPS.inactive).toEqual(['done', 'cancelled', 'suspended'])
   expect(COLUMNS).toEqual([
     'backlog',
-    'human',
     'claude',
+    'human',
     'done',
     'cancelled',
     'suspended',
@@ -98,7 +98,7 @@ test('the groups hold Backlog, Human, Claude and Done, Cancelled, Suspended, and
   ])
 })
 
-test('the open group lists its sections Backlog, Human, Claude under the toolbar, the closed group is its header', () => {
+test('the open group lists its sections Backlog, Claude, Human under the toolbar, the closed group is its header', () => {
   const cards = [
     cardOf(1, 'backlog'),
     cardOf(2, 'human'),
@@ -113,10 +113,10 @@ test('the open group lists its sections Backlog, Human, Claude under the toolbar
     'group',
     'header:backlog',
     'card:backlog',
-    'header:human',
-    'card:human',
     'header:claude',
     'card:claude',
+    'header:human',
+    'card:human',
     'group',
   ])
   expect(rows[2]).toMatchObject({
@@ -197,8 +197,8 @@ test('both groups folded is the two group rows and a line saying to press one', 
       isOpen: false,
       counts: [
         { column: 'backlog', shown: 3, total: 3 },
-        { column: 'human', shown: 0, total: 0 },
         { column: 'claude', shown: 0, total: 0 },
+        { column: 'human', shown: 0, total: 0 },
       ],
     },
     expect.objectContaining({ group: 'inactive', isOpen: false }),
@@ -680,21 +680,21 @@ test('a card row drops the age when the title would have fewer than 8 cells', ()
 
 test('hitTest maps a tree row to its section: its header, cards, count rows and filler, and the toolbar, group rows and legend to none', () => {
   const rows = layoutBoard({
-    cards: [...many('backlog', 8), ...many('human', 1, 10)],
+    cards: [...many('backlog', 8), ...many('claude', 1, 10)],
     ui: INITIAL_UI,
     bodyRows: 30,
     legend: true,
   })
   // 0-1 toolbar, 2 Active group, 3 Backlog header, 4-9 cards, 10 its count,
-  // 11 Human header, 12 its card, 13 filler
+  // 11 Claude header, 12 its card, 13 filler
   expect(hitTest(rows, 0)).toBeUndefined()
   expect(hitTest(rows, 1)).toBeUndefined()
   expect(hitTest(rows, 2)).toBeUndefined()
   expect(hitTest(rows, 3)).toBe('backlog')
   expect(hitTest(rows, 10)).toBe('backlog')
-  expect(hitTest(rows, 11)).toBe('human')
-  expect(hitTest(rows, 12)).toBe('human')
-  expect(hitTest(rows, 13)).toBe('human')
+  expect(hitTest(rows, 11)).toBe('claude')
+  expect(hitTest(rows, 12)).toBe('claude')
+  expect(hitTest(rows, 13)).toBe('claude')
   const legend = rows.findIndex(row => row.kind === 'legend')
   expect(legend).toBeGreaterThan(0)
   expect(hitTest(rows, legend)).toBeUndefined()
@@ -762,7 +762,7 @@ test('while the first load runs the open group shows bars and no counts, and no 
     false,
   )
   expect(rows.filter(row => row.kind === 'header')).toEqual(
-    (['backlog', 'human', 'claude'] as const).map(column => ({
+    (['backlog', 'claude', 'human'] as const).map(column => ({
       kind: 'header',
       column,
       shown: 0,
@@ -775,7 +775,7 @@ test('while the first load runs the open group shows bars and no counts, and no 
     { group: 'inactive', isOpen: false, isLoading: true },
   ])
   // Every section is the same height: its header, three bars and plain filler.
-  for (const column of ['backlog', 'human', 'claude'] as const) {
+  for (const column of ['backlog', 'claude', 'human'] as const) {
     const body = block(rows, column).slice(1)
     expect(body.map(row => row.kind)).toEqual([
       'skeleton',
@@ -800,8 +800,8 @@ test('the bars are the same on every draw and differ from one section to the nex
 
   expect(draw()).toEqual(draw())
   expect(percents(draw(), 'backlog')).toEqual([60, 40, 75])
-  expect(percents(draw(), 'human')).toEqual([40, 75, 60])
-  expect(percents(draw(), 'claude')).toEqual([75, 60, 40])
+  expect(percents(draw(), 'claude')).toEqual([40, 75, 60])
+  expect(percents(draw(), 'human')).toEqual([75, 60, 40])
 })
 
 test('a pane of two-row sections shows two bars, and a loaded board no bars at all', () => {

@@ -299,19 +299,19 @@ test('the second row follows its card and belongs to its section', () => {
     'group',
     'header:backlog',
     'card:backlog',
-    'header:human',
-    'empty:human',
     'header:claude',
     'card:claude',
     'detail:claude',
     'card:claude',
+    'header:human',
+    'empty:human',
     'group',
   ])
   // The row is the tree row it is drawn on, so a wheel over it is the Claude section's.
   const at = rows.findIndex(row => row.kind === 'detail')
   expect(hitTest(rows, at)).toBe('claude')
   expect(hitTest(rows, at + 1)).toBe('claude')
-  expect(hitTest(rows, at - 5)).toBe('human')
+  expect(hitTest(rows, at - 5)).toBe('backlog')
 })
 
 test('with no second rows the layout is as it was', () => {

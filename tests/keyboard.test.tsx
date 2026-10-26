@@ -221,8 +221,8 @@ for (const surface of WITH_CLIENT) {
       // The other sections show the keys that send the card there, in place of
       // their meta; the folded group shows its three on its own header.
       await keys(ui, 'm')
-      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Human 1 ─+ 2\/h$/)
-      expect((await row(ui, 'hdr:claude'))?.text).toMatch(/Claude 1 ─+ 3\/c$/)
+      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Human 1 ─+ 3\/h$/)
+      expect((await row(ui, 'hdr:claude'))?.text).toMatch(/Claude 1 ─+ 2\/c$/)
       expect((await row(ui, 'hdr:backlog'))?.text).toMatch(/Backlog 1 ─+$/)
       expect((await row(ui, 'grp:inactive'))?.text).toMatch(
         /^▸ Inactive\s+4\/d 5\/x 6\/s$/,
@@ -233,7 +233,7 @@ for (const surface of WITH_CLIENT) {
       expect(
         keysNow.slice(
           keysNow.indexOf('hdr:human') + 1,
-          keysNow.indexOf('hdr:claude'),
+          keysNow.indexOf('grp:inactive'),
         ),
       ).toEqual([LOGIN, DOCS])
       expect((await row(ui, 'hdr:human'))?.text).toMatch(/Human 2 ─+$/)
@@ -298,7 +298,7 @@ for (const surface of WITH_CLIENT) {
         await keys(ui, 'up')
       }
       expect(await litRows(ui)).toEqual([DOCS])
-      await keys(ui, 'm', '3')
+      await keys(ui, 'm', '2')
       expect(prompts).toEqual([])
       await clock.advance(SYNC_PAUSE)
       expect(files[path(3, 'docs')]).toContain('status: claude')
@@ -315,7 +315,7 @@ for (const surface of WITH_CLIENT) {
     const { clock, ui, files } = await start($, on, surface)
     const before = { ...files }
     const moving = async () =>
-      ((await row(ui, 'hdr:human'))?.text ?? '').includes('2/h')
+      ((await row(ui, 'hdr:human'))?.text ?? '').includes('3/h')
     await goTo(ui, DOCS)
 
     // The key that ends it is spent: the cursor stays where it was.
@@ -390,7 +390,7 @@ for (const surface of WITH_CLIENT) {
     expect(await row(ui, DOCS)).toBeUndefined()
     expect(await litRows(ui)).toEqual(['grp:active'])
     await keys(ui, 'down')
-    expect(await litRows(ui)).toEqual([LOGIN])
+    expect(await litRows(ui)).toEqual([API])
     await ui.unmount()
   })
 

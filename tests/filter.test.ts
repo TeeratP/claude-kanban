@@ -217,8 +217,8 @@ test('headers count what the filter lets through out of all the section holds', 
 
   expect(rows.filter(row => row.kind === 'header')).toEqual([
     { kind: 'header', column: 'backlog', shown: 1, total: 8 },
-    { kind: 'header', column: 'human', shown: 0, total: 2 },
     { kind: 'header', column: 'claude', shown: 0, total: 0 },
+    { kind: 'header', column: 'human', shown: 0, total: 2 },
   ])
 })
 
@@ -235,10 +235,10 @@ test('a section with no match is an empty row, and the empty-board note stays aw
     'group',
     'header:backlog',
     'empty:backlog',
-    'header:human',
-    'empty:human',
     'header:claude',
     'empty:claude',
+    'header:human',
+    'empty:human',
     'group',
   ])
 })
@@ -330,8 +330,8 @@ test('the closed group says how many cards match', () => {
     group: 'active',
     counts: [
       { column: 'backlog', shown: 0, total: 2 },
-      { column: 'human', shown: 0, total: 0 },
       { column: 'claude', shown: 0, total: 0 },
+      { column: 'human', shown: 0, total: 0 },
     ],
   })
 })

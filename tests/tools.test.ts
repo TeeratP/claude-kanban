@@ -481,7 +481,7 @@ test('kanban_list takes any of the six columns, lists Done and Cancelled by thei
   expect(await listed()).toHaveLength(32)
   expect(await call('later')).toMatchObject({
     deny: expect.stringContaining(
-      'use backlog, human, claude, done, cancelled or suspended',
+      'use backlog, claude, human, done, cancelled or suspended',
     ),
   })
 })
@@ -592,8 +592,8 @@ test('Claude cannot move a card to Suspended or Cancelled, and the tool says it 
   ])
   expect(enumOf('kanban_list', 'column')).toEqual([
     'backlog',
-    'human',
     'claude',
+    'human',
     'done',
     'cancelled',
     'suspended',
