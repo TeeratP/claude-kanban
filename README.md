@@ -47,7 +47,7 @@ Type `/kanban` to open the board in a side pane. Click a card to open its detail
 
 Claude can work the board without the pane open (see [Claude's tools](#claudes-tools-and-the-handoff)).
 
-The toolbar is two rows. The first is dim status text: the active backend (`Local (auto)`, without the `(auto)` in a pane under 40 columns), when the board was last updated (`updated just now`, `updated 5m ago`), and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find` (on mobile, which has no text field, only `r: Refresh`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds and its ages (the status row's, each card's) redraw every 30. While cards wait in Human the pane's title reads `Kanban · N`, which shows as its tab when several panes are open. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
+The toolbar is two rows. The first is dim status text: the active backend (`Local (auto)`, without the `(auto)` in a pane under 40 columns), when the board was last updated (`updated just now`, `updated 5m ago`), and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find   s: Settings` (on mobile, which has no text field, `r: Refresh   s: Settings`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`, then `s: Settings`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds and its ages (the status row's, each card's) redraw every 30. While cards wait in Human the pane's title reads `Kanban · N`, which shows as its tab when several panes are open. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
 
 ### Moving cards
 
@@ -99,6 +99,20 @@ The filter only changes what is drawn. Everything you do acts on the cards you c
 ### Suggestions from Claude
 
 When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+
+### Settings
+
+Press `s: Settings` in the toolbar (or the `s` key while the pane has the keys) to open the Settings view in the pane; `b: ← Board` returns. It lists every setting the mod has, which are the same rows `/config` shows for the plugin, each with its name, its value and one line of help:
+
+| Setting | Row | What it takes |
+|---|---|---|
+| Card backend (`backend`) | its options as links, the current one marked `✓` | `auto`, `github`, `local` |
+| Claude limit (`claudeLimit`) | `−` and `+` around the number | a whole number from 0 up; `−` rests at 0, which means no limit |
+| Reconcile at turn end (`reconcile`) | `on` and `off`, the current one marked | on or off |
+
+The option a setting starts with is marked `(default)`, read from the `(default: X)` that ends each setting's title in `/config`. Pressing another option, or `−` / `+`, changes the setting through the engine, which applies the same checks as `/config`; if a check refuses, the value stays, and the reason shows under the row and in a toast. A setting an organization's policy sets shows its value with no buttons. Like a change in `/config`, a change reloads the plugin with the new value; the view stays open.
+
+Under the settings, a Board row names the board in use (`GitHub · owner/repo`, the board's number and name, or `Local · .kanban/` with the reason it is local) and, where it can be changed, a `Change board` link: for a board found without config it opens the board picker on the board (or says there is no other), and for local files under `auto` it looks for a GitHub board again. A board named in CLAUDE.md or AGENTS.md is changed there. Which board a project uses is not a setting, because settings are for every project. The last line, `Also in /config`, is a reminder that `/config` edits the same settings.
 
 ## Backends
 

@@ -6,6 +6,7 @@ import type {
   KanbanGroup,
   KanbanQueue,
   KanbanQuickAdd,
+  KanbanSettings,
   KanbanUi,
 } from '../types'
 
@@ -101,6 +102,12 @@ export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
   hasDetails: false,
   title: '',
   spec: '',
+}
+
+export const EMPTY_SETTINGS: KanbanSettings = {
+  isLoaded: false,
+  rows: [],
+  denied: {},
 }
 
 // A card shown before its backend has made it carries this prefix in its id.

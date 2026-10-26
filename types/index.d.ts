@@ -91,7 +91,9 @@ export type KanbanQueue = {
   held: Record<string, KanbanPrompt>
 }
 export type KanbanView =
-  { mode: 'board' } | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
+  | { mode: 'board' }
+  | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
+  | { mode: 'settings' }
 export type KanbanUi = {
   view: KanbanView
   offsets: Record<KanbanColumn, number>
@@ -104,6 +106,26 @@ export type KanbanUi = {
   isFilterOpen: boolean
   /** The group a header press chose while filtering; dropped when the filter changes. */
   filterGroup?: KanbanGroup | 'none'
+}
+/** One of the mod's `/config` rows as `$.config.list()` returns it. */
+export type KanbanSettingRow = {
+  /** What `$.config.set` takes: `<plugin>.<field>`. */
+  key: string
+  /** The row's label, which ends in ` (default: X)`. */
+  label: string
+  kind: 'boolean' | 'choice' | 'number'
+  value: boolean | string | number
+  options?: string[]
+  /** Whether a trusted source owns the value, so a change is refused. */
+  isLocked: boolean
+}
+export type KanbanSettings = {
+  isLoaded: boolean
+  rows: KanbanSettingRow[]
+  /** Why a change was refused, by row key; dropped when a change goes through. */
+  denied: Record<string, string>
+  /** Why the rows could not be read. */
+  error?: string
 }
 export type KanbanQuickAdd = {
   isOpen: boolean
@@ -193,6 +215,7 @@ declare module 'claude-code' {
       viewer: string
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
+      settings: Shaped<KanbanSettings>
       suggestions: Shaped<KanbanSuggestion[]>
     }
   }

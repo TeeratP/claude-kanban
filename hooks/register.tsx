@@ -20,6 +20,7 @@ import {
 import { guardEdit, guardWrite } from './guard'
 import { applyQueue, claudeLimit } from './queue'
 import { dropUnfinishedAdds } from './quick-add'
+import { resumeSettings } from './settings'
 import { S } from './strings'
 import { restoreSuggestions, withSuggestSection } from './suggest'
 import { resumePendingSyncs } from './sync'
@@ -30,6 +31,7 @@ import {
   renderBoard,
 } from './view-board'
 import { renderDetail } from './view-detail'
+import { renderSettings } from './view-settings'
 
 export const register: Register = (on, options) => {
   const mode = backendMode(options.backend)
@@ -58,6 +60,7 @@ export const register: Register = (on, options) => {
     inBackground($, resumePendingSyncs($))
     inBackground($, restoreActivity($))
     inBackground($, restoreSuggestions($))
+    inBackground($, resumeSettings($))
 
     return next(e)
   })
@@ -77,7 +80,11 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: 'kanban' }, async ($, e) => {
     const { view } = await readUi($)
 
-    return view.mode === 'board' ? renderBoard($, e) : renderDetail($, e, view)
+    if (view.mode === 'board') return renderBoard($, e)
+
+    return view.mode === 'settings'
+      ? renderSettings($, e)
+      : renderDetail($, e, view)
   })
 
   on('ui.scroll', { requestId: 'kanban' }, async ($, e, next) =>

@@ -45,6 +45,7 @@ import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { changeBoard } from './pick'
 import { dropCard, shiftCard } from './reorder'
+import { openSettings } from './settings'
 import { S } from './strings'
 import { stripRows } from './suggest'
 import { retryAll } from './sync'
@@ -81,7 +82,7 @@ function glyphOf(entry: KanbanSync, tick: number, now: number) {
 }
 
 // Why a local board has no GitHub behind it, when the backend knows.
-function localNote(info: KanbanBackendInfo | null): string | undefined {
+export function localNote(info: KanbanBackendInfo | null): string | undefined {
   if (info?.kind !== 'local') return undefined
   if (info.isConfigUnclear === true) return S.configUnclear
 
@@ -455,6 +456,17 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           return (
             <Button key="retry-all" plain onPress={() => retryAll($)}>
               <Text color="error">{action.label}</Text>
+            </Button>
+          )
+        case 'settings':
+          return (
+            <Button
+              key="settings"
+              plain
+              hotkey={action.hotkey}
+              onPress={() => openSettings($)}
+            >
+              {action.label}
             </Button>
           )
       }

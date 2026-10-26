@@ -3,7 +3,7 @@ import { S } from './strings'
 
 /** A button on the toolbar's action row. */
 export type Action = {
-  key: 'refresh' | 'add' | 'filter' | 'filter:clear' | 'retry-all'
+  key: 'refresh' | 'add' | 'filter' | 'filter:clear' | 'retry-all' | 'settings'
   /** The hotkey, which the engine draws before the label as `n: `. */
   hotkey?: string
   label: string
@@ -29,10 +29,15 @@ const WIDE: Spacing = { indent: 1, gap: 3 }
 const TIGHT: Spacing = { indent: 0, gap: 1 }
 
 // What gives way when even the tight spacing does not fit: Refresh first (the
-// board refreshes itself), then New. The filter and the retry stay, as they say
-// what is wrong with the board.
-const NARROWEST: Action['key'][] = ['refresh', 'add']
-const DROPS: Action['key'][][] = [[], ['refresh'], NARROWEST]
+// board refreshes itself), then New, then Settings. The filter and the retry
+// stay, as they say what is wrong with the board.
+const DROPS: Action['key'][][] = [
+  [],
+  ['refresh'],
+  ['refresh', 'add'],
+  ['refresh', 'add', 'settings'],
+]
+const NARROWEST = DROPS[DROPS.length - 1] ?? []
 
 const widthOf = (action: Action) =>
   (action.hotkey === undefined ? 0 : cellWidth(action.hotkey) + 2) +
@@ -67,6 +72,7 @@ function actionsFor(
   }
   if (oneLine(query) !== '')
     all.push({ key: 'filter:clear', label: S.filterClear })
+  all.push({ key: 'settings', hotkey: 's', label: S.settings })
   if (failed > 0) all.push({ key: 'retry-all', label: S.retryAll(failed) })
 
   return all.filter(action => !dropped.includes(action.key))
@@ -74,8 +80,9 @@ function actionsFor(
 
 /**
  * The action row for a pane `columns` wide: Refresh, New and Find with their
- * hotkeys, the filter text and a cross to clear it, and `✕N retry`. What does
- * not fit gives way in this order: the filter text, the spacing, Refresh, New.
+ * hotkeys, the filter text and a cross to clear it, Settings, and `✕N retry`.
+ * What does not fit gives way in this order: the filter text, the spacing,
+ * Refresh, New, Settings.
  */
 export function planActions(input: ActionsInput): PlacedAction[] {
   const text = oneLine(input.query)

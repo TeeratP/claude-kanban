@@ -638,7 +638,7 @@ for (const surface of CLIENT_SURFACES) {
   })
 }
 
-test('the board view gives r to refresh, n to the add button, f to the filter button and no other Button a hotkey that is also a Client key', async ($, on) => {
+test('the board view gives r to refresh, n to the add button, f to the filter button, s to settings and no other Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
   // A suggestion adds its own buttons to the board view.
   await $.tool.call({
@@ -656,7 +656,7 @@ test('the board view gives r to refresh, n to the add button, f to the filter bu
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],
   )
 
-  expect(hotkeys).toEqual(['r', 'n', 'f'])
+  expect(hotkeys).toEqual(['r', 'n', 'f', 's'])
   // The keys the board's list takes when it has the keyboard.
   const clientKeys = ['j', 'k', 'm', 'h', 'c', 'b', 'd', '1', '2', '3', '4']
   expect(hotkeys.filter(key => clientKeys.includes(key))).toEqual([])
@@ -675,12 +675,16 @@ async function openAt(
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
+  // New is not drawn in the narrowest panes, where Settings outlasts it, so
+  // the form is opened in a wider one and then drawn at `columns`.
+  const opener = await $.ui.mount({ ...PANE, surface })
+  await opener.press({ key: 'add' })
+  await opener.unmount()
   const ui = await $.ui.mount({
     ...PANE,
     surface,
     props: { ...PANE.props, bodyColumns: columns },
   })
-  await ui.press({ key: 'add' })
 
   return { ...world, files, ui }
 }

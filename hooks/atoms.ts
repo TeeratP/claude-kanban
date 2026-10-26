@@ -8,6 +8,7 @@ import type {
   KanbanDetail,
   KanbanQueue,
   KanbanQuickAdd,
+  KanbanSettings,
   KanbanSuggestion,
   KanbanSync,
   KanbanUi,
@@ -17,6 +18,7 @@ import {
   EMPTY_BOARD,
   EMPTY_QUEUE,
   EMPTY_QUICK_ADD,
+  EMPTY_SETTINGS,
   INITIAL_UI,
 } from './model'
 
@@ -28,7 +30,7 @@ const board = atom({ plugin: 'kanban', key: 'board' } as const, EMPTY_BOARD, {
   shape: 'board-3',
 })
 const ui = atom({ plugin: 'kanban', key: 'ui' } as const, INITIAL_UI, {
-  shape: 'ui-4',
+  shape: 'ui-5',
 })
 const sync = atom(
   { plugin: 'kanban', key: 'sync' } as const,
@@ -65,6 +67,12 @@ const quickAdd = atom(
   { plugin: 'kanban', key: 'quickAdd' } as const,
   EMPTY_QUICK_ADD,
   { shape: 'quickAdd-1' },
+)
+// The mod's /config rows as the Settings view shows them, and why a change was refused.
+const settings = atom(
+  { plugin: 'kanban', key: 'settings' } as const,
+  EMPTY_SETTINGS,
+  { shape: 'settings-1' },
 )
 // Claude's follow-ups waiting for the person to add or dismiss them.
 const suggestions = atom(
@@ -215,4 +223,15 @@ export function updateSuggestions(
   change: (value: KanbanSuggestion[]) => KanbanSuggestion[],
 ): Promise<KanbanSuggestion[]> {
   return update($, suggestions, change)
+}
+
+export function readSettings($: EngineInterface): Promise<KanbanSettings> {
+  return read($, settings)
+}
+
+export function updateSettings(
+  $: EngineInterface,
+  change: (value: KanbanSettings) => KanbanSettings,
+): Promise<KanbanSettings> {
+  return update($, settings, change)
 }
