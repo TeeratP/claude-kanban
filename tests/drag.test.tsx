@@ -2,7 +2,15 @@ import type { On, RenderSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { click, lineRows, row, rowIndex, rowKeys, rowStyle } from './board-ui'
+import {
+  TOOLBAR_ROWS,
+  click,
+  lineRows,
+  row,
+  rowIndex,
+  rowKeys,
+  rowStyle,
+} from './board-ui'
 import { PANE, RUN, SCROLL, SYNC_PAUSE, boot, card, path } from './fakes'
 
 const WITH_CLIENT = ['terminal', 'desktop'] as const
@@ -295,8 +303,11 @@ for (const surface of WITH_CLIENT) {
     }
     const { ui, scrolls } = await start($, on, surface, files)
     const keys = await rowKeys(ui)
-    // The tree's row 0 is the toolbar, the Client's rows follow.
-    const pointer = { column: 3, row: keys.indexOf('card:md:0001-b') + 1 }
+    // The tree's first two rows are the toolbar, the Client's rows follow.
+    const pointer = {
+      column: 3,
+      row: keys.indexOf('card:md:0001-b') + TOOLBAR_ROWS,
+    }
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
 
     const result = await $.ui.scroll({ ...SCROLL, by: 1, pointer })

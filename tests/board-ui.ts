@@ -9,6 +9,9 @@ export type BoardUi = Pick<Mounted, 'find' | 'findAll' | 'press' | 'drawn'>
 
 const CLIENT = 'board'
 
+/** Rows the toolbar takes at the top of the pane's tree: the status, then the actions. */
+export const TOOLBAR_ROWS = 2
+
 /** Whether the board's list is drawn by the Client. */
 export async function hasClient(ui: BoardUi): Promise<boolean> {
   return (await ui.find({ type: 'Client', key: CLIENT })) !== undefined
@@ -116,4 +119,65 @@ export async function lineRows(ui: BoardUi): Promise<string[]> {
   }
 
   return lined
+}
+
+type Drawn = {
+  type?: string
+  props?: Record<string, unknown>
+  children?: unknown[]
+}
+
+// One drawn element as plain text. The engine draws a plain Button with a hotkey
+// as `<hotkey>: <label>`, and without one as its label alone.
+function plainText(node: unknown): string {
+  if (typeof node !== 'object' || node === null) return String(node ?? '')
+
+  const { type, props, children } = node as Drawn
+  const inner = (children ?? []).map(plainText).join('')
+  if (type !== 'Button') return inner
+
+  const label = children === undefined ? String(props?.label ?? '') : inner
+  const hotkey = props?.hotkey
+
+  return props?.plain === true && typeof hotkey === 'string'
+    ? `${hotkey}: ${label}`
+    : label
+}
+
+async function treeChildren(ui: BoardUi): Promise<unknown[]> {
+  return ((await ui.drawn()) as Drawn).children ?? []
+}
+
+/** The first `count` rows of the pane's tree as plain text, as a terminal shows them. */
+export async function treeText(ui: BoardUi, count: number): Promise<string[]> {
+  return (await treeChildren(ui)).slice(0, count).map(plainText)
+}
+
+/** The toolbar: its status row, then its action row. */
+export async function toolbar(ui: BoardUi): Promise<[string, string]> {
+  const [status = '', actions = ''] = await treeText(ui, TOOLBAR_ROWS)
+
+  return [status, actions]
+}
+
+// The first key found in an element or below it.
+function firstKey(node: unknown): string | undefined {
+  if (typeof node !== 'object' || node === null) return undefined
+
+  const { props, children } = node as Drawn
+  if (typeof props?.key === 'string') return props.key
+
+  for (const child of children ?? []) {
+    const key = firstKey(child)
+    if (key !== undefined) return key
+  }
+
+  return undefined
+}
+
+/** What each of the pane's top-level rows is: the first key in it, or else its type. */
+export async function treeKinds(ui: BoardUi): Promise<string[]> {
+  return (await treeChildren(ui)).map(
+    node => firstKey(node) ?? String((node as Drawn).type),
+  )
 }

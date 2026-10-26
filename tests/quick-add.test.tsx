@@ -36,9 +36,9 @@ async function open($: Engine, on: On, surface: (typeof SURFACES)[number]) {
 }
 
 for (const surface of SURFACES) {
-  test(`the + button opens the form and closes it again on the ${surface}`, async ($, on) => {
+  test(`the New button opens the form and closes it again on the ${surface}`, async ($, on) => {
     const { ui } = await open($, on, surface)
-    expect((await ui.find({ key: 'add' }))?.text).toBe(' +')
+    expect((await ui.find({ key: 'add' }))?.text).toBe('New')
     expect(await ui.find({ key: 'add:title' })).toBeUndefined()
 
     await ui.press({ key: 'add' })
@@ -318,7 +318,7 @@ test('the new card is brought into view in a long or collapsed Backlog', async (
   await ui.unmount()
 })
 
-test('mobile has no + button and no form', async ($, on) => {
+test('mobile has no New button and no form', async ($, on) => {
   boot(on, cards())
   await $.session.start({ cwd: '/', surface: 'mobile', isInteractive: true })
   await $.command.run({ ...RUN })
@@ -635,7 +635,7 @@ for (const surface of CLIENT_SURFACES) {
   })
 }
 
-test('the board view gives n to the add button, f to the filter button and no other Button a hotkey that is also a Client key', async ($, on) => {
+test('the board view gives r to refresh, n to the add button, f to the filter button and no other Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
   // A suggestion adds its own buttons to the board view.
   await $.tool.call({
@@ -653,7 +653,7 @@ test('the board view gives n to the add button, f to the filter button and no ot
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],
   )
 
-  expect(hotkeys).toEqual(['n', 'f'])
+  expect(hotkeys).toEqual(['r', 'n', 'f'])
   // The keys the board's list takes when it has the keyboard.
   const clientKeys = ['j', 'k', 'm', 'h', 'c', 'b', 'd', '1', '2', '3', '4']
   expect(hotkeys.filter(key => clientKeys.includes(key))).toEqual([])

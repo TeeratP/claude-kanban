@@ -6,6 +6,7 @@ import { colorOf } from '../hooks/activity-view'
 import { cellWidth } from '../hooks/model'
 import { stripRows } from '../hooks/suggest'
 import {
+  TOOLBAR_ROWS,
   click,
   keys,
   lineRows,
@@ -771,7 +772,7 @@ for (const surface of WITH_CLIENT) {
     expect((await keysOf()).filter(key => key.startsWith('act:'))).toHaveLength(
       4,
     )
-    expect((await keysOf()).length + 1).toBeLessThanOrEqual(30)
+    expect((await keysOf()).length + TOOLBAR_ROWS).toBeLessThanOrEqual(30)
     const index = (await keysOf()).indexOf('card:md:0011-c')
     expect((await keysOf()).slice(index, index + 4)).toEqual([
       'card:md:0011-c',
@@ -781,7 +782,7 @@ for (const surface of WITH_CLIENT) {
     ])
 
     // The wheel over a second row scrolls the Claude section.
-    const at = (key: string) => rowIndex(ui, key).then(y => y + 1)
+    const at = (key: string) => rowIndex(ui, key).then(y => y + TOOLBAR_ROWS)
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
@@ -841,7 +842,8 @@ for (const surface of WITH_CLIENT) {
     // The strip is its header and two suggestions, between the toolbar and the list.
     const strip = stripRows(2)
     expect(strip).toBe(3)
-    const at = async (key: string) => (await rowIndex(ui, key)) + 1 + strip
+    const at = async (key: string) =>
+      (await rowIndex(ui, key)) + TOOLBAR_ROWS + strip
 
     // Over the last second row of Claude, three rows above Backlog's cards: the
     // Claude section, which scrolls itself.
@@ -862,8 +864,8 @@ for (const surface of WITH_CLIENT) {
     expect(scrolls).toHaveLength(0)
     expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
 
-    // Over the strip: the engine's.
-    await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 2 } })
+    // Over the strip, which follows the toolbar's two rows: the engine's.
+    await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 3 } })
     expect(scrolls).toHaveLength(1)
     await ui.unmount()
   })
