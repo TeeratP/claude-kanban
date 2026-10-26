@@ -150,6 +150,30 @@ test('an empty board adds the note under the sections', () => {
   expect(rows.at(-1)).toEqual({ kind: 'note' })
 })
 
+test('an empty board with the hint adds the GitHub lines under the note, and a board with cards none', () => {
+  const empty = layoutBoard({
+    cards: [],
+    ui: INITIAL_UI,
+    bodyRows: 30,
+    hint: true,
+  })
+  const full = layoutBoard({
+    cards: [cardOf(1, 'claude')],
+    ui: open(),
+    bodyRows: 30,
+    hint: true,
+  })
+
+  expect(empty.slice(-3)).toEqual([
+    { kind: 'note' },
+    { kind: 'hint', line: 0 },
+    { kind: 'hint', line: 1 },
+  ])
+  expect(full.some(row => row.kind === 'note' || row.kind === 'hint')).toBe(
+    false,
+  )
+})
+
 test('clampOffset keeps the window inside the list', () => {
   expect(clampOffset(-2, 8, 5)).toBe(0)
   expect(clampOffset(99, 8, 5)).toBe(3)

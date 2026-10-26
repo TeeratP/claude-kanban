@@ -13,6 +13,8 @@ export type Row =
   | { kind: 'detail'; column: KanbanColumn; card: KanbanCard }
   | { kind: 'empty'; column: KanbanColumn }
   | { kind: 'note' }
+  // A line under the note on how to use GitHub.
+  | { kind: 'hint'; line: number }
 
 export type LayoutInput = {
   cards: readonly KanbanCard[]
@@ -20,6 +22,8 @@ export type LayoutInput = {
   bodyRows: number
   /** The ids of the cards that get a second row. */
   details?: ReadonlySet<string>
+  /** Whether an empty board also says how to use GitHub. */
+  hint?: boolean
 }
 
 /** The cards a section lists, in order: Done is its newest ten. */
@@ -154,6 +158,7 @@ export function layoutBoard({
   ui: stored,
   bodyRows,
   details,
+  hint,
 }: LayoutInput): Row[] {
   const { cards: matched, ui } = applyFilter(cards, stored)
   const cap = capFor(
@@ -186,7 +191,12 @@ export function layoutBoard({
     if (below > 0) rows.push({ kind: 'more', column, dir: 'down', n: below })
   }
 
-  if (cards.length === 0) rows.push({ kind: 'note' })
+  if (cards.length === 0) {
+    rows.push({ kind: 'note' })
+    if (hint === true) {
+      S.githubHint.forEach((_, line) => rows.push({ kind: 'hint', line }))
+    }
+  }
 
   return rows
 }

@@ -12,12 +12,14 @@ import {
   isRateLimited,
   loadGithub,
   moveGithub,
+  mentionsBoard,
   parseClaudeMd,
   planMove,
   planPosition,
 } from '../hooks/github'
 import { isHandoffValid } from '../hooks/handoff'
 import { click } from './board-ui'
+import { LOTTO, NAE, PUNN_AGENTS, PUNN_CLAUDE } from './configs'
 import { NOW, PANE, RUN, SYNC_PAUSE, boot } from './fakes'
 import {
   LIVE_RATE_LIMIT,
@@ -31,7 +33,8 @@ import {
 } from './fake-gh'
 import type { Route } from './fake-gh'
 
-// Lines copied from the CLAUDE.md files this plugin is meant to read.
+// Lines copied from the CLAUDE.md files this plugin is meant to read; punn,
+// nae and lotto are in configs.ts.
 const CARCAST = [
   '## Task tracking',
   '',
@@ -132,6 +135,54 @@ const FIXTURES = [
     },
   },
   {
+    name: 'punn (AGENTS.md behind a CLAUDE.md import, `project number`, a backticked `Status` field)',
+    text: [PUNN_CLAUDE, PUNN_AGENTS].join('\n\n'),
+    expected: {
+      repo: 'TeeratP/attend-baby',
+      owner: 'TeeratP',
+      projectNumber: 2,
+      projectId: 'PVT_kwHOAcCsLc4Bbjg2',
+      statusFieldId: 'PVTSSF_lAHOAcCsLc4Bbjg2zhWTPOY',
+      options: {
+        backlog: 'f75ad846',
+        ready: '61e4505c',
+        inProgress: '47fc9ee4',
+        inReview: 'df73e18b',
+        done: '98236657',
+      },
+    },
+  },
+  {
+    name: 'agentic-framework (`project **2**`, only a `Ready (To Do) option`)',
+    text: NAE,
+    expected: {
+      repo: 'TeeratP/nae',
+      owner: 'TeeratP',
+      projectNumber: 2,
+      projectId: 'PVT_kwHOAcCsLc4Bbjg2',
+      statusFieldId: 'PVTSSF_lAHOAcCsLc4Bbjg2zhWTPOY',
+      options: { ready: '61e4505c' },
+    },
+  },
+  {
+    name: 'lotto (`**Board: "..."**`, `project number`, a backticked `Status` field)',
+    text: LOTTO,
+    expected: {
+      repo: 'TeeratP/thai-lotto',
+      owner: 'TeeratP',
+      projectNumber: 2,
+      projectId: 'PVT_kwHOAcCsLc4Bbjg2',
+      statusFieldId: 'PVTSSF_lAHOAcCsLc4Bbjg2zhWTPOY',
+      options: {
+        backlog: 'f75ad846',
+        ready: '61e4505c',
+        inProgress: '47fc9ee4',
+        inReview: 'df73e18b',
+        done: '98236657',
+      },
+    },
+  },
+  {
     name: 'claude-kanban',
     text: KANBAN,
     expected: {
@@ -156,6 +207,57 @@ for (const { name, text, expected } of FIXTURES) {
     expect(parseClaudeMd(text)).toEqual(expected)
   })
 }
+
+const NUMBER_FORMS = [
+  ['Project board: #6 "Car Cast"', 6],
+  ["Project: #2 `@TeeratP's Kanban`", 2],
+  ['- **Project board:** #5', 5],
+  ['**Board: "x"** \u2014 project number `2`, owner `a`', 2],
+  ['**Board:** "x" \u2014 project **2**, owner `a`', 2],
+  ['Board: x, project 3', 3],
+  ['PROJECT NUMBER: 4', 4],
+  ['See https://github.com/users/TeeratP/projects/5 for the board', 5],
+  ['Board: https://github.com/orgs/acme/projects/12', 12],
+  ['Kanban board is #9 (owner `a`)', 9],
+] as const
+
+for (const [line, number] of NUMBER_FORMS) {
+  test(`parseClaudeMd reads the project number ${number} from: ${line}`, () => {
+    expect(parseClaudeMd(`- Repo: \`a/b\`\n${line}\n`)?.projectNumber).toBe(
+      number,
+    )
+  })
+}
+
+test('parseClaudeMd takes the project number from the clearest form, wherever it is', () => {
+  const text = [
+    '- Repo: `a/b`',
+    'Phase 2 of the project 8 plan; board notes in #44.',
+    '- Project board: #7',
+  ].join('\n')
+
+  expect(parseClaudeMd(text)?.projectNumber).toBe(7)
+})
+
+test('parseClaudeMd does not take an issue number or a version for the project number', () => {
+  const none = [
+    '- Repo: `a/b`',
+    'Fixed in #12; see issue #3.',
+    'Project 2.0 ships with the board redesign.',
+    'The project id is `PVT_abc`.',
+  ].join('\n')
+
+  expect(parseClaudeMd(none)).toBeNull()
+})
+
+test('mentionsBoard sees a board that parseClaudeMd cannot read, and nothing in text that has none', () => {
+  expect(mentionsBoard('Board id `PVT_kwHOAcCsLc4Bbjg2`')).toBe(true)
+  expect(mentionsBoard('Run `gh project item-list 2 --owner a`')).toBe(true)
+  expect(mentionsBoard('The Project board lives on GitHub.')).toBe(true)
+  expect(mentionsBoard('See https://github.com/users/a/projects/3')).toBe(true)
+  expect(mentionsBoard('# Notes\n\nA job board app. Dashboards.')).toBe(false)
+  expect(mentionsBoard('Status field `PVTSSF_abc` only')).toBe(false)
+})
 
 test('parseClaudeMd needs a repo and a project number, and leaves missing ids out', () => {
   expect(parseClaudeMd('# Notes\n\nNothing about GitHub here.')).toBeNull()

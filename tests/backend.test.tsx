@@ -4,8 +4,9 @@ import type { Engine } from 'claude-code/testing'
 
 import type { KanbanBoard, KanbanCard } from '../types'
 import { backendMode, detectBackend } from '../hooks/backend'
+import { LOTTO, PUNN_AGENTS, PUNN_CLAUDE } from './configs'
 import { CWD, PANE, RUN, boot, card, path } from './fakes'
-import { rowKeys } from './board-ui'
+import { row, rowKeys } from './board-ui'
 import { boardRoute, fakeEngine, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
 
@@ -42,6 +43,14 @@ const files = () => ({
   [path(2, 'api')]: card(2, { status: 'claude', title: 'Local API' }),
 })
 
+// The board's cards, in the repo the config names.
+const loadFor = (repo: string): Route[] => [
+  boardRoute([
+    issueNode({ number: 1, repo, status: 'In progress', labels: ['ai'] }),
+    issueNode({ number: 2, repo, status: 'Backlog', labels: ['ai'] }),
+  ]),
+]
+
 const GITHUB_CARD = 'card:gh:1'
 const LOCAL_CARD = 'card:md:0001-login'
 
@@ -55,14 +64,23 @@ async function open($: Engine, on: On, extra: Route[], withFiles = files()) {
   return { ...world, files: withFiles, commands: calls }
 }
 
-/** The toolbar's text and which cards the pane draws. */
-async function board($: Engine) {
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+/** The toolbar's text and which cards the pane draws, and the note and hint rows under an empty board. */
+async function board($: Engine, bodyColumns: number = PANE.props.bodyColumns) {
+  const ui = await $.ui.mount({
+    ...PANE,
+    props: { ...PANE.props, bodyColumns },
+    surface: 'terminal',
+  })
   const toolbar = (await ui.findAll({ type: 'Text' }))[0]?.text ?? ''
-  const cards = (await rowKeys(ui)).filter(key => key.startsWith('card:'))
+  const keys = await rowKeys(ui)
+  const cards = keys.filter(key => key.startsWith('card:'))
+  const notes = keys.filter(key => /^(note|hint)\b/.test(key))
+  const hints = await Promise.all(
+    notes.map(async key => (await row(ui, key))?.text ?? ''),
+  )
   await ui.unmount()
 
-  return { toolbar, cards }
+  return { toolbar, cards, notes, hints }
 }
 
 const listed = ($: Engine) => $.tool.call({ tool: 'mcp__kanban__kanban_list' })
@@ -199,9 +217,11 @@ test(
       'CLAUDE.md': '# Notes\n',
     })
 
-    const shown = await board($)
+    const shown = await board($, 120)
 
-    expect(shown.toolbar).toContain('GitHub · CLAUDE.md needs a Repo')
+    expect(shown.toolbar).toContain(
+      'GitHub · CLAUDE.md or AGENTS.md needs a Repo',
+    )
     expect(shown.cards).toEqual([])
   },
 )
@@ -253,7 +273,7 @@ test('detect in github mode names each failing check and how to fix it', async (
   )
 
   await expect(detectBackend(noProject.$, 'github')).rejects.toThrow(
-    'CLAUDE.md needs a Repo and a Project board line',
+    'CLAUDE.md or AGENTS.md needs a Repo and a Project board line',
   )
   await expect(detectBackend(signedOut.$, 'github')).rejects.toThrow(
     'gh auth status failed: run gh auth login (You are not logged into any GitHub hosts.)',
@@ -524,3 +544,113 @@ test(
     expect(world.calls.lists).toBe(0)
   },
 )
+
+const UNCLEAR_MD =
+  '## Task tracking\n- Board id `PVT_kwHOAcCsLc4Bbjg2`; the repo is not written down.\n'
+
+test('with a board mentioned that cannot be read, the toolbar says so and the debug log says why', async ($, on) => {
+  const { logs } = await open($, on, [], {
+    ...files(),
+    'CLAUDE.md': UNCLEAR_MD,
+  })
+
+  const shown = await board($, 120)
+
+  expect(shown.toolbar).toContain(
+    'Local (auto) \u00b7 board config not understood',
+  )
+  expect(shown.cards).toContain(LOCAL_CARD)
+  expect(logs).toEqual([
+    'kanban: using local cards, GitHub is not usable here: CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
+  ])
+})
+
+test('in a narrow pane the toolbar keeps the unclear-config note over the age', async ($, on) => {
+  await open($, on, [], { ...files(), 'CLAUDE.md': UNCLEAR_MD })
+
+  const shown = await board($)
+
+  expect(shown.toolbar).toContain('Local (auto)')
+  expect(shown.toolbar).not.toContain('updated')
+})
+
+test('without a board in the config the toolbar has no unclear-config note', async ($, on) => {
+  await open($, on, [], { ...files(), 'CLAUDE.md': '# Notes\n' })
+
+  const shown = await board($, 120)
+
+  expect(shown.toolbar).toContain('Local (auto)')
+  expect(shown.toolbar).not.toContain('not understood')
+})
+
+test('an empty local board under auto says how to point the mod at GitHub', async ($, on) => {
+  await open($, on, [], { 'CLAUDE.md': UNCLEAR_MD })
+
+  const shown = await board($, 120)
+
+  expect(shown.cards).toEqual([])
+  expect(shown.notes).toEqual(['note', 'hint:0', 'hint:1'])
+  expect(shown.hints[0]).toContain('.kanban/0001-title.md')
+  expect(shown.hints[1]).toContain('CLAUDE.md or AGENTS.md')
+  expect(shown.hints[2]).toContain('backend: github')
+})
+
+test(
+  'an empty local board that was asked for has no GitHub hint',
+  { options: { backend: 'local' } },
+  async ($, on) => {
+    await open($, on, [], { 'CLAUDE.md': KANBAN_MD })
+
+    expect((await board($, 120)).notes).toEqual(['note'])
+  },
+)
+
+test('an empty GitHub board has no GitHub hint', async ($, on) => {
+  await open($, on, [SIGNED_IN, REMOTE, boardRoute([])], {
+    'CLAUDE.md': KANBAN_MD,
+  })
+
+  const shown = await board($, 120)
+
+  expect(shown.toolbar).toContain('GitHub (auto)')
+  expect(shown.notes).toEqual(['note'])
+})
+
+test('AGENTS.md behind a CLAUDE.md import loads the GitHub cards (punn)', async ($, on) => {
+  await open($, on, [SIGNED_IN, REMOTE, ...loadFor('TeeratP/attend-baby')], {
+    ...files(),
+    'CLAUDE.md': PUNN_CLAUDE,
+    'AGENTS.md': PUNN_AGENTS,
+  })
+
+  const shown = await board($, 120)
+
+  expect(shown.toolbar).toContain('GitHub (auto)')
+  expect(shown.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+  expect(await listed($)).toMatchObject({
+    result: expect.stringContaining('#1 [claude]'),
+  })
+})
+
+test('a lone AGENTS.md loads the GitHub cards (lotto)', async ($, on) => {
+  await open($, on, [SIGNED_IN, REMOTE, ...loadFor('TeeratP/thai-lotto')], {
+    ...files(),
+    'CLAUDE.md': '# Notes\n',
+    'AGENTS.md': LOTTO,
+  })
+
+  expect((await board($, 120)).cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+})
+
+test('a local backend saved by an earlier start is detected again, so a config fixed since shows its board', async ($, on) => {
+  const { whileLoading, loaded } = await openFromCache(
+    $,
+    on,
+    cached('auto', { kind: 'local' }),
+    [SIGNED_IN, REMOTE, ...LOAD],
+  )
+
+  expect(whileLoading.cards).toEqual(['card:gh:9'])
+  expect(loaded.toolbar).toContain('GitHub (auto)')
+  expect(loaded.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+})
