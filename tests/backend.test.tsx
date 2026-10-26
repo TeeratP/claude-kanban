@@ -9,6 +9,7 @@ import { CWD, PANE, RUN, boot, card, path } from './fakes'
 import { row, rowKeys } from './board-ui'
 import { boardRoute, fakeEngine, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
+import { GH_VERSION, graphql } from './zero'
 
 const KANBAN_MD = [
   '## Task tracking',
@@ -209,10 +210,10 @@ test(
 )
 
 test(
-  'github with no CLAUDE.md project says to add one, and does not fall back',
+  'github with no CLAUDE.md project and no linked board says what to add, and does not fall back',
   { options: { backend: 'github' } },
   async ($, on) => {
-    await open($, on, [SIGNED_IN, REMOTE, ...LOAD], {
+    await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, graphql()], {
       ...files(),
       'CLAUDE.md': '# Notes\n',
     })
@@ -220,7 +221,7 @@ test(
     const shown = await board($, 120)
 
     expect(shown.toolbar).toContain(
-      'GitHub · CLAUDE.md or AGENTS.md needs a Repo',
+      'GitHub · no GitHub Project is linked to TeeratP/claude-kanban',
     )
     expect(shown.cards).toEqual([])
   },
@@ -247,7 +248,10 @@ const detect = (routes: Route[], text: string) =>
   fakeEngine(routes, text === '' ? {} : { 'CLAUDE.md': text })
 
 test('detect in github mode names each failing check and how to fix it', async () => {
-  const noProject = detect([SIGNED_IN, REMOTE], '# Notes\n')
+  const noProject = detect(
+    [GH_VERSION, SIGNED_IN, REMOTE, graphql()],
+    '# Notes\n',
+  )
   const signedOut = detect([SIGNED_OUT, REMOTE], KANBAN_MD)
   const noRemote = detect(
     [
@@ -273,7 +277,7 @@ test('detect in github mode names each failing check and how to fix it', async (
   )
 
   await expect(detectBackend(noProject.$, 'github')).rejects.toThrow(
-    'CLAUDE.md or AGENTS.md needs a Repo and a Project board line',
+    'no GitHub Project is linked to TeeratP/claude-kanban: link one on GitHub, or add Repo and Project board lines to CLAUDE.md or AGENTS.md',
   )
   await expect(detectBackend(signedOut.$, 'github')).rejects.toThrow(
     'gh auth status failed: run gh auth login (You are not logged into any GitHub hosts.)',
@@ -475,7 +479,7 @@ function keepBoard(on: On, kept: KanbanBoard) {
     return {
       value: {
         version: answer.value.version,
-        value: { shape: 'board-2', value: kept },
+        value: { shape: 'board-3', value: kept },
       },
     }
   })
@@ -548,11 +552,13 @@ test(
 const UNCLEAR_MD =
   '## Task tracking\n- Board id `PVT_kwHOAcCsLc4Bbjg2`; the repo is not written down.\n'
 
-test('with a board mentioned that cannot be read, the toolbar says so and the debug log says why', async ($, on) => {
-  const { logs } = await open($, on, [], {
-    ...files(),
-    'CLAUDE.md': UNCLEAR_MD,
-  })
+test('with a board mentioned that cannot be read and none found, the toolbar says so and the debug log says why', async ($, on) => {
+  const { logs } = await open(
+    $,
+    on,
+    [GH_VERSION, SIGNED_IN, REMOTE, graphql()],
+    { ...files(), 'CLAUDE.md': UNCLEAR_MD },
+  )
 
   const shown = await board($, 120)
 

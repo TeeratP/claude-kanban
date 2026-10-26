@@ -32,6 +32,7 @@ import {
   queryOf,
 } from './fake-gh'
 import type { Route } from './fake-gh'
+import { GH_VERSION, graphql } from './zero'
 
 // Lines copied from the CLAUDE.md files this plugin is meant to read; punn,
 // nae and lotto are in configs.ts.
@@ -1257,14 +1258,21 @@ const REMOTE: Route = {
   reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
 }
 
-test('detect finds nothing to go on without a CLAUDE.md that names a project', async () => {
-  const none = fakeEngine([AUTH, REMOTE])
-  const plain = fakeEngine([AUTH, REMOTE], { 'CLAUDE.md': '# Notes\n' })
+test('detect without a CLAUDE.md that names a project looks for a board itself, and finds none to go on', async () => {
+  const routes = [GH_VERSION, AUTH, REMOTE, graphql({ linked: [] })]
+  const none = fakeEngine(routes)
+  const plain = fakeEngine(routes, { 'CLAUDE.md': '# Notes\n' })
+  const noBoard = { kind: 'local', noBoardFor: 'TeeratP/claude-kanban' }
 
-  expect(await detectBackend(none.$)).toEqual({ kind: 'local' })
-  expect(await detectBackend(plain.$)).toEqual({ kind: 'local' })
-  expect(none.calls).toHaveLength(0)
-  expect(plain.calls).toHaveLength(0)
+  expect(await detectBackend(none.$)).toEqual(noBoard)
+  expect(await detectBackend(plain.$)).toEqual(noBoard)
+  expect(none.calls.map(call => call.argv[0])).toEqual([
+    'git',
+    'gh',
+    'gh',
+    'gh',
+    'gh',
+  ])
   expect(none.logs).toEqual([])
 })
 
@@ -1483,7 +1491,7 @@ test('detect goes local when the project has no Status option it needs', async (
               {
                 id: 'PVTSSF_x',
                 name: 'Status',
-                options: [{ id: 'z', name: 'Todo' }],
+                options: [{ id: 'z', name: 'Triage' }],
               },
             ],
           }),

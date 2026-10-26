@@ -18,6 +18,8 @@ export type KanbanCard = {
   url?: string
   prNumbers?: number[]
 }
+// `inReview` is missing on a detected board without that status: Human is then the `human` label.
+// `isDetected`: found from git and gh with no config (`title` is the board's name then).
 export type KanbanGithub = {
   kind: 'github'
   repo: string
@@ -29,13 +31,24 @@ export type KanbanGithub = {
     backlog: string
     ready?: string
     inProgress: string
-    inReview: string
+    inReview?: string
     done: string
   }
+  title?: string
+  isDetected?: true
 }
 // `isConfigUnclear`: under `auto`, a CLAUDE.md or AGENTS.md mentions a board that could not be read.
+// `noBoardFor`: under `auto`, no GitHub board was found for this repo (`owner/name`).
 export type KanbanBackendInfo =
-  { kind: 'local'; isConfigUnclear?: true } | KanbanGithub
+  | { kind: 'local'; isConfigUnclear?: true; noBoardFor?: string }
+  | KanbanGithub
+/** A GitHub project the zero-config search found for the repo. */
+export type KanbanChoice = {
+  id: string
+  number: number
+  title: string
+  owner: string
+}
 export type KanbanBackendMode = 'auto' | 'github' | 'local'
 export type KanbanBoard = {
   mode: KanbanBackendMode
@@ -44,6 +57,8 @@ export type KanbanBoard = {
   fetchedAt: number
   isLoading: boolean
   error?: string
+  /** The boards to pick from, while the person has to choose one. */
+  pick?: KanbanChoice[]
 }
 export type KanbanSyncPhase = 'pending' | 'ok' | 'failed'
 export type KanbanSync = {
