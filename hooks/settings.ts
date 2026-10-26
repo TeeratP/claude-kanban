@@ -113,6 +113,17 @@ export function stepped(value: number, dir: 1 | -1): number | undefined {
   return next === value ? undefined : next
 }
 
+// Told of each setting the view has just changed, so what reads an option once
+// at load can follow it before the reload that carries the same value.
+let followed: ((field: SettingField, value: Value) => void) | undefined
+
+/** Sets who hears of a setting changed in the view, in place of the last one. */
+export function followSettings(
+  hear: (field: SettingField, value: Value) => void,
+): void {
+  followed = hear
+}
+
 /** Reads the mod's rows from the `/config` menu into the view's state. */
 export async function refreshSettings($: EngineInterface): Promise<void> {
   try {
@@ -174,6 +185,9 @@ export async function setSetting(
   } catch (error) {
     reason = errorMessage(error)
   }
+
+  const field = ownField(key)
+  if (reason === undefined && field !== undefined) followed?.(field, value)
 
   await updateSettings($, ({ denied: before, ...current }) => {
     const { [key]: _gone, ...denied } = before

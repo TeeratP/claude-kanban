@@ -3,7 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import type { KanbanSettingRow } from '../types'
-import { planActions } from '../hooks/toolbar'
+import { planStatus } from '../hooks/status'
+import type { StatusInput } from '../hooks/status'
 import {
   SETTING_FIELDS,
   boardAction,
@@ -12,15 +13,19 @@ import {
   stepped,
 } from '../hooks/settings'
 import { S } from '../hooks/strings'
-import { toolbar } from './board-ui'
+import { keys, litRows } from './board-ui'
+import type { BoardUi } from './board-ui'
 import { fakeProcess } from './fake-gh'
-import { PANE, RUN, boot, card, path } from './fakes'
+import type { Route } from './fake-gh'
+import { HANDED_OFF, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 import { KANBAN, github } from './github-board'
 import { overflow, renderPane } from './render'
 import {
   ALL_STATUSES,
   GH_VERSION,
+  NO_GH,
   SIGNED_IN,
+  SIGNED_OUT,
   fieldList,
   graphql,
   lines,
@@ -100,12 +105,15 @@ async function open(
   on: On,
   surface: RenderSurface = 'terminal',
   listed: ConfigRow[] = rows(),
+  // What `gh` answers: installed and signed in unless a test says otherwise.
+  gh: Route[] = [GH_VERSION, SIGNED_IN],
 ) {
   const world = boot(on, {
     [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
     'CLAUDE.md': '# Notes\n',
   })
   const config = fakeConfig(on, listed)
+  fakeProcess(on, gh)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -473,30 +481,111 @@ test('Change board is not offered when the backend is local by choice, and local
   expect(boardAction({ mode: 'auto', backend: null, pick: [] })).toBe('show')
 })
 
-test('the toolbar keeps Settings the longest of Refresh, New and Settings', () => {
-  const labels = (columns: number, canType = true) =>
-    planActions({ columns, canType, query: '', failed: 0 }).map(
-      one => one.label,
-    )
-
-  expect(labels(44)).toEqual(['Refresh', 'New', 'Find', 'Settings'])
-  expect(labels(37)).toEqual(['Refresh', 'New', 'Find', 'Settings'])
-  expect(labels(30)).toEqual(['New', 'Find', 'Settings'])
-  expect(labels(24)).toEqual(['Find', 'Settings'])
-  expect(labels(10)).toEqual(['Find'])
-  expect(labels(30, false)).toEqual(['Refresh', 'Settings'])
-  expect(labels(24, false)).toEqual(['Refresh', 'Settings'])
-  expect(labels(21, false)).toEqual(['Settings'])
+// The status row's input for a local board that was updated just now.
+const local = (
+  columns: number,
+  over: Partial<StatusInput> = {},
+): StatusInput => ({
+  columns,
+  mode: 'auto',
+  kind: 'local',
+  note: undefined,
+  boardName: '',
+  status: 'updated just now',
+  isAge: true,
+  canHint: true,
+  ...over,
 })
 
-test('the toolbar row ends with s: Settings', async ($, on) => {
-  await open($, on)
-  const ui = await mount($, 'terminal', 44)
+test('the status keeps the backend name and gives way to s: Settings: (auto) first, then the age, then the button shortens', () => {
+  const plan = (columns: number, over?: Partial<StatusInput>) =>
+    planStatus(local(columns, over))
 
-  expect((await toolbar(ui))[1]).toBe(
-    ' r: Refresh   n: New   f: Find   s: Settings',
+  expect(plan(80)).toEqual({
+    text: ' Local (auto) · updated just now · ↑↓ ⏎ open · m move',
+    settings: 'long',
+  })
+  expect(plan(44)).toEqual({
+    text: ' Local (auto) · updated just now',
+    settings: 'long',
+  })
+  // Below 44 the button takes the room the age had.
+  expect(plan(43)).toEqual({
+    text: ' Local · updated just now',
+    settings: 'long',
+  })
+  expect(plan(30)).toEqual({ text: ' Local', settings: 'long' })
+  expect(plan(18)).toEqual({ text: ' Local', settings: 'long' })
+  expect(plan(17)).toEqual({ text: ' Local', settings: 'short' })
+  expect(plan(14)).toEqual({ text: ' Local', settings: 'short' })
+  // No room for the name and a button: the name wins, cut as before.
+  expect(plan(13)).toEqual({ text: ' Local · upd…' })
+})
+
+test('a note on why the board is local and an error stay, cut, beside the button', () => {
+  const noted = planStatus(local(44, { note: 'board config not understood' }))
+  expect(noted).toEqual({
+    text: ' Local · board config not under…',
+    settings: 'long',
+  })
+
+  const failed = planStatus(
+    local(44, {
+      status: 'gh auth status failed: run gh auth login',
+      isAge: false,
+    }),
   )
+  expect(failed.text).toBe(' Local · gh auth status failed:…')
+})
+
+test('a detected board gets its name where the age gives way', () => {
+  const board = { boardName: "#2 @TeeratP's Kanban", kind: 'github' } as const
+
+  expect(planStatus(local(30, board))).toEqual({
+    text: ' GitHub · #2 @Tee…',
+    settings: 'long',
+  })
+  expect(planStatus(local(44, board)).text).toBe(' GitHub · updated just now')
+  expect(planStatus(local(80, board)).text).toBe(
+    " GitHub (auto) · #2 @TeeratP's Kanban · updated just now",
+  )
+})
+
+// Row 1 drawn as a terminal would: the status, then `s: Settings` flush right.
+const firstRow = async ($: Engine, surface: RenderSurface, columns: number) => {
+  const ui = await mount($, surface, columns)
+  const [first = ''] = await renderPane(ui, columns)
   await ui.unmount()
+
+  return first
+}
+
+// The status, then the button flush against the right edge.
+const flush = (text: string, columns: number, button = 's: Settings') =>
+  `${text.padEnd(columns - button.length)}${button}`
+
+test('row 1 holds the status and s: Settings flush right at 24, 30, 44 and 80 columns', async ($, on) => {
+  await open($, on)
+
+  expect(await firstRow($, 'terminal', 24)).toBe(flush(' Local', 24))
+  expect(await firstRow($, 'terminal', 30)).toBe(flush(' Local', 30))
+  expect(await firstRow($, 'terminal', 44)).toBe(
+    flush(' Local (auto) · updated just now', 44),
+  )
+  expect(await firstRow($, 'terminal', 80)).toBe(
+    flush(' Local (auto) · updated just now · ↑↓ ⏎ open · m move', 80),
+  )
+  // The mobile app has no key hint.
+  expect(await firstRow($, 'mobile', 80)).toBe(
+    flush(' Local (auto) · updated just now', 80),
+  )
+})
+
+test('row 1 shortens the button to s: Set… when the backend name has no more room', async ($, on) => {
+  await open($, on)
+
+  expect(await firstRow($, 'terminal', 17)).toBe(flush(' Local', 17, 's: Set…'))
+  expect(await firstRow($, 'terminal', 12)).toBe(' Local · up…')
 })
 
 test('every setting has help', () => {
@@ -615,5 +704,189 @@ test('under auto, a local board with no GitHub board found says why, and Change 
   expect(searches()).toBe(first * 2)
   // Nothing was found again, so the view stays.
   expect(await ui.find({ key: 'back' })).toBeDefined()
+  await ui.unmount()
+})
+
+// What a refusal reads in the view, wrapped lines joined.
+const reasonShown = async (ui: Awaited<ReturnType<typeof mount>>) =>
+  (await textOf(ui, 44)).map(line => line.trim()).join(' ')
+
+test('choosing GitHub in the view is refused while gh is not installed, as /config refuses it', async ($, on) => {
+  const { config, toasts } = await open($, on, 'terminal', rows(), [NO_GH])
+  const ui = await settingsAt($, 'terminal', 44)
+
+  await ui.press({ key: 'set:backend:github' })
+
+  expect(config.sets).toEqual([])
+  expect(toasts).toEqual([`Not changed: ${S.githubNeedsGh}`])
+  expect(await reasonShown(ui)).toContain(`Not changed: ${S.githubNeedsGh}`)
+  expect(await textOf(ui, 44)).toContain('  ✓ auto (default) · github · local')
+
+  // Auto and local never need gh.
+  await ui.press({ key: 'set:backend:local' })
+  expect(config.sets).toEqual([['kanban.backend', 'local']])
+  expect(await reasonShown(ui)).not.toContain('Not changed')
+  await ui.unmount()
+})
+
+test('choosing GitHub in the view is refused while gh is signed out', async ($, on) => {
+  const { config, toasts } = await open($, on, 'terminal', rows(), [
+    GH_VERSION,
+    SIGNED_OUT,
+  ])
+  const ui = await settingsAt($, 'terminal', 44)
+
+  await ui.press({ key: 'set:backend:github' })
+
+  expect(config.sets).toEqual([])
+  expect(toasts).toEqual([`Not changed: ${S.githubNeedsSignIn}`])
+  expect(await reasonShown(ui)).toContain(`Not changed: ${S.githubNeedsSignIn}`)
+  await ui.unmount()
+})
+
+test('choosing GitHub in the view goes through while gh is installed and signed in', async ($, on) => {
+  const { config, toasts } = await open($, on)
+  const ui = await settingsAt($, 'terminal', 44)
+
+  await ui.press({ key: 'set:backend:github' })
+
+  expect(config.sets).toEqual([['kanban.backend', 'github']])
+  expect(toasts).toEqual([])
+  await ui.unmount()
+})
+
+// Brings the cursor up and walks it down to `key`.
+async function goTo(ui: BoardUi, key: string) {
+  await keys(ui, 'down')
+  for (let step = 0; step < 30; step += 1) {
+    if ((await litRows(ui)).includes(key)) break
+    await keys(ui, 'down')
+  }
+  expect(await litRows(ui)).toEqual([key])
+}
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`m then s moves the carried card to Suspended and does not open Settings, and a bare s opens it on the ${surface}`, async ($, on) => {
+    const files: Record<string, string> = {
+      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
+      'CLAUDE.md': '# Notes\n',
+    }
+    const world = boot(on, files)
+    fakeConfig(on, rows())
+    fakeProcess(on, [GH_VERSION, SIGNED_IN])
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ ...RUN })
+    await world.clock.settle()
+    const ui = await mount($, surface)
+    const hotkey = async () =>
+      (await ui.find({ key: 'settings' }))?.props.hotkey
+    expect(await hotkey()).toBe('s')
+
+    await goTo(ui, 'card:md:0003-docs')
+    await keys(ui, 'm')
+    // While a card is carried `s` names Suspended: the button waits for it.
+    expect(await hotkey()).toBeUndefined()
+    await keys(ui, 's')
+    await world.clock.advance(SYNC_PAUSE)
+
+    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    expect(await ui.find({ key: 'back' })).toBeUndefined()
+    expect(await hotkey()).toBe('s')
+
+    // Not carrying, `s` opens Settings, whether the Client or the button hears it.
+    await keys(ui, 's')
+    expect((await ui.find({ key: 'back' }))?.props.hotkey).toBe('b')
+    await ui.unmount()
+  })
+
+  test(`a carry that ends with another key gives the button its hotkey back on the ${surface}`, async ($, on) => {
+    const world = boot(on, {
+      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
+    })
+    fakeConfig(on, rows())
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ ...RUN })
+    await world.clock.settle()
+    const ui = await mount($, surface)
+    const hotkey = async () =>
+      (await ui.find({ key: 'settings' }))?.props.hotkey
+
+    await goTo(ui, 'card:md:0003-docs')
+    await keys(ui, 'm')
+    expect(await hotkey()).toBeUndefined()
+    await keys(ui, 'q')
+
+    expect(await hotkey()).toBe('s')
+    await ui.unmount()
+  })
+
+  test(`a carry the board lost track of is forgotten after a while on the ${surface}`, async ($, on) => {
+    const world = boot(on, {
+      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
+    })
+    fakeConfig(on, rows())
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ ...RUN })
+    await world.clock.settle()
+    const ui = await mount($, surface)
+
+    await goTo(ui, 'card:md:0003-docs')
+    await keys(ui, 'm')
+    expect((await ui.find({ key: 'settings' }))?.props.hotkey).toBeUndefined()
+    // The redraw every 30 seconds, while the pane is open, finds the carry old.
+    world.world.panes.push('kanban')
+    await world.clock.advance(30_000)
+
+    expect((await ui.find({ key: 'settings' }))?.props.hotkey).toBe('s')
+    await ui.unmount()
+  })
+}
+
+const KANBAN_TOOL = (name: string) => `mcp__kanban__kanban_${name}` as const
+const ASKED = (n: number) =>
+  `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.`
+
+test('turning Reconcile off in the view stops the reconcile prompt, and on brings it back', async ($, on) => {
+  const world = boot(on, {
+    [path(2, 'api')]: card(
+      2,
+      { status: 'claude', title: 'Build API' },
+      HANDED_OFF,
+    ),
+    [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
+    [path(4, 'old')]: card(4, { status: 'backlog', title: 'Old idea' }),
+  })
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const config = fakeConfig(on, rows())
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: KANBAN_TOOL('list') })
+  await world.clock.settle()
+  // A turn that moves a card into Claude and says nothing more about it.
+  const turn = async (n: number, card: number) => {
+    await $.turn.start({ text: 'go', turnId: `t${n}` })
+    await $.tool.call({ tool: KANBAN_TOOL('move'), card, to: 'claude' })
+    await $.turn.complete({
+      answer: 'done',
+      durationMs: 0,
+      isAborted: false,
+      turnId: `t${n}`,
+      reason: 'answer',
+    })
+    await world.clock.settle()
+  }
+
+  await turn(1, 3)
+  expect(world.prompts).toEqual([ASKED(3)])
+
+  const ui = await settingsAt($, 'terminal', 44)
+  await ui.press({ key: 'set:reconcile:off' })
+  expect(config.sets).toEqual([['kanban.reconcile', false]])
+  await turn(2, 4)
+  expect(world.prompts).toEqual([ASKED(3)])
+
+  await ui.press({ key: 'set:reconcile:on' })
+  await turn(3, 4)
+  expect(world.prompts).toEqual([ASKED(3), ASKED(4)])
   await ui.unmount()
 })

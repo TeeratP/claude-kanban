@@ -16,7 +16,7 @@ import { guardEdit, guardWrite } from './guard'
 import { backlogSection } from './guide'
 import { applyQueue, claudeLimit } from './queue'
 import { dropUnfinishedAdds } from './quick-add'
-import { resumeSettings } from './settings'
+import { followSettings, resumeSettings } from './settings'
 import {
   reconcileOn,
   reconcileToolCall,
@@ -38,7 +38,11 @@ import { renderSettings } from './view-settings'
 export const register: Register = (on, options) => {
   const mode = backendMode(options.backend)
   const limit = claudeLimit(options.claudeLimit)
-  const isReconciling = reconcileOn(options.reconcile)
+  let isReconciling = reconcileOn(options.reconcile)
+  // The Settings view's change counts at once; the reload it causes carries the same value.
+  followSettings((field, value) => {
+    if (field === 'reconcile') isReconciling = reconcileOn(value)
+  })
 
   // Watching Claude work on a card never alters what it watches. These stand
   // first, so they wrap the tools below and see their results.

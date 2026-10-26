@@ -144,18 +144,23 @@ test('a repo with one linked board loads it with no config, and the toolbar name
 test('in a narrow pane the board name is cut, not the backend or the status', async ($, on) => {
   await open($, on, ready({ linked: [SHARED] }))
 
-  const narrow = await view($)
+  // `s: Settings` and a cell before it take 12 of the 56 columns.
+  const narrow = await view($, 56)
 
   expect(narrow.toolbar).toMatch(/^ GitHub \(auto\) · #2 .+… · updated/)
-  expect(narrow.toolbar.length).toBeLessThanOrEqual(44)
+  expect(narrow.toolbar.length).toBeLessThanOrEqual(56 - 12)
 })
 
 test('the board name is cut to the status row at 30, 44 and 80 columns, with the buttons on the row below', async ($, on) => {
   await open($, on, ready({ linked: [SHARED] }))
+  // The status gives way to `s: Settings` flush right: the age first (so the
+  // name has room), at 44 the name for the age, and at 80 the key hint.
+  const flush = (text: string, width: number) =>
+    `${text.padEnd(width - 's: Settings'.length)}s: Settings`
   const expected = {
-    30: ' GitHub · updated just now',
-    44: ' GitHub (auto) · #2 @Tee… · updated just now',
-    80: " GitHub (auto) · #2 @TeeratP's Kanban · updated just now · ↑↓ ⏎ open · m move",
+    30: flush(' GitHub · #2 @Tee…', 30),
+    44: flush(' GitHub · updated just now', 44),
+    80: flush(" GitHub (auto) · #2 @TeeratP's Kanban · updated just now", 80),
   }
 
   for (const width of [30, 44, 80] as const) {

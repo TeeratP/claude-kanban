@@ -89,7 +89,7 @@ const listed = ($: Engine) => $.tool.call({ tool: 'mcp__kanban__kanban_list' })
 test('with no setting, GitHub is used when it is available and the label says auto', async ($, on) => {
   await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
 
-  const shown = await board($)
+  const shown = await board($, 56)
 
   expect(shown.toolbar).toContain('GitHub (auto)')
   expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
@@ -110,7 +110,7 @@ test(
   async ($, on) => {
     await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
 
-    const shown = await board($)
+    const shown = await board($, 56)
 
     expect(shown.toolbar).toContain('GitHub (auto)')
     expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
@@ -123,7 +123,7 @@ test(
   async ($, on) => {
     await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
 
-    expect((await board($)).toolbar).toContain('GitHub (auto)')
+    expect((await board($, 56)).toolbar).toContain('GitHub (auto)')
   },
 )
 
@@ -436,6 +436,7 @@ async function openFromCache(
   on: On,
   store: Record<string, unknown>,
   routes: Route[] = [],
+  columns: number = PANE.props.bodyColumns,
 ) {
   const world = boot(on, files(), store)
   let release = () => {}
@@ -451,7 +452,7 @@ async function openFromCache(
   release()
   await world.clock.settle()
 
-  return { whileLoading, loaded: await board($) }
+  return { whileLoading, loaded: await board($, columns) }
 }
 
 test(
@@ -651,7 +652,8 @@ test('in a narrow pane the toolbar keeps the unclear-config note over the age', 
 
   const shown = await board($)
 
-  expect(shown.toolbar).toContain('Local (auto)')
+  // `s: Settings` takes the room " (auto)" had; the note stays, cut, and the age goes.
+  expect(shown.toolbar).toContain('Local · board config not')
   expect(shown.toolbar).not.toContain('updated')
 })
 
@@ -739,6 +741,7 @@ test('a local backend saved by an earlier start is detected again, so a config f
     on,
     cached('auto', { kind: 'local' }),
     [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD],
+    56,
   )
 
   expect(whileLoading.cards).toEqual(['card:gh:9'])
