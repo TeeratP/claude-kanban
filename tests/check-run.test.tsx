@@ -72,13 +72,18 @@ async function open(
   surface: 'terminal' | 'desktop' | 'vscode' | 'mobile',
   files: Record<string, string>,
   shell: () => Promise<Reply> | Reply = () => ({}),
+  columns: number = PANE.props.bodyColumns,
 ) {
   const world = boot(on, files)
   const commands = fakeShell(on, shell)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
-  const ui = await $.ui.mount({ ...PANE, surface })
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, bodyColumns: columns },
+  })
   await click(ui, 'card:md:0001-login')
 
   return { ...world, files, commands, ui }
@@ -101,7 +106,7 @@ for (const surface of SURFACES) {
     )
 
     expect(await ui.find({ key: 'check:run:0' })).toBeUndefined()
-    expect(await text(ui, /^Check$/)).toBeUndefined()
+    expect(await ui.find({ key: 'check' })).toBeUndefined()
     expect(commands).toEqual([])
     await ui.unmount()
   })
@@ -138,6 +143,23 @@ for (const surface of SURFACES) {
     expect(commands.map(one => one.argv)).toEqual([
       ['sh', '-c', 'npm install\nnpm test'],
     ])
+    await ui.unmount()
+  })
+
+  test(`on a narrow pane the command on the button is cut to the width and shown whole above it on the ${surface}`, async ($, on) => {
+    const long = 'npm run lint && npm run build && npm test'
+    const { ui } = await open(
+      $,
+      on,
+      surface,
+      cardWith(`Run \`${long}\``),
+      () => ({}),
+      30,
+    )
+
+    // The indent and the button's `[ ` and ` ]` take 6 columns, `Run check: ` 11 more.
+    expect(await label(ui, 'check:run:0')).toBe('Run check: npm run lint…')
+    expect((await ui.find({ type: 'Code' }))?.props.source).toBe(long)
     await ui.unmount()
   })
 
@@ -339,9 +361,9 @@ for (const surface of SURFACES) {
     expect(await text(ui, /^✓ Saved on the card$/)).toBeDefined()
     expect(await ui.find({ key: 'check:attach' })).toBeUndefined()
     expect(
-      (await ui.findAll({ type: 'Markdown' }))
-        .map(one => String(one.props.text))
-        .filter(shown => shown.startsWith('**Check run (2026-10-25)**')),
+      (await ui.findAll({ type: 'Box' }))
+        .filter(one => one.key?.startsWith('section:'))
+        .filter(one => one.text.startsWith('Check run · Oct 25')),
     ).toHaveLength(1)
     await ui.unmount()
   })

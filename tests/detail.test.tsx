@@ -5,8 +5,11 @@ import type { On } from 'claude-code'
 import type { KanbanBoard, KanbanDetail } from '../types'
 import { formatFeedback } from '../hooks/handoff'
 import { SETTLE_MS, capDiff } from '../hooks/model'
-import { click, under } from './board-ui'
+import { S } from '../hooks/strings'
+import { click, group, under } from './board-ui'
+import { boardRoute, fakeProcess, issueNode } from './fake-gh'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
+import { overflow, renderPane } from './render'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -107,7 +110,7 @@ for (const surface of SURFACES) {
 
     await click(ui, 'card:md:0001-login')
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
-      'Feedback (2026-10-25)',
+      'Feedback · Oct 25',
     )
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
       'Use the staging DB',
@@ -454,3 +457,402 @@ for (const surface of SURFACES) {
     await ui.unmount()
   })
 }
+
+// What the detail looks like: rendered as text at a width (see render.ts).
+
+const HISTORY = [
+  'Spec text.',
+  '',
+  '## Handoff (2026-10-24)',
+  '**Did:** First attempt',
+  '**Check:** Try it',
+  '**Changed:** auth.ts',
+  '**Need from you:** Look',
+  '',
+  '## Feedback (2026-10-24)',
+  'The redirect still loops.',
+  '',
+  '## Handoff (2026-10-25)',
+  '**Did:** Fixed the redirect',
+  '**Check:** Read the README',
+  '**Changed:** README.md',
+  '**Need from you:** Approve',
+].join('\n')
+
+async function openAt(
+  $: Engine,
+  on: On,
+  files: Record<string, string>,
+  columns: number,
+  open = 'card:md:0001-login',
+  surface: 'terminal' | 'desktop' | 'vscode' | 'mobile' = 'terminal',
+  // The card is in a section of the Inactive group, folded until it is pressed.
+  isInactive = false,
+) {
+  const world = boot(on, files)
+  await $.session.start({ cwd: '/', surface, isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, bodyColumns: columns },
+  })
+  if (isInactive) await group(ui, 'inactive')
+  await click(ui, open)
+
+  return { ...world, files, ui }
+}
+
+const reviewing = (body = HISTORY) => ({
+  [path(1, 'login')]: card(
+    1,
+    { status: 'human', title: 'Fix login redirect loop on Safari' },
+    body,
+  ),
+  [path(2, 'api')]: card(2, { status: 'human', title: 'Build API' }),
+})
+
+test('a Human card at 44 columns: nav, title, actions, the handoff to review, then the history', async ($, on) => {
+  const { ui } = await openAt($, on, reviewing(), 44)
+
+  expect(await renderPane(ui, 44)).toEqual([
+    'b: ← Board         k: ‹ Prev  1/2  n: Next ›',
+    '',
+    '#1 Fix login redirect loop on Safari',
+    'Human · updated 1h ago',
+    '',
+    '[ a: Approve ] [ s: Send back ] [ p: Park ]',
+    '[Feedback: What should Claude change?      ]',
+    '[                                          ]',
+    '[                                          ]',
+    'f: Write feedback',
+    '',
+    "Claude's handoff · Oct 25",
+    '  Did      Fixed the redirect',
+    '  Check    Read the README',
+    '  Changed  README.md',
+    '  Need     Approve',
+    '',
+    'Move to    Backlog · Claude',
+    'Set aside  Done · Suspend · Cancel',
+    '',
+    'Spec text.',
+    '',
+    'History',
+    '  Handoff · Oct 24',
+    '    Did      First attempt',
+    '    Check    Try it',
+    '    Changed  auth.ts',
+    '    Need     Look',
+    '',
+    '  Feedback · Oct 24',
+    '    The redirect still loops.',
+  ])
+  await ui.unmount()
+})
+
+const LONG = 'src/auth/redirect/with/a/long/path/redirect.test.ts'
+
+// Cards that crowd a narrow pane: long words, wide characters, a question.
+const CROWDED = {
+  'a handoff with long words': [
+    '修正登录页面重定向循环问题 and a title that is long enough to wrap',
+    [
+      `Spec text with a long word: ${LONG}`,
+      '',
+      '## Handoff (2026-10-25)',
+      `**Did:** Fixed the redirect so it keeps the original path; ${LONG}`,
+      '**Check:** Run `npm test` and open /login in Safari with cookies blocked',
+      `**Changed:** ${LONG}, README.md`,
+      '**Need from you:** Approve, or tell me what to change',
+    ].join('\n'),
+  ],
+  'a history': ['Fix login', HISTORY],
+  'a question': [
+    'Which database',
+    'Spec.\n\n## Question (2026-10-25)\nWhich database should the tests use?',
+  ],
+} as const
+
+for (const columns of [24, 30, 44, 80]) {
+  for (const [name, [title, body]] of Object.entries(CROWDED)) {
+    test(`nothing in the detail of ${name} runs past the edge at ${columns} columns`, async ($, on) => {
+      const files = {
+        [path(1, 'login')]: card(1, { status: 'human', title }, body),
+        [path(2, 'api')]: card(2, { status: 'human', title: 'Build API' }),
+        [path(3, 'docs')]: card(3, { status: 'human', title: 'Write docs' }),
+      }
+      const { ui } = await openAt($, on, files, columns)
+
+      expect(overflow(await renderPane(ui, columns), columns)).toEqual([])
+      await ui.unmount()
+    })
+  }
+}
+
+// The first row, `← Board` and the walk keys, as the pane narrows.
+const NAVS = [
+  [44, 'b: ← Board         k: ‹ Prev  1/2  n: Next ›'],
+  [34, 'b: ← Board   k: Prev  1/2  n: Next'],
+  [30, 'b: ← Board    k: Prev  n: Next'],
+  [24, 'b: ← Board    k: ‹  n: ›'],
+] as const
+
+for (const [columns, nav] of NAVS) {
+  test(`the nav keeps what fits at ${columns} columns: arrows go first, then the place, then the words`, async ($, on) => {
+    const { ui } = await openAt($, on, reviewing(), columns)
+
+    expect((await renderPane(ui, columns))[0]).toBe(nav)
+    await ui.unmount()
+  })
+}
+
+test('a Human card shows its newest handoff first, and every other section in the history', async ($, on) => {
+  const { ui } = await openAt($, on, reviewing(), 44)
+
+  expect(
+    (await ui.find({ type: 'Text', text: /^Claude's handoff/ }))?.text,
+  ).toBe("Claude's handoff · Oct 25")
+  const handoff = await ui.find({ key: 'handoff' })
+  expect(handoff?.text).toContain('Fixed the redirect')
+  expect(handoff?.text).not.toContain('First attempt')
+  // The handoff shown above is not shown again below.
+  expect((await ui.find({ key: 'section:0' }))?.text).toContain(
+    'Handoff · Oct 24',
+  )
+  expect((await ui.find({ key: 'section:1' }))?.text).toContain(
+    'Feedback · Oct 24',
+  )
+  expect(await ui.find({ key: 'section:2' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('feedback after a handoff leaves nothing to review, so the handoff stays in the history', async ($, on) => {
+  const body = `${HISTORY}\n\n## Feedback (2026-10-26)\nStill looping.`
+  const { ui } = await openAt($, on, reviewing(body), 44)
+
+  expect(await ui.find({ key: 'handoff' })).toBeUndefined()
+  expect((await ui.find({ key: 'section:2' }))?.text).toContain(
+    'Handoff · Oct 25',
+  )
+  expect((await ui.find({ key: 'section:3' }))?.text).toContain(
+    'Feedback · Oct 26',
+  )
+  await ui.unmount()
+})
+
+test('headings are colored by who wrote the section, and the pinned title by Claude', async ($, on) => {
+  const { ui } = await openAt($, on, reviewing(), 44)
+
+  // A heading is a Text in a Text: the colors are on the inner one.
+  const colors = async (text: RegExp) =>
+    (await ui.findAll({ type: 'Text', text })).map(one => one.props.color)
+  expect(await colors(/^Claude's$/)).toEqual(['claude'])
+  expect(await colors(/^Handoff · Oct 24$/)).toContain('claude')
+  expect(await colors(/^Feedback · Oct 24$/)).toContain('permission')
+  await ui.unmount()
+})
+
+test('the line under the title names the section in its color, then how old the card is', async ($, on) => {
+  const { ui } = await openAt($, on, reviewing(), 44)
+
+  expect(
+    (await ui.find({ type: 'Text', text: /^Human · updated 1h ago$/ }))?.text,
+  ).toBe('Human · updated 1h ago')
+  expect((await ui.find({ type: 'Text', text: /^Human$/ }))?.props.color).toBe(
+    'permission',
+  )
+  const title = await ui.find({ type: 'Text', text: /^#1 / })
+  expect(title?.children).toEqual([
+    { type: 'Text', props: { dimColor: true }, children: ['#1'] },
+    {
+      type: 'Text',
+      props: { weight: 'bold' },
+      children: [' Fix login redirect loop on Safari'],
+    },
+  ])
+  await ui.unmount()
+})
+
+test('S.shortDate reads a date as month and day, and leaves anything else alone', () => {
+  expect(S.shortDate('2026-10-25')).toBe('Oct 25')
+  expect(S.shortDate('2026-01-05')).toBe('Jan 5')
+  expect(S.shortDate('2026-12-31')).toBe('Dec 31')
+  expect(S.shortDate('2026-13-01')).toBe('2026-13-01')
+  expect(S.shortDate('soon')).toBe('soon')
+})
+
+for (const surface of ['terminal', 'vscode'] as const) {
+  test(`the move buttons are plain links in the suggestion color, joined by dots only on the terminal (${surface})`, async ($, on) => {
+    const { ui } = await openAt(
+      $,
+      on,
+      reviewing(),
+      44,
+      'card:md:0001-login',
+      surface,
+    )
+
+    const move = await ui.find({ key: 'move:claude' })
+    expect(move?.props.plain).toBe(true)
+    expect(move?.children).toEqual([
+      { type: 'Text', props: { color: 'suggestion' }, children: ['Claude'] },
+    ])
+    // The dim dots between the links of both rows (one, then two), on the terminal only.
+    const rows = await ui.find({ key: 'moves' })
+    expect(JSON.stringify(rows?.children).split('" · "').length - 1).toBe(
+      surface === 'terminal' ? 3 : 0,
+    )
+    await ui.unmount()
+  })
+}
+
+test('a move press on a wrapped row still reaches the button', async ($, on) => {
+  const { clock, ui, files } = await openAt($, on, reviewing(), 24)
+
+  await ui.press({ key: 'move:backlog' })
+  await clock.advance(SYNC_PAUSE)
+
+  expect(files[path(1, 'login')]).toContain('status: backlog')
+  await ui.unmount()
+})
+
+test('a move that is syncing says so in the section color, and a failed one offers Retry', async ($, on) => {
+  const { clock, ui, calls } = await openAt(
+    $,
+    on,
+    reviewing(),
+    44,
+    'card:md:0002-api',
+  )
+  calls.denyWrite = 'EACCES: read-only'
+
+  await ui.press({ key: 'move:backlog' })
+  expect(
+    (await ui.find({ type: 'Text', text: /^⟳ syncing to Backlog/ }))?.props
+      .color,
+  ).toBe('warning')
+  await clock.advance(SYNC_PAUSE)
+
+  expect(
+    (await ui.find({ type: 'Text', text: /^✕ .*EACCES/ }))?.props.color,
+  ).toBe('error')
+  expect((await ui.find({ key: 'retry' }))?.props.label).toBe('Retry')
+  await ui.unmount()
+})
+
+// A GitHub board with one Human card: its tag in words, and a link to the issue.
+test('on GitHub the line under the title names the tag and links to the issue', async ($, on) => {
+  const world = boot(on, {
+    'CLAUDE.md': [
+      '## Task tracking',
+      '- Repo: `TeeratP/claude-kanban` (public).',
+      '- Project board: #7 "claude-kanban" (owner `TeeratP`, project ID `PVT_kwHOAcCsLc4BorgL`).',
+      '- Status field `PVTSSF_lAHOAcCsLc4BorgLzhnKcpg` options: Backlog `1a1cd0bb` · Ready `61b99878` · In progress `b15c285e` · In review `5f34c9ff` · Done `201b4a64`.',
+    ].join('\n'),
+  })
+  fakeProcess(on, [
+    { match: ['gh', 'auth', 'status'], reply: {} },
+    {
+      match: ['git', 'remote', 'get-url', 'origin'],
+      reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
+    },
+    boardRoute([issueNode({ number: 3, status: 'In review' })]),
+    { match: ['gh', 'api', 'user'], reply: { stdout: 'TeeratP\n' } },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: {
+        stdout: JSON.stringify({
+          body: 'Spec.',
+          comments: [],
+          url: 'https://github.com/TeeratP/claude-kanban/issues/3',
+          state: 'OPEN',
+        }),
+      },
+    },
+  ])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await click(ui, 'card:gh:3')
+
+  const meta = await ui.find({ type: 'Text', text: /^Human · in review/ })
+  expect(meta?.text).toBe('Human · in review · updated 12d ago · GitHub')
+  const link = await ui.find({ type: 'Link' })
+  expect(link?.props).toMatchObject({
+    href: 'https://github.com/TeeratP/claude-kanban/issues/3',
+    label: 'GitHub',
+  })
+  await ui.unmount()
+})
+
+// The two move rows, as lines of text: Active sections the card can go to, then the ways to set it aside.
+const moveRows = async (ui: Parameters<typeof renderPane>[0], width: number) =>
+  (await renderPane(ui, width)).filter(
+    line => /^(Move to|Set aside|Aside) /.test(line) || /^ {8,}\S/.test(line),
+  )
+
+for (const [status, move, aside] of [
+  [
+    'backlog',
+    'Move to    Human · Claude',
+    'Set aside  Done · Suspend · Cancel',
+  ],
+  [
+    'human',
+    'Move to    Backlog · Claude',
+    'Set aside  Done · Suspend · Cancel',
+  ],
+  [
+    'claude',
+    'Move to    Backlog · Human',
+    'Set aside  Done · Suspend · Cancel',
+  ],
+  [
+    'done',
+    'Move to    Backlog · Human · Claude',
+    'Set aside  Suspend · Cancel',
+  ],
+  [
+    'suspended',
+    'Move to    Backlog · Human · Claude',
+    'Set aside  Done · Cancel',
+  ],
+  [
+    'cancelled',
+    'Move to    Backlog · Human · Claude',
+    'Set aside  Done · Suspend',
+  ],
+] as const) {
+  test(`a ${status} card moves to the other Active sections, and is set aside with Done, Suspend or Cancel`, async ($, on) => {
+    const files = {
+      [path(1, 'login')]: card(1, { status, title: 'Fix login' }),
+    }
+    const isInactive = ['done', 'suspended', 'cancelled'].includes(status)
+    const { ui } = await openAt(
+      $,
+      on,
+      files,
+      44,
+      'card:md:0001-login',
+      'terminal',
+      isInactive,
+    )
+
+    expect(await moveRows(ui, 44)).toEqual([move, aside])
+    await ui.unmount()
+  })
+}
+
+test('on a narrow pane the second row is labelled Aside', async ($, on) => {
+  const { ui } = await openAt($, on, reviewing(), 30)
+
+  expect(await moveRows(ui, 30)).toEqual([
+    'Move to Backlog · Claude',
+    'Aside   Done · Suspend',
+    '        Cancel',
+  ])
+  await ui.unmount()
+})

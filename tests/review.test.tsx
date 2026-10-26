@@ -49,14 +49,16 @@ async function open<P extends 'terminal' | 'desktop' | 'mobile'>(
 
 type Ui = Pick<Mounted, 'find'>
 
-// The open card as the detail draws it: its title and the line under it.
+// The open card as the detail draws it: its title, its section, and its place in the Human queue.
 async function shown(ui: Ui) {
   const title = (await ui.find({ type: 'Text', text: /^#\d/ }))?.text
   const meta = (await ui.find({ type: 'Text', text: /^(Human|Claude)/ }))?.text
+  const place = (await ui.find({ type: 'Text', text: /^\d+\/\d+$/ }))?.text
 
-  return { title, place: meta?.split(' · ')[0] }
+  return { title, section: meta?.split(' · ')[0], place }
 }
 
+// The line of key names the buttons used to be repeated in.
 const hint = async (ui: Ui) =>
   (await ui.find({ type: 'Text', text: /· b board$/ }))?.text
 
@@ -67,12 +69,14 @@ for (const surface of SURFACES) {
     await click(ui, API)
     expect(await shown(ui)).toEqual({
       title: '#2 Build API',
-      place: 'Human 1 of 3',
+      section: 'Human',
+      place: '1/3',
     })
     await ui.press({ key: 'next' })
     expect(await shown(ui)).toEqual({
       title: '#3 Write docs',
-      place: 'Human 2 of 3',
+      section: 'Human',
+      place: '2/3',
     })
     await ui.unmount()
   })
@@ -87,18 +91,11 @@ for (const surface of SURFACES) {
       walked.push((await shown(ui)).place)
     }
 
-    expect(walked).toEqual([
-      'Human 2 of 3',
-      'Human 3 of 3',
-      'Human 1 of 3',
-      'Human 3 of 3',
-      'Human 2 of 3',
-      'Human 1 of 3',
-    ])
+    expect(walked).toEqual(['2/3', '3/3', '1/3', '3/3', '2/3', '1/3'])
     await ui.unmount()
   })
 
-  test(`the keys are on the buttons and listed in a dim hint line on the ${surface}`, async ($, on) => {
+  test(`the keys are on the buttons, with no hint line repeating them, on the ${surface}`, async ($, on) => {
     const { ui } = await open($, on, surface)
     await click(ui, API)
 
@@ -109,11 +106,17 @@ for (const surface of SURFACES) {
     ).toEqual(['a', 's', 'p', 'f', 'n', 'k'])
     expect((await ui.find({ key: 'back' }))?.props.hotkey).toBe('b')
 
-    const line = await ui.find({ type: 'Text', text: /· b board$/ })
-    expect(line?.text).toBe(
-      'a approve · s send back · p park · f write · n next · k prev · b board',
-    )
-    expect(line?.props.dimColor).toBe(true)
+    // The nav and the feedback key are plain Buttons, drawn `k: ‹ Prev`; Approve leads.
+    const plain = async (...keys: string[]) =>
+      Promise.all(keys.map(async key => (await ui.find({ key }))?.props.plain))
+    expect(await plain('back', 'prev', 'next', 'focus')).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ])
+    expect((await ui.find({ key: 'approve' }))?.props.variant).toBe('primary')
+    expect(await hint(ui)).toBeUndefined()
     await ui.unmount()
   })
 
@@ -124,19 +127,17 @@ for (const surface of SURFACES) {
     await ui.press({ key: 'approve' })
     expect(await shown(ui)).toEqual({
       title: '#3 Write docs',
-      place: 'Human 1 of 2',
+      section: 'Human',
+      place: '1/2',
     })
     await clock.advance(SETTLE_MS)
     await ui.press({ key: 'park' })
     expect(await shown(ui)).toEqual({
       title: '#1 Fix login',
-      place: 'Human 1 of 1',
+      section: 'Human',
     })
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     expect(await ui.find({ key: 'prev' })).toBeUndefined()
-    expect(await hint(ui)).toBe(
-      'a approve · s send back · p park · f write · b board',
-    )
     await clock.advance(SETTLE_MS)
     await ui.press({ key: 'approve' })
 
@@ -160,7 +161,8 @@ for (const surface of SURFACES) {
     await ui.input({ key: 'feedback', text: 'Too soon' })
     expect(await shown(ui)).toEqual({
       title: '#3 Write docs',
-      place: 'Human 1 of 2',
+      section: 'Human',
+      place: '1/2',
     })
 
     await clock.advance(SETTLE_MS - 1)
@@ -197,13 +199,14 @@ for (const surface of SURFACES) {
     const { ui } = await open($, on, surface)
     await click(ui, API)
     await ui.press({ key: 'prev' })
-    expect((await shown(ui)).place).toBe('Human 3 of 3')
+    expect((await shown(ui)).place).toBe('3/3')
 
     await ui.press({ key: 'approve' })
 
     expect(await shown(ui)).toEqual({
       title: '#2 Build API',
-      place: 'Human 1 of 2',
+      section: 'Human',
+      place: '1/2',
     })
     await ui.unmount()
   })
@@ -220,7 +223,8 @@ for (const surface of SURFACES) {
 
       expect(await shown(ui)).toEqual({
         title: '#3 Write docs',
-        place: 'Human 1 of 2',
+        section: 'Human',
+        place: '1/2',
       })
       expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
       await clock.advance(SYNC_PAUSE)
@@ -259,21 +263,21 @@ for (const surface of SURFACES) {
     await click(ui, API)
 
     await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
-    expect((await shown(ui)).place).toBe('Human 1 of 2')
+    expect((await shown(ui)).place).toBe('1/2')
     await ui.press({ key: 'next' })
     expect(await shown(ui)).toEqual({
       title: '#1 Fix login',
-      place: 'Human 2 of 2',
+      section: 'Human',
+      place: '2/2',
     })
     await ui.press({ key: 'next' })
     expect((await shown(ui)).title).toBe('#2 Build API')
 
     // The card on show leaves too: no place, no walking, no keys for a decision.
     await $.tool.call({ ...MOVE, card: 2, to: 'claude' })
-    expect((await shown(ui)).place).toBe('Claude')
+    expect((await shown(ui)).section).toBe('Claude')
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     expect(await ui.find({ key: 'approve' })).toBeUndefined()
-    expect(await hint(ui)).toBeUndefined()
     await clock.advance(SYNC_PAUSE)
     await ui.unmount()
   })
@@ -284,7 +288,8 @@ for (const surface of SURFACES) {
     await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
     await $.tool.call({ ...MOVE, card: 1, to: 'claude' })
 
-    expect((await shown(ui)).place).toBe('Human 1 of 1')
+    expect(await shown(ui)).toMatchObject({ section: 'Human' })
+    expect((await shown(ui)).place).toBeUndefined()
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     await ui.press({ key: 'approve' })
 
@@ -297,11 +302,10 @@ for (const surface of SURFACES) {
 
     await click(ui, TESTS)
 
-    expect((await shown(ui)).place).toBe('Claude')
+    expect((await shown(ui)).section).toBe('Claude')
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     expect(await ui.find({ key: 'prev' })).toBeUndefined()
     expect(await ui.find({ key: 'focus' })).toBeUndefined()
-    expect(await hint(ui)).toBeUndefined()
     await ui.unmount()
   })
 
@@ -350,9 +354,7 @@ for (const surface of SURFACES) {
         withQuestion(),
       )
       await click(ui, API)
-      expect(await hint(ui)).toBe(
-        'a approve · s answer · p park · f write · n next · k prev · b board',
-      )
+      expect((await ui.find({ key: 'sendback' }))?.props.hotkey).toBe('s')
       expect((await ui.find({ key: 'focus' }))?.props.label).toBe(
         'Write answer',
       )
@@ -361,7 +363,8 @@ for (const surface of SURFACES) {
 
       expect(await shown(ui)).toEqual({
         title: '#3 Write docs',
-        place: 'Human 1 of 2',
+        section: 'Human',
+        place: '1/2',
       })
       expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
       await clock.advance(SYNC_PAUSE)
@@ -385,14 +388,15 @@ test('the mobile app walks and decides the queue without a field', async ($, on)
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
   expect(await ui.find({ key: 'focus' })).toBeUndefined()
   expect(await ui.find({ key: 'sendback' })).toBeUndefined()
-  expect(await hint(ui)).toBe('a approve · p park · n next · k prev · b board')
+  expect(await hint(ui)).toBeUndefined()
 
   await ui.press({ key: 'next' })
-  expect((await shown(ui)).place).toBe('Human 2 of 3')
+  expect((await shown(ui)).place).toBe('2/3')
   await ui.press({ key: 'approve' })
   expect(await shown(ui)).toEqual({
     title: '#1 Fix login',
-    place: 'Human 2 of 2',
+    section: 'Human',
+    place: '2/2',
   })
   await clock.advance(SYNC_PAUSE)
   expect(files[path(3, 'docs')]).toContain('status: done')

@@ -64,12 +64,10 @@ export const S = {
   cardHasNoFile: (card: KanbanCard) => `Card #${card.number} has no file.`,
 
   back: '← Board',
-  moveTo: 'Move to:',
   detailLoading: 'Loading…',
   noSpec: '(no description)',
   cardGone: 'This card is no longer on the board.',
   detailFailed: (reason: string) => `Could not read the card: ${reason}`,
-  metaColumn: (column: KanbanColumn) => COL[column],
   syncPending: (to: KanbanColumn) => `⟳ syncing to ${COL[to]}`,
   handoffHeading: (date: string, byOther?: string) =>
     `Handoff (${date})${fromOther(byOther)}`,
@@ -246,25 +244,10 @@ export const S = {
   checkLogFailed: (reason: string) => `kanban: a check run failed: ${reason}`,
 
   // #18
-  queuePosition: (at: number, total: number) =>
-    `${COL.human} ${at} of ${total}`,
-  prevCard: '‹ Prev',
-  nextCard: 'Next ›',
   focusFeedback: 'Write feedback',
   focusAnswer: 'Write answer',
   focusFailed: (reason: string) =>
     `Could not move to the feedback box: ${reason}`,
-  reviewHint: (keys: readonly string[]) => keys.join(' · '),
-  reviewKeys: {
-    approve: 'a approve',
-    sendBack: 's send back',
-    answer: 's answer',
-    park: 'p park',
-    write: 'f write',
-    next: 'n next',
-    prev: 'k prev',
-    board: 'b board',
-  },
 
   // #15
   // Short: they share a 44-column toolbar with the backend label.
@@ -294,7 +277,6 @@ export const S = {
     `Recorded your question on #${card.number} and moved it to Human (syncing). Stop here: you are asked to resume once the person answers.`,
   claudeAsks: (card: KanbanCard) =>
     `Claude asks: ${card.question ?? card.title} (#${card.number})`,
-  askBlock: 'Claude asks',
   answerButton: 'Answer',
   answerLabel: 'Answer',
   answerPlaceholder: 'Your answer to Claude',
@@ -337,7 +319,6 @@ export const S = {
     `Could not reorder #${card.number} in ${COL[card.column]}, so it is back where it was: ${reason}`,
   reorderUp: '↑',
   reorderDown: '↓',
-  reorderLabel: 'Move in section:',
 
   // #23
   add: 'New',
@@ -379,7 +360,6 @@ export const S = {
   // #25
   filter: 'Find',
   filterLabel: 'Filter',
-  filterPlaceholder: 'words, #12, label:ai, @claude',
   filterSubmit: 'done',
   filterClear: '✕',
   filterCount: (shown: number, total: number) => `${shown}/${total}`,
@@ -461,4 +441,65 @@ export const S = {
   paneTitleCount: (waiting: number) => `Kanban · ${waiting}`,
   retitleFailed: (reason: string) =>
     `kanban: could not retitle the pane: ${reason}`,
+
+  // #38
+  dot: ' · ',
+  // The nav's Prev and Next, whole to bare: the arrows go first, then the place, then the words.
+  navPrev: ['‹ Prev', 'Prev', 'Prev', '‹'],
+  navNext: ['Next ›', 'Next', 'Next', '›'],
+  position: (at: number, total: number) => `${at}/${total}`,
+  tagWords: {
+    review: 'in review',
+    human: 'labelled human',
+    question: 'question',
+  } satisfies Record<KanbanTag, string>,
+  detailUpdated: (age: string) =>
+    age === 'now' ? 'updated just now' : `updated ${age} ago`,
+  githubLink: 'GitHub',
+  shortDate: (iso: string) => {
+    const [, month, day] = /^\d{4}-(\d{2})-(\d{2})$/.exec(iso) ?? []
+    const name = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ][Number(month) - 1]
+
+    return name === undefined ? iso : `${name} ${Number(day)}`
+  },
+  pinnedHandoff: { who: "Claude's", rest: ' handoff' },
+  pinnedAsk: { who: 'Claude', rest: ' asks' },
+  sectionName: SECTION_NAME,
+  notCounted: (login: string) => ` from @${login}, not counted`,
+  historyHeading: 'History',
+  handoffField: {
+    did: 'Did',
+    check: 'Check',
+    changed: 'Changed',
+    need: 'Need',
+  },
+  moveRowLabel: 'Move to',
+  setAsideRow: { long: 'Set aside', short: 'Aside' },
+  reorderRowLabel: 'Reorder',
+  // Quick add's hint and details button, the longest that fits first.
+  addRowClosed: [
+    { hint: '⏎ adds to Backlog', details: 'Add details' },
+    { hint: '⏎ add', details: 'Details' },
+    { hint: '⏎', details: 'Details' },
+  ],
+  addRowOpen: [
+    { hint: '⏎ adds to Backlog', details: 'Hide details' },
+    { hint: '⏎ adds', details: 'Hide details' },
+    { hint: '⏎ add', details: 'Hide' },
+    { hint: '⏎', details: 'Hide' },
+  ],
+  filterTerms: 'words, #12, label:ai, @done',
 }

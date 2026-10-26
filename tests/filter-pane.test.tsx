@@ -167,7 +167,7 @@ for (const surface of SURFACES) {
     const field = await ui.find({ key: FIELD })
     expect(field?.type).toBe('Input')
     expect(field?.props.label).toBe('Filter')
-    expect(field?.props.placeholder).toBe('words, #12, label:ai, @claude')
+    expect(field?.props.placeholder).toBe('words, #12, label:ai, @done')
 
     await ui.input({ key: FIELD, text: 'fix', kind: 'change' })
     expect((await ui.find({ key: FIELD }))?.props.value).toBe('fix')

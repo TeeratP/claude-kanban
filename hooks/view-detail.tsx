@@ -1,18 +1,27 @@
-import type { EngineInterface, RenderInput } from 'claude-code'
+import type {
+  EngineInterface,
+  RenderElement,
+  RenderInput,
+  ThemeKey,
+} from 'claude-code'
 
 import type {
   KanbanCard,
   KanbanColumn,
   KanbanDetail,
+  KanbanSection,
   KanbanSync,
   KanbanView,
 } from '../types'
 import {
+  type Totals,
   agentsOf,
+  agentsOfRound,
   colorOf,
   liveTotals,
-  roundLabel,
-  totalLabel,
+  statsLabel,
+  tokenLabel,
+  totalsOf,
 } from './activity-view'
 import {
   readActivity,
@@ -29,12 +38,13 @@ import { ensureBackend } from './board'
 import { formatAnswer, formatFeedback, questionOf } from './handoff'
 import { queueAfter, queueAt, queueStep, sectionList } from './layout'
 import {
-  COLUMNS,
+  GROUPS,
   MAX_ATTEMPTS,
   PANE,
   SETTLE_MS,
   ageLabel,
   capDiff,
+  cellWidth,
   errorMessage,
   isOrdered,
   isPendingId,
@@ -43,6 +53,7 @@ import { shiftCard } from './reorder'
 import { S } from './strings'
 import { moveCard, moveOptions, retry } from './sync'
 import { renderCheck } from './view-check'
+import { dotted, packRows, separatorWidth } from './view-parts'
 
 type DetailView = Extract<KanbanView, { mode: 'detail' }>
 
@@ -280,13 +291,104 @@ export async function sendBack(
   }
 }
 
+// How a card's section reads in its line under the title; Human and Claude carry their colors.
+const SECTION_LOOK: Partial<
+  Record<KanbanColumn, { color: ThemeKey } | { dimColor: true }>
+> = {
+  human: { color: 'permission' },
+  claude: { color: 'claude' },
+  done: { dimColor: true },
+  cancelled: { dimColor: true },
+  suspended: { dimColor: true },
+}
+
+// The sections that set a card aside, in the order the row lists them.
+const SET_ASIDE = ['done', 'suspended', 'cancelled'] as const
+
+const SYNC_COLOR = {
+  pending: 'warning',
+  ok: 'success',
+  failed: 'error',
+} as const satisfies Record<KanbanSync['phase'], ThemeKey>
+
+// Who wrote a section: Claude, or the person.
+const WRITER = {
+  handoff: 'claude',
+  question: 'claude',
+  feedback: 'permission',
+  answer: 'permission',
+  check: 'permission',
+} as const satisfies Record<KanbanSection['kind'], ThemeKey>
+
+const HANDOFF_FIELDS = ['did', 'check', 'changed', 'need'] as const
+
+// Below this many columns the label boxes take their narrow width.
+const NARROW = 40
+
+// Cells between the Prev, the place and the Next.
+const NAV_GAP = 2
+
+// The handoff the person is being asked to look at: the newest counted one, unless
+// feedback or an answer has come after it.
+function currentHandoff(sections: readonly KanbanSection[]) {
+  const counted = sections.filter(one => one.byOther === undefined)
+  const handoff = counted.findLast(one => one.kind === 'handoff')
+  const reply = counted.findLastIndex(
+    one => one.kind === 'feedback' || one.kind === 'answer',
+  )
+
+  return handoff !== undefined && counted.indexOf(handoff) > reply
+    ? handoff
+    : undefined
+}
+
+// The fields of a handoff that say something, as label and text.
+function handoffRows(section: KanbanSection): [string, string][] {
+  const { fields } = section
+  if (fields === undefined) return []
+
+  return HANDOFF_FIELDS.flatMap(name =>
+    fields[name].trim() === '' ? [] : [[S.handoffField[name], fields[name]]],
+  )
+}
+
+// What follows `Total` or `Round N`: time and tokens, cache reads, then `extra`.
+function activityValue(totals: Totals, ...extra: string[]) {
+  const stats = statsLabel(totals)
+
+  return [
+    stats === '' ? '-' : stats,
+    ...(totals.cacheRead > 0 ? [S.cached(tokenLabel(totals.cacheRead))] : []),
+    ...extra,
+  ].join(S.statsSep)
+}
+
+// The least cut of the Prev / place / Next group that fits beside Board: the
+// arrows go first, then the place, then the words.
+function navLevel(columns: number, place: string): number {
+  const back = cellWidth(`b: ${S.back}`)
+  for (const level of [0, 1, 2]) {
+    const items = [
+      `k: ${S.navPrev[level]}`,
+      ...(level < 2 ? [place] : []),
+      `n: ${S.navNext[level]}`,
+    ]
+    const width =
+      items.reduce((sum, item) => sum + cellWidth(item), 0) +
+      NAV_GAP * (items.length - 1)
+    if (back + 1 + width <= columns) return level
+  }
+
+  return 3
+}
+
 export async function renderDetail(
   $: EngineInterface,
   e: RenderInput<'Pane'>,
   view: DetailView,
 ) {
   const els = $.ui.resolve(e)
-  const { Box, Button, Code, Markdown, Text } = els
+  const { Box, Button, Code, Link, Markdown, Text } = els
   // The mobile app draws no field yet, though its element table names Input.
   const Input = e.surface !== 'mobile' && 'Input' in els ? els.Input : undefined
   const board = await readBoard($)
@@ -296,10 +398,13 @@ export async function renderDetail(
   const activity = await readActivity($)
   const now = await $.clock.now()
   const card = board.cards.find(one => one.id === view.cardId)
+  const columns = e.props.bodyColumns
+  const isNarrow = columns < NARROW
 
   const back = (
     <Button
       key="back"
+      plain
       hotkey="b"
       label={S.back}
       onPress={() => closeDetail($)}
@@ -307,7 +412,7 @@ export async function renderDetail(
   )
   if (card === undefined) {
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" gap={1}>
         {back}
         <Text dimColor>{S.cardGone}</Text>
       </Box>
@@ -318,35 +423,24 @@ export async function renderDetail(
   const worked = activity.cards[card.id]
   const isHuman = card.column === 'human'
   const queue = isHuman ? queueAt(board.cards, card.id) : undefined
-  const canWalk = queue !== undefined && queue.total > 1
-  const meta = [
-    queue === undefined
-      ? S.col[card.column]
-      : S.queuePosition(queue.index + 1, queue.total),
-    ageLabel(card.updatedAt, now),
-    entry === undefined ? '' : syncNote(entry),
-  ].filter(part => part !== '')
   const isReady = detail?.cardId === card.id && !detail.isLoading
   const hasDiff = (card.prNumbers?.length ?? 0) > 0
   const tab = hasDiff ? view.tab : 'card'
   const isAsk = isHuman && card.tag === 'question'
   // The question being asked, once the card's sections are read.
   const asking = isReady && isAsk ? questionOf(detail.sections) : undefined
-  const hint = [
-    S.reviewKeys.approve,
-    ...(Input === undefined
-      ? []
-      : [isAsk ? S.reviewKeys.answer : S.reviewKeys.sendBack]),
-    S.reviewKeys.park,
-    ...(Input === undefined ? [] : [S.reviewKeys.write]),
-    ...(canWalk ? [S.reviewKeys.next, S.reviewKeys.prev] : []),
-    S.reviewKeys.board,
-  ]
+  // What the person is shown first: the open question, else the handoff to review.
+  const pinned =
+    isReady && isHuman && detail.error === undefined
+      ? (asking ?? currentHandoff(detail.sections))
+      : undefined
   // Where the Client has drag and keys, the board reorders; elsewhere it is here.
   const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
   const siblings = sectionList(board.cards, card.column)
   const place = siblings.findIndex(one => one.id === card.id)
   const canReorder = !hasClient && isOrdered(card.column) && place >= 0
+  const labelWidth = isNarrow ? 8 : 11
+  const fieldWidth = isNarrow ? 8 : 9
 
   const drawDiff = (shown: KanbanDetail) => {
     switch (shown.diffState) {
@@ -368,34 +462,171 @@ export async function renderDetail(
     }
   }
 
+  // A dim label, then what it is about, in two columns.
+  const listed = (key: string, rows: readonly [string, string][]) => (
+    <Box key={key} flexDirection="column">
+      {rows.map(([label, text], index) => (
+        <Box key={`${key}:${index}`} flexDirection="row">
+          <Box width={fieldWidth}>
+            <Text dimColor>{label}</Text>
+          </Box>
+          <Text wrap="wrap">{text}</Text>
+        </Box>
+      ))}
+    </Box>
+  )
+
+  // A section's content: a handoff's fields in two columns, any other text as Markdown.
+  const contentOf = (section: KanbanSection) => {
+    const rows = handoffRows(section)
+
+    return rows.length > 0 ? (
+      listed('fields', rows)
+    ) : (
+      <Markdown text={section.text} />
+    )
+  }
+
+  // A dim label, then the Buttons it is for in rows that fit the width.
+  const labelled = (
+    key: string,
+    label: string,
+    buttons: readonly { key: string; width: number; button: RenderElement }[],
+  ) => (
+    <Box key={`row:${key}`} flexDirection="row">
+      <Box width={labelWidth}>
+        <Text dimColor>{label}</Text>
+      </Box>
+      <Box flexDirection="column">
+        {packRows(
+          buttons,
+          one => one.width,
+          columns - labelWidth,
+          separatorWidth(e.surface),
+        ).map(line => (
+          <Box key={`line:${line.map(one => one.key).join(':')}`}>
+            {dotted(
+              $,
+              e,
+              line.map(one => one.button),
+            )}
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  )
+
+  // The sections a card can move to, as one row of links under a label.
+  const moveRow = (
+    key: string,
+    label: string,
+    targets: readonly { column: KanbanColumn; name: string }[],
+  ) =>
+    labelled(
+      key,
+      label,
+      targets.map(({ column, name }) => ({
+        key: column,
+        width: cellWidth(name),
+        button: (
+          <Button
+            key={`move:${column}`}
+            plain
+            label={name}
+            onPress={() =>
+              moveCard($, card.id, column, moveOptions(card.column, column))
+            }
+          >
+            <Text color="suggestion">{name}</Text>
+          </Button>
+        ),
+      })),
+    )
+
   const check =
     isReady && tab === 'card' && detail.error === undefined
       ? await renderCheck($, e, card, detail.sections, now)
       : null
 
-  return (
-    <Box flexDirection="column">
-      <Box flexDirection="row" gap={1}>
+  const blocks: RenderElement[] = []
+
+  if (queue !== undefined && queue.total > 1) {
+    const position = S.position(queue.index + 1, queue.total)
+    const level = navLevel(columns, position)
+    blocks.push(
+      <Box key="nav" flexDirection="row" justifyContent="space-between">
         {back}
-        {canWalk && (
+        <Box flexDirection="row" gap={NAV_GAP}>
           <Button
             key="prev"
+            plain
             hotkey="k"
-            label={S.prevCard}
+            label={S.navPrev[level] ?? ''}
             onPress={() => stepQueue($, card.id, -1)}
           />
-        )}
-        {canWalk && (
+          {level < 2 && <Text dimColor>{position}</Text>}
           <Button
             key="next"
+            plain
             hotkey="n"
-            label={S.nextCard}
+            label={S.navNext[level] ?? ''}
             onPress={() => stepQueue($, card.id, 1)}
           />
+        </Box>
+      </Box>,
+    )
+  } else {
+    blocks.push(back)
+  }
+
+  const age = ageLabel(card.updatedAt, now)
+  const metaParts: RenderElement[] = [
+    <Text key="section" {...(SECTION_LOOK[card.column] ?? {})}>
+      {S.col[card.column]}
+    </Text>,
+    ...(card.tag === undefined
+      ? []
+      : [
+          <Text key="tag" dimColor>
+            {S.tagWords[card.tag]}
+          </Text>,
+        ]),
+    ...(age === ''
+      ? []
+      : [
+          <Text key="updated" dimColor>
+            {S.detailUpdated(age)}
+          </Text>,
+        ]),
+    ...(entry === undefined
+      ? []
+      : [
+          <Text key="sync" color={SYNC_COLOR[entry.phase]}>
+            {syncNote(entry)}
+          </Text>,
+        ]),
+    ...(card.url === undefined
+      ? []
+      : [<Link key="link" href={card.url} label={S.githubLink} />]),
+  ]
+  blocks.push(
+    <Box key="head" flexDirection="column">
+      <Text wrap="wrap">
+        <Text dimColor>{`#${card.number}`}</Text>
+        <Text weight="bold">{` ${card.title}`}</Text>
+      </Text>
+      <Text>
+        {metaParts.flatMap((part, index) =>
+          index === 0
+            ? [part]
+            : [
+                <Text key={`dot:${index}`} dimColor>
+                  {S.dot}
+                </Text>,
+                part,
+              ],
         )}
-      </Box>
-      <Text weight="bold">{`#${card.number} ${card.title}`}</Text>
-      <Text dimColor>{meta.join(' · ')}</Text>
+      </Text>
       {worked !== undefined && (
         <Box flexDirection="column">
           <Text>
@@ -408,14 +639,21 @@ export async function renderDetail(
               </Text>
             ))}
           </Text>
-          <Text dimColor>
-            {totalLabel(liveTotals(worked, activity.live, now))}
-          </Text>
-          {worked.rounds.map((round, index) => (
-            <Text key={`round:${index}`} dimColor>
-              {roundLabel(index + 1, round)}
-            </Text>
-          ))}
+          <Box paddingLeft={2}>
+            {listed('activity', [
+              [
+                S.totalHeading,
+                activityValue(liveTotals(worked, activity.live, now)),
+              ],
+              ...worked.rounds.map((round, index): [string, string] => [
+                S.roundHeading(index + 1),
+                activityValue(
+                  totalsOf([round]),
+                  agentsOfRound(round).join(', '),
+                ),
+              ]),
+            ])}
+          </Box>
         </Box>
       )}
       {entry?.phase === 'failed' && (
@@ -426,11 +664,13 @@ export async function renderDetail(
           onPress={() => retry($, card.id)}
         />
       )}
-      {asking !== undefined && (
-        <Markdown key="question" text={`**${S.askBlock}**\n\n${asking.text}`} />
-      )}
-      {isHuman && (
-        <Box flexDirection="row" gap={1}>
+    </Box>,
+  )
+
+  if (isHuman) {
+    blocks.push(
+      <Box key="actions" flexDirection="column">
+        <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
           <Button
             key="approve"
             hotkey="a"
@@ -455,106 +695,171 @@ export async function renderDetail(
             onPress={() => decide($, card.id, 'backlog')}
           />
         </Box>
-      )}
-      {isHuman && Input === undefined && (
-        <Text dimColor>{isAsk ? S.answerNoField : S.sendBackNoField}</Text>
-      )}
-      {isHuman && Input !== undefined && (
-        <Button
-          key="focus"
-          hotkey="f"
-          label={isAsk ? S.focusAnswer : S.focusFeedback}
-          onPress={() => focusFeedback($)}
-        />
-      )}
-      {isHuman && Input !== undefined && (
-        <Input
-          key="feedback"
-          label={isAsk ? S.answerLabel : S.feedbackLabel}
-          placeholder={isAsk ? S.answerPlaceholder : S.feedbackPlaceholder}
-          rows={3}
-          value={ui.draft}
-          onInput={value => updateUi($, one => ({ ...one, draft: value }))}
-          onSubmit={value => sendBack($, card.id, value)}
-        />
-      )}
-      {isHuman && <Text dimColor>{S.reviewHint(hint)}</Text>}
-      <Box flexDirection="row" gap={1}>
-        <Text dimColor>{S.moveTo}</Text>
-        {COLUMNS.filter(column => column !== card.column).map(column => (
-          <Button
-            key={`move:${column}`}
-            label={
-              column === 'done' ||
-              column === 'suspended' ||
-              column === 'cancelled'
-                ? S.setAsideTo[column]
-                : S.col[column]
-            }
-            onPress={() =>
-              moveCard($, card.id, column, moveOptions(card.column, column))
-            }
-          />
-        ))}
-      </Box>
-      {canReorder && siblings.length > 1 && (
-        <Box flexDirection="row" gap={1}>
-          <Text dimColor>{S.reorderLabel}</Text>
-          {place > 0 && (
-            <Button
-              key="reorder:up"
-              label={S.reorderUp}
-              onPress={() => shiftCard($, card.id, 'up')}
-            />
-          )}
-          {place < siblings.length - 1 && (
-            <Button
-              key="reorder:down"
-              label={S.reorderDown}
-              onPress={() => shiftCard($, card.id, 'down')}
-            />
-          )}
-        </Box>
-      )}
-      {hasDiff && (
-        <Box flexDirection="row" gap={1}>
-          <Button
-            key="tab:card"
-            variant={tab === 'card' ? 'primary' : 'secondary'}
-            label={S.tabCard}
-            onPress={() => showTab($, card.id, 'card')}
-          />
-          <Button
-            key="tab:diff"
-            variant={tab === 'diff' ? 'primary' : 'secondary'}
-            label={S.tabDiff}
-            onPress={() => showTab($, card.id, 'diff')}
-          />
-        </Box>
-      )}
-      {!isReady && <Text dimColor>{S.detailLoading}</Text>}
-      {isReady && tab === 'diff' && drawDiff(detail)}
-      {isReady && tab === 'card' && detail.error !== undefined && (
-        <Text color="error">{S.detailFailed(detail.error)}</Text>
-      )}
-      {isReady && tab === 'card' && detail.error === undefined && (
-        <Markdown
-          key="spec"
-          text={detail.body === '' ? S.noSpec : detail.body}
-        />
-      )}
-      {isReady &&
-        tab === 'card' &&
-        detail.sections.map((section, index) =>
-          // The open question is shown at the top.
-          section === asking ? null : (
-            <Markdown
-              key={`section:${index}`}
-              text={`**${S.headingOf(section)}**\n\n${section.text}`}
-            />
-          ),
+        {Input === undefined && (
+          <Text dimColor>{isAsk ? S.answerNoField : S.sendBackNoField}</Text>
         )}
-      {check}
+        {Input !== undefined && (
+          <Input
+            key="feedback"
+            label={isAsk ? S.answerLabel : S.feedbackLabel}
+            placeholder={isAsk ? S.answerPlaceholder : S.feedbackPlaceholder}
+            rows={3}
+            value={ui.draft}
+            onInput={value => updateUi($, one => ({ ...one, draft: value }))}
+            onSubmit={value => sendBack($, card.id, value)}
+          />
+        )}
+        {Input !== undefined && (
+          <Button
+            key="focus"
+            plain
+            dimColor
+            hotkey="f"
+            label={isAsk ? S.focusAnswer : S.focusFeedback}
+            onPress={() => focusFeedback($)}
+          />
+        )}
+      </Box>,
+    )
+  }
+
+  if (pinned !== undefined) {
+    const title = asking === undefined ? S.pinnedHandoff : S.pinnedAsk
+    blocks.push(
+      <Box
+        key={asking === undefined ? 'handoff' : 'question'}
+        flexDirection="column"
+      >
+        <Text>
+          <Text weight="bold" color="claude">
+            {title.who}
+          </Text>
+          <Text weight="bold">
+            {`${title.rest}${S.dot}${S.shortDate(pinned.date)}`}
+          </Text>
+        </Text>
+        <Box paddingLeft={2}>{contentOf(pinned)}</Box>
+      </Box>,
+    )
+    // The Check runs what that handoff says to check, so it follows it.
+    if (check !== null) blocks.push(check)
+  }
+
+  blocks.push(
+    <Box key="moves" flexDirection="column">
+      {moveRow(
+        'move',
+        S.moveRowLabel,
+        GROUPS.active
+          .filter(column => column !== card.column)
+          .map(column => ({ column, name: S.col[column] })),
+      )}
+      {moveRow(
+        'aside',
+        isNarrow ? S.setAsideRow.short : S.setAsideRow.long,
+        SET_ASIDE.filter(column => column !== card.column).map(column => ({
+          column,
+          name: S.setAsideTo[column],
+        })),
+      )}
+    </Box>,
+  )
+
+  if (canReorder && siblings.length > 1) {
+    const arrow = (dir: 'up' | 'down') => {
+      const mark = dir === 'up' ? S.reorderUp : S.reorderDown
+
+      return {
+        key: dir,
+        width: cellWidth(mark),
+        button: (
+          <Button
+            key={`reorder:${dir}`}
+            plain
+            label={mark}
+            onPress={() => shiftCard($, card.id, dir)}
+          >
+            <Text color="suggestion">{mark}</Text>
+          </Button>
+        ),
+      }
+    }
+    const arrows = [
+      ...(place > 0 ? [arrow('up')] : []),
+      ...(place < siblings.length - 1 ? [arrow('down')] : []),
+    ]
+    blocks.push(labelled('reorder', S.reorderRowLabel, arrows))
+  }
+
+  if (hasDiff) {
+    blocks.push(
+      <Box key="tabs" flexDirection="row" gap={1}>
+        <Button
+          key="tab:card"
+          variant={tab === 'card' ? 'primary' : 'secondary'}
+          label={S.tabCard}
+          onPress={() => showTab($, card.id, 'card')}
+        />
+        <Button
+          key="tab:diff"
+          variant={tab === 'diff' ? 'primary' : 'secondary'}
+          label={S.tabDiff}
+          onPress={() => showTab($, card.id, 'diff')}
+        />
+      </Box>,
+    )
+  }
+
+  if (!isReady) {
+    blocks.push(<Text dimColor>{S.detailLoading}</Text>)
+  } else if (tab === 'diff') {
+    blocks.push(drawDiff(detail))
+  } else if (detail.error !== undefined) {
+    blocks.push(<Text color="error">{S.detailFailed(detail.error)}</Text>)
+  } else {
+    blocks.push(
+      <Markdown
+        key="spec"
+        text={detail.body === '' ? S.noSpec : detail.body}
+      />,
+    )
+    // The pinned section is shown above, not twice.
+    const history = detail.sections.flatMap((section, index) =>
+      section === pinned ? [] : [{ section, index }],
+    )
+    if (history.length > 0) {
+      blocks.push(
+        <Box key="history" flexDirection="column">
+          <Text weight="bold">{S.historyHeading}</Text>
+          <Box flexDirection="column" paddingLeft={2} gap={1}>
+            {history.map(({ section, index }) => (
+              <Box key={`section:${index}`} flexDirection="column">
+                <Text>
+                  <Text
+                    weight="bold"
+                    {...(section.byOther === undefined
+                      ? { color: WRITER[section.kind] }
+                      : {})}
+                  >
+                    {`${S.sectionName[section.kind]}${S.dot}${S.shortDate(section.date)}`}
+                  </Text>
+                  {section.byOther !== undefined && (
+                    <Text dimColor>{S.notCounted(section.byOther)}</Text>
+                  )}
+                </Text>
+                <Box paddingLeft={2}>{contentOf(section)}</Box>
+              </Box>
+            ))}
+          </Box>
+        </Box>,
+      )
+    }
+  }
+  if (check !== null && pinned === undefined) blocks.push(check)
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      {blocks}
     </Box>
   )
 }

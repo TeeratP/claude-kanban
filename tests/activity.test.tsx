@@ -421,11 +421,13 @@ test('the detail view lists the agents by name and breaks the totals into rounds
   await click(ui, API)
   const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
   expect(texts).toContain('Agents: ● Claude ● Explore')
-  expect(texts).toContain('Total · 8m · 48k tok · 120k cached')
-  expect(texts).toContain(
-    'Round 1 · 5m · 12k tok · 50k cached · Claude, Explore',
-  )
-  expect(texts).toContain('Round 2 · 3m · 36k tok · 70k cached · Claude')
+  // The totals and each round are rows of two columns: a label, then the figures.
+  expect(texts).toContain('Total')
+  expect(texts).toContain('8m · 48k tok · 120k cached')
+  expect(texts).toContain('Round 1')
+  expect(texts).toContain('5m · 12k tok · 50k cached · Claude, Explore')
+  expect(texts).toContain('Round 2')
+  expect(texts).toContain('3m · 36k tok · 70k cached · Claude')
   await ui.unmount()
 })
 
@@ -749,8 +751,9 @@ test('a card that comes back after a reload starts a round of its own', async ($
 
   await click(ui, API)
   const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
-  expect(texts).toContain('Total · 14m · 48k tok · 120k cached')
-  expect(texts).toContain('Round 3 · 2m · Claude')
+  expect(texts).toContain('14m · 48k tok · 120k cached')
+  expect(texts).toContain('Round 3')
+  expect(texts).toContain('2m · Claude')
   await ui.unmount()
 })
 
