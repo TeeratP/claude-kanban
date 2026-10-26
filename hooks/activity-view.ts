@@ -137,29 +137,6 @@ export function agentsOf(one: KanbanCardActivity): string[] {
     : names.filter((name, index) => names.indexOf(name) === index)
 }
 
-/** A round on its own line: its number, time and tokens, cache reads and agents. */
-export function roundLabel(n: number, round: KanbanRound): string {
-  const stats = statsLabel(totalsOf([round]))
-
-  return [
-    S.roundHeading(n),
-    stats === '' ? '-' : stats,
-    ...(round.cacheRead > 0 ? [S.cached(tokenLabel(round.cacheRead))] : []),
-    agentsOfRound(round).join(', '),
-  ].join(S.statsSep)
-}
-
-/** The card's totals on one line, led by `Total`: time, tokens, cache reads. */
-export function totalLabel(totals: Totals): string {
-  const stats = statsLabel(totals)
-
-  return [
-    S.totalHeading,
-    stats === '' ? '-' : stats,
-    ...(totals.cacheRead > 0 ? [S.cached(tokenLabel(totals.cacheRead))] : []),
-  ].join(S.statsSep)
-}
-
 /**
  * The ids of the Claude cards that get a second row: those Claude has worked on,
  * except a card waiting in the queue, which is not being worked on.

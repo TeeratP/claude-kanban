@@ -64,10 +64,6 @@ export const S = {
   cardGone: 'This card is no longer on the board.',
   detailFailed: (reason: string) => `Could not read the card: ${reason}`,
   syncPending: (to: KanbanColumn) => `⟳ syncing to ${COL[to]}`,
-  handoffHeading: (date: string, byOther?: string) =>
-    `Handoff (${date})${fromOther(byOther)}`,
-  feedbackHeading: (date: string, byOther?: string) =>
-    `Feedback (${date})${fromOther(byOther)}`,
 
   toolList: {
     description:
@@ -326,7 +322,6 @@ export const S = {
   addDetailsLabel: 'Details',
   addDetailsPlaceholder: 'What is to be done, and how to tell it is done',
   addSubmit: 'add',
-  addDetails: 'Add details',
   addCancel: 'Cancel',
   addNeedsTitle: 'Give the card a title first.',
   addFailed: (reason: string) => `Could not add the card: ${reason}`,

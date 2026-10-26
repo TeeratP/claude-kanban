@@ -12,9 +12,8 @@ import {
   detailIds,
   detailSegs,
   durationLabel,
-  roundLabel,
+  statsLabel,
   tokenLabel,
-  totalLabel,
   totalsOf,
   truncateStart,
 } from '../hooks/activity-view'
@@ -108,16 +107,11 @@ test('rounds add up, with the cache reads kept apart from the tokens', () => {
     tokens: 48_000,
     cacheRead: 120_000,
   })
-  expect(totalLabel(totalsOf(rounds))).toBe(
-    'Total · 8m · 48k tok · 120k cached',
-  )
-  expect(roundLabel(2, rounds[1] as KanbanRound)).toBe(
-    'Round 2 · 3m · 36k tok · 70k cached · Claude',
-  )
+  expect(statsLabel(totalsOf(rounds))).toBe('8m · 48k tok')
 })
 
-test('a card row stays on one line while Claude has nothing to show yet', () => {
-  expect(totalLabel(totalsOf([round()]))).toBe('Total · -')
+test('a round with nothing to count has no stats to label', () => {
+  expect(statsLabel(totalsOf([round()]))).toBe('')
 })
 
 test('a path cut to fit keeps its end, from a slash when there is one', () => {
@@ -422,7 +416,7 @@ test('the name, the activity and the stats are joined by a dot, and the row says
     ),
   ).toBe('     ● Explore · idle 3m · 12m · 48k')
   // The detail view keeps the long form, where there is room to say what it is.
-  expect(totalLabel(totalsOf(one.rounds))).toBe('Total · 12m · 48k tok')
+  expect(statsLabel(totalsOf(one.rounds))).toBe('12m · 48k tok')
 })
 
 test('a narrow pane gives up the activity first, then the name, and keeps the stats', () => {
