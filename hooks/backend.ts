@@ -8,11 +8,13 @@ import type {
   KanbanDetail,
   KanbanGithub,
 } from '../types'
+import { readConfigText } from './config'
 import {
   appendGithub,
   createGithub,
   detailGithub,
   diffGithub,
+  mentionsBoard,
   moveGithub,
   parseClaudeMd,
   resolveGithub,
@@ -115,19 +117,14 @@ export function backendMode(value: unknown): BackendMode {
   return value === 'github' || value === 'local' ? value : 'auto'
 }
 
-const CLAUDE_MD = ['CLAUDE.md', '.claude/CLAUDE.md']
+// What the config files say: the board they name, if the text can be read,
+// and whether they mention one even if it cannot.
+type Config = { found: ParsedClaudeMd | null; mentionsBoard: boolean }
 
-async function readProjectConfig(
-  $: EngineInterface,
-): Promise<ParsedClaudeMd | null> {
-  for (const file of CLAUDE_MD) {
-    if (!(await $.fs.exists(file))) continue
+async function readProjectConfig($: EngineInterface): Promise<Config> {
+  const text = await readConfigText($)
 
-    const found = parseClaudeMd(await $.fs.read(file))
-    if (found !== null) return found
-  }
-
-  return null
+  return { found: parseClaudeMd(text), mentionsBoard: mentionsBoard(text) }
 }
 
 // What a failed check says: `auto` logs the reason as it is, `github` adds
@@ -179,9 +176,10 @@ async function checkGithub(
 
 /**
  * Picks the backend for this directory. `local` is always local files. `auto`
- * is GitHub when a CLAUDE.md names a repo and project and `gh` and `git` are
- * usable there, local files otherwise. `github` is GitHub or an error that
- * names the check that failed and how to fix it; it never falls back.
+ * is GitHub when CLAUDE.md, AGENTS.md or a file they import names a repo and
+ * project and `gh` and `git` are usable there, local files otherwise (marked
+ * when a board is mentioned that could not be read). `github` is GitHub or an
+ * error that names the check that failed and how to fix it; it never falls back.
  */
 export async function detectBackend(
   $: EngineInterface,
@@ -190,17 +188,23 @@ export async function detectBackend(
   if (mode === 'local') return { kind: 'local' }
 
   if (mode === 'github') {
-    const found = await readProjectConfig($)
+    const { found } = await readProjectConfig($)
     if (found === null) throw new Error(S.githubNoProject)
 
     return checkGithub($, found, GITHUB)
   }
 
   try {
-    const found = await readProjectConfig($)
-    if (found === null) return { kind: 'local' }
+    const config = await readProjectConfig($)
+    if (config.found === null) {
+      if (!config.mentionsBoard) return { kind: 'local' }
 
-    return await checkGithub($, found, AUTO)
+      $.ui.log(S.githubDetectFailed(S.githubConfigUnclear), { to: 'debug' })
+
+      return { kind: 'local', isConfigUnclear: true }
+    }
+
+    return await checkGithub($, config.found, AUTO)
   } catch (error) {
     $.ui.log(S.githubDetectFailed(errorMessage(error)), { to: 'debug' })
 

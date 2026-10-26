@@ -150,6 +150,16 @@ export function toRowViews(input: RowViewInput): RowView[] {
           ...view([seg(truncate(S.noCards, columns), { dim: true })]),
         })
         break
+
+      case 'hint':
+        views.push({
+          key: `hint:${row.line}`,
+          kind: 'text',
+          ...view([
+            seg(truncate(S.githubHint[row.line] ?? '', columns), { dim: true }),
+          ]),
+        })
+        break
     }
   }
 

@@ -16,7 +16,7 @@ import { S } from './strings'
 type Options = KanbanGithub['options']
 type OptionKey = keyof Options
 
-/** What a CLAUDE.md says about its GitHub project; ids it leaves out are looked up. */
+/** What a CLAUDE.md or AGENTS.md says about its GitHub project; ids it leaves out are looked up. */
 export type ParsedClaudeMd = {
   repo: string
   owner: string
@@ -46,16 +46,36 @@ const STATUS_NAME: Record<OptionKey, string> = {
 }
 
 const REPO = /\brepo(?:sitory)?\b[^`\n:]{0,12}:\**\s*`([\w.-]+\/[\w.-]+)`/i
-const PROJECT_NUMBER = /Project(?: board)?\**:?\**\s*#(\d+)/i
+// The project number, most explicit form first: a project's URL, then
+// `Project board: #7`, then `project number `2``, `project **2**` and
+// `project 2`, and last a `#N` shortly after the word project or board.
+const PROJECT_NUMBER = [
+  /\bgithub\.com\/(?:users|orgs)\/[\w.-]+\/projects\/(\d+)/i,
+  /\bProject(?: board)?\**:?\**\s*#(\d+)/i,
+  /\bproject(?: board| number)?[^\w\n#]{0,6}(\d+)\b(?!\.\d)/i,
+  /\b(?:project|board)\b[^\n#]{0,40}#(\d+)\b/i,
+]
 const PROJECT_ID = /\bPVT_[A-Za-z0-9_-]+/
 const STATUS_FIELD_ID = /PVTSSF_[A-Za-z0-9_-]+/
-const STATUS_LINE = /status field/i
-const OPTION = /(Backlog|Ready|In progress|In review|Done)\s*`([0-9a-f]{6,})`/gi
+const STATUS_LINE = /\bstatus\W{0,3}field/i
+// A board is mentioned even if the repo and number cannot be read.
+const BOARD_MENTION =
+  /\bPVT_[A-Za-z0-9_-]+|\bgh project\b|\bproject board\b|\bgithub\.com\/(?:users|orgs)\/[\w.-]+\/projects\/\d+/i
+// `Ready `61e4505c``, also `Ready (To Do) option `61e4505c``.
+const OPTION =
+  /(Backlog|Ready|In progress|In review|Done)(?:\s*\([^)\n]*\))?(?:\s+option)?\s*`([0-9a-f]{6,})`/gi
 
-/** Reads the repo and project ids a CLAUDE.md records; null without a repo and project number. */
+/** Whether a CLAUDE.md or AGENTS.md text names a GitHub project board, understood or not. */
+export function mentionsBoard(text: string): boolean {
+  return BOARD_MENTION.test(text)
+}
+
+/** Reads the repo and project ids a CLAUDE.md or AGENTS.md records; null without a repo and project number. */
 export function parseClaudeMd(text: string): ParsedClaudeMd | null {
   const repo = REPO.exec(text)?.[1]
-  const projectNumber = PROJECT_NUMBER.exec(text)?.[1]
+  const projectNumber = PROJECT_NUMBER.map(
+    pattern => pattern.exec(text)?.[1],
+  ).find(found => found !== undefined)
   if (repo === undefined || projectNumber === undefined) return null
 
   const lines = text.replaceAll('\r\n', '\n').split('\n')

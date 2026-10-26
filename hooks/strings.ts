@@ -211,7 +211,8 @@ export const S = {
       ? ''
       : `${BACKEND[name]}${mode === 'auto' ? ' (auto)' : ''}`
   },
-  githubNoProject: 'CLAUDE.md needs a Repo and a Project board line',
+  githubNoProject:
+    'CLAUDE.md or AGENTS.md needs a Repo and a Project board line',
   githubSignedOut: (reason: string) =>
     `gh auth status failed: run gh auth login (${reason})`,
   githubNoRemote: (reason: string) =>
@@ -391,4 +392,15 @@ export const S = {
   // #31
   positionSkipped: (card: KanbanCard, reason: string) =>
     `kanban: left #${card.number} where GitHub put it, its position was not set: ${reason}`,
+
+  // #32
+  configUnreadable: (file: string, reason: string) =>
+    `kanban: could not read ${file} for the board config: ${reason}`,
+  githubConfigUnclear:
+    'CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
+  configUnclear: 'board config not understood',
+  githubHint: [
+    'GitHub board? Add Repo and Project board lines to CLAUDE.md or AGENTS.md',
+    'Not picked up? Set backend: github to see why',
+  ],
 }

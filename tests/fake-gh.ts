@@ -38,10 +38,16 @@ export function fakeEngine(
   const calls: Call[] = []
   const logs: string[] = []
   const toasts: string[] = []
+  const fsCalls = { exists: [] as string[], reads: [] as string[] }
   const $ = {
     fs: {
-      exists: async (file: string) => file in files,
+      exists: async (file: string) => {
+        fsCalls.exists.push(file)
+
+        return file in files
+      },
       read: async (file: string) => {
+        fsCalls.reads.push(file)
         const text = files[file]
         if (text === undefined) throw new Error(`ENOENT: ${file}`)
 
@@ -73,7 +79,7 @@ export function fakeEngine(
     },
   } as unknown as EngineInterface
 
-  return { $, calls, logs, toasts }
+  return { $, calls, fsCalls, logs, toasts }
 }
 
 /**
