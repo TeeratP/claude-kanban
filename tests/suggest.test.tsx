@@ -733,7 +733,11 @@ test('the system prompt gets one short section, once, and the bare prompt none',
     sections.filter(one => one.id === 'kanban:suggest')
   expect(mine(first.sections)).toHaveLength(1)
   expect(mine(second.sections)).toHaveLength(1)
-  expect(first.sections.map(one => one.id)).toEqual(['intro', 'kanban:suggest'])
+  expect(first.sections.map(one => one.id)).toEqual([
+    'intro',
+    'kanban:suggest',
+    'kanban:backlog',
+  ])
   expect(first.sections[1]).toMatchObject({ scope: 'session' })
   expect(first.sections[1]?.text).toContain('mcp__kanban__kanban_suggest')
   expect(first.sections[1]?.text.length).toBeLessThan(300)
@@ -756,7 +760,11 @@ test('a prompt that already holds the section is not given a second', async ($, 
 
   const { sections } = await $.prompt.compose(COMPOSE)
 
-  expect(sections.map(one => [one.id, one.text])).toEqual([
+  expect(
+    sections
+      .filter(one => one.id !== 'kanban:backlog')
+      .map(one => [one.id, one.text]),
+  ).toEqual([
     ['intro', 'You are Claude.'],
     ['kanban:suggest', 'Already here.'],
   ])
