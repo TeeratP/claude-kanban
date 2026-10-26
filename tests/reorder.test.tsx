@@ -672,25 +672,12 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a refused reorder waits for a retry and, out of tries, the card goes back with the reason on the ${surface}`, async ($, on) => {
-    const {
-      clock,
-      ui: narrow,
-      files,
-      calls,
-      toasts,
-    } = await start($, on, surface)
+    const { clock, ui, files, calls, toasts } = await start($, on, surface)
     calls.denyWrite = 'EACCES: read-only'
     const before = { ...files }
 
-    await drag(narrow, DEPS, 'hdr:backlog')
+    await drag(ui, DEPS, 'hdr:backlog')
     await clock.advance(SYNC_PAUSE)
-    // With the retry in the toolbar, Refresh has no room in 44 columns.
-    await narrow.unmount()
-    const ui = await $.ui.mount({
-      ...PANE,
-      surface,
-      props: { ...PANE.props, bodyColumns: 80 },
-    })
     expect(await ui.find({ key: 'retry-all' })).toBeDefined()
     expect(await under(ui, 'hdr:backlog')).toEqual([DEPS, DOCS, LINT])
 

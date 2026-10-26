@@ -1,5 +1,7 @@
 import type { Mounted } from 'claude-code/testing'
 
+import { padEnd } from '../hooks/model'
+
 // The board's list rows are a Client's Text on the terminal and the desktop and
 // Buttons elsewhere. These reach a row by its key (`grp:inactive`, `hdr:human`,
 // `card:<id>`, `more:<column>:<dir>`) on either, so a test body can run on every
@@ -195,6 +197,10 @@ function plainText(node: unknown): string {
 
   const { type, props, children } = node as Drawn
   const inner = (children ?? []).map(plainText).join('')
+  // A Box of a fixed width is that wide, as the status row's left part is.
+  if (type === 'Box' && typeof props?.width === 'number') {
+    return padEnd(inner, props.width)
+  }
   if (type !== 'Button') return inner
 
   const label = children === undefined ? String(props?.label ?? '') : inner

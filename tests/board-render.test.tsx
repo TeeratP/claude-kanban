@@ -139,7 +139,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
 
   expect(await fits(ui, 44, 'active open')).toEqual([
     ' Local (auto) · updated just now',
-    ' r: Refresh   n: New   f: Find   s: Settings',
+    ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 8 ────────────────────────────────',
     '   #40 Write docs                        20h',
@@ -172,14 +172,14 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
   await ui.unmount()
 })
 
-test('Active open at 30 columns drops (auto) and Refresh, and the long titles are cut', async ($, on) => {
+test('Active open at 30 columns drops (auto), the Refresh label stays and the long titles are cut', async ($, on) => {
   await start($, on, board())
   const ui = await mount($, 30)
   const lines = await fits(ui, 30, 'active open')
 
   expect(lines.slice(0, 7)).toEqual([
     ' Local · updated just now',
-    'n: New f: Find s: Settings',
+    ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 8 ──────────────────',
     '   #40 Write docs          20h',
@@ -202,7 +202,7 @@ test('Inactive open: Active is a summary, the dim cards keep the title column an
 
   expect(await fits(ui, 44, 'inactive open')).toEqual([
     ' Local (auto) · updated just now',
-    ' r: Refresh   n: New   f: Find   s: Settings',
+    ' r: Refresh   n: New   f: Find',
     '▸ Active      8 Backlog · 3 Human · 2 Claude',
     '▾ Inactive',
     '  Done 12 ──────────────────────── 10 newest',
@@ -242,7 +242,7 @@ test('both groups folded: two summaries and the line that says to press one, whi
 
   expect(await fits(ui, 44, 'both folded')).toEqual([
     ' Local (auto) · updated just now',
-    ' r: Refresh   n: New   f: Find   s: Settings',
+    ' r: Refresh   n: New   f: Find',
     '▸ Active      8 Backlog · 3 Human · 2 Claude',
     '▸ Inactive                         12D 1C 1S',
     '  Press a group to open it',
@@ -263,7 +263,7 @@ test('an empty board says what each section is for, and where cards live', async
 
   expect(await fits(ui, 44, 'empty')).toEqual([
     ' Local (auto) · updated just now',
-    ' r: Refresh   n: New   f: Find   s: Settings',
+    ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 0 ────────────────────────────────',
     '       Nothing yet · n adds a card',
@@ -315,7 +315,7 @@ test('the first load draws bars where the cards will be, never an empty board', 
 
   expect(await fits(ui, 44, 'loading')).toEqual([
     ' Local (auto) · loading…',
-    ' r: Refresh   n: New   f: Find   s: Settings',
+    ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog ──────────────────────────────────',
     '       ───────────────────',

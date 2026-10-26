@@ -562,6 +562,7 @@ export const S = {
   // #44
   // The toolbar button and the view's title.
   settings: 'Settings',
+  settingsShort: 'Set…',
   settingsLoading: 'Loading…',
   settingsNone: 'No kanban settings found. Try /config.',
   settingsFailed: (reason: string) => `Could not read the settings: ${reason}`,

@@ -193,9 +193,8 @@ for (const surface of SURFACES) {
     expect((await row(ui, 'grp:inactive'))?.text).toMatch(
       /^▸ Inactive\s+1 match$/,
     )
-    // The text shows in the toolbar's Find button, with a button to clear it;
-    // Settings leaves it room for one letter in 44 columns.
-    expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "f…"')
+    // The text shows in the toolbar's Find button, with a button to clear it.
+    expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "fix"')
     expect((await ui.find({ key: 'filter:clear' }))?.text).toBe('✕')
 
     await ui.input({ key: FIELD, text: 'fix login', kind: 'change' })
@@ -211,7 +210,7 @@ for (const surface of SURFACES) {
     await ui.input({ key: FIELD, text: 'fix' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
     expect(await cardsIn(ui, files, 'backlog')).toEqual([ALPHA, BETA, GAMMA])
-    expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "f…"')
+    expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "fix"')
 
     await ui.press({ key: 'filter' })
     expect((await ui.find({ key: FIELD }))?.props.value).toBe('fix')
@@ -747,7 +746,9 @@ test('a long filter is cut to fit the action row and the status row keeps its te
   await applyFilter(ui, query)
 
   const [status, actions] = await toolbar(ui)
-  expect(actions).toMatch(/^r: Refresh n: New f: Find "l…" ✕ s: Settings$/)
+  expect(actions).toMatch(
+    /^ r: Refresh {3}n: New {3}f: Find "label:ai[^"]*…" ✕$/,
+  )
   expect(status).toContain('updated')
   expect(cellWidth(status)).toBeLessThanOrEqual(PANE.props.bodyColumns)
   expect(cellWidth(actions)).toBeLessThanOrEqual(PANE.props.bodyColumns)

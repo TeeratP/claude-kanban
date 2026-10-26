@@ -2,6 +2,7 @@ import type { ConfigRow, EngineInterface } from 'claude-code'
 
 import type { KanbanBoard, KanbanSettingRow } from '../types'
 import { readBoard, updateBoard, updateSettings, updateUi } from './atoms'
+import { githubDenial } from './backend-config'
 import { refresh, setBoard } from './board'
 import { errorMessage } from './model'
 import { changeBoard } from './pick'
@@ -129,7 +130,11 @@ export async function refreshSettings($: EngineInterface): Promise<void> {
 
 /** Shows the Settings view and reads the rows it lists. */
 export async function openSettings($: EngineInterface): Promise<void> {
-  await updateUi($, ui => ({ ...ui, view: { mode: 'settings' } }))
+  await updateUi($, ui => ({
+    ...ui,
+    view: { mode: 'settings' },
+    carrySince: 0,
+  }))
   await updateSettings($, current => ({ ...current, denied: {} }))
   await refreshSettings($)
 }
@@ -160,7 +165,12 @@ export async function setSetting(
 ): Promise<void> {
   let reason: string | undefined
   try {
-    reason = (await $.config.set({ key, value })).deny
+    // The engine does not run this plugin's own `config.set` hooks for its own
+    // `$.config.set`, so the check that /config meets in `guardBackend` is made here.
+    if (ownField(key) === 'backend' && value === 'github') {
+      reason = await githubDenial($)
+    }
+    if (reason === undefined) reason = (await $.config.set({ key, value })).deny
   } catch (error) {
     reason = errorMessage(error)
   }

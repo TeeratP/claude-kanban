@@ -40,8 +40,10 @@ async function ghState(
   return asked
 }
 
-// Why GitHub cannot be chosen now; undefined when it can, or when a check timed out.
-async function githubDenial($: EngineInterface): Promise<string | undefined> {
+/** Why GitHub cannot be chosen now; undefined when it can, or when a check timed out. */
+export async function githubDenial(
+  $: EngineInterface,
+): Promise<string | undefined> {
   const gh = await ghState($, true)
   if (gh === 'missing') return S.githubNeedsGh
   if (gh === 'unknown') return undefined

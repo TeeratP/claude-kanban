@@ -167,9 +167,7 @@ test('the board name is cut to the status row at 30, 44 and 80 columns, with the
 
     expect(await toolbar(ui)).toEqual([
       expected[width],
-      width < 44
-        ? 'n: New f: Find s: Settings'
-        : ' r: Refresh   n: New   f: Find   s: Settings',
+      ' r: Refresh   n: New   f: Find',
     ])
     await ui.unmount()
   }

@@ -100,12 +100,8 @@ function expectReadable(rows: string[], width: number) {
   }
 }
 
-// At 30 columns Refresh gives way to Settings, which gives way last; the spacing tightens first.
-const actionsAt = (width: number) =>
-  width < 44
-    ? 'n: New f: Find s: Settings'
-    : ' r: Refresh   n: New   f: Find   s: Settings'
-const MOBILE_ACTIONS = ' r: Refresh   s: Settings'
+const ACTIONS = ' r: Refresh   n: New   f: Find'
+const MOBILE_ACTIONS = ' r: Refresh'
 
 for (const surface of EVERY_SURFACE) {
   for (const backend of ['local', 'github'] as const) {
@@ -120,7 +116,7 @@ for (const surface of EVERY_SURFACE) {
 
         expect(rows).toEqual([
           status(label, width, hasHint(surface, width)),
-          surface === 'mobile' ? MOBILE_ACTIONS : actionsAt(width),
+          surface === 'mobile' ? MOBILE_ACTIONS : ACTIONS,
         ])
         expectReadable(rows, width)
         await ui.unmount()
@@ -134,16 +130,15 @@ for (const surface of EVERY_SURFACE) {
     const expected =
       surface === 'mobile'
         ? {
-            80: ' r: Refresh   s: Settings   ✕2 retry',
-            44: ' r: Refresh   s: Settings   ✕2 retry',
-            // Refresh gives way: the board refreshes itself.
-            30: ' s: Settings   ✕2 retry',
+            80: ' r: Refresh   ✕2 retry',
+            44: ' r: Refresh   ✕2 retry',
+            30: ' r: Refresh   ✕2 retry',
           }
         : {
-            80: ' r: Refresh   n: New   f: Find   s: Settings   ✕2 retry',
-            44: ' n: New   f: Find   s: Settings   ✕2 retry',
-            // Then New, and the spacing tightens.
-            30: 'f: Find s: Settings ✕2 retry',
+            80: ' r: Refresh   n: New   f: Find   ✕2 retry',
+            44: ' r: Refresh   n: New   f: Find   ✕2 retry',
+            // Refresh gives way: the board refreshes itself.
+            30: ' n: New   f: Find   ✕2 retry',
           }
 
     for (const width of WIDTHS) {
@@ -203,11 +198,10 @@ for (const surface of TYPING) {
   test(`a filter shows as f: Find "<query>" with a clear cross, the query cut first, at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
     await open($, on, surface)
     const expected = {
-      80: ` r: Refresh   n: New   f: Find "${QUERY}" ✕   s: Settings`,
-      // Little room for the query: the spacing tightens.
-      44: 'r: Refresh n: New f: Find "f…" ✕ s: Settings',
-      // None: Refresh gives way and the cross says a filter is on.
-      30: 'n: New f: Find ✕ s: Settings',
+      80: ` r: Refresh   n: New   f: Find "${QUERY}" ✕`,
+      44: ' r: Refresh   n: New   f: Find "fix logi…" ✕',
+      // No room for the query: the spacing tightens and the cross says a filter is on.
+      30: 'r: Refresh n: New f: Find ✕',
     }
 
     for (const width of WIDTHS) {
@@ -238,29 +232,29 @@ for (const surface of TYPING) {
 
     expect((await ui.find({ key: 'filter' }))?.text).toBe('Find')
     expect(await ui.find({ key: 'filter:clear' })).toBeUndefined()
-    expect((await toolbar(ui))[1]).toBe(actionsAt(80))
+    expect((await toolbar(ui))[1]).toBe(ACTIONS)
     await ui.unmount()
   })
 
   test(`a long query ends in an ellipsis inside its quotes on the ${surface}`, async ($, on) => {
     await open($, on, surface)
-    const ui = await mount($, surface, 80)
+    const ui = await mount($, surface, 44)
 
     await filterBy(ui, 'label:ai label:feature words that go on')
 
     expect((await toolbar(ui))[1]).toBe(
-      ' r: Refresh   n: New   f: Find "label:ai label:feature words t…" ✕   s: Settings',
+      ' r: Refresh   n: New   f: Find "label:ai…" ✕',
     )
     await ui.unmount()
   })
 
-  test(`a filter and failed moves together keep the cross and the retry, and give up the query, Refresh and New in that order, and keep Settings, on the ${surface}`, async ($, on) => {
+  test(`a filter and failed moves together keep the cross and the retry, and give up the query, Refresh and New in that order, on the ${surface}`, async ($, on) => {
     const world = await open($, on, surface)
     await failTwoMoves($, world)
     const expected = {
-      80: ` r: Refresh   n: New   f: Find "${QUERY}" ✕   s: Settings   ✕2 retry`,
-      44: ' n: New   f: Find ✕   s: Settings   ✕2 retry',
-      30: 'f: Find ✕ s: Settings ✕2 retry',
+      80: ` r: Refresh   n: New   f: Find "${QUERY}" ✕   ✕2 retry`,
+      44: ' r: Refresh   n: New   f: Find ✕   ✕2 retry',
+      30: ' n: New   f: Find ✕   ✕2 retry',
     }
 
     for (const width of WIDTHS) {
@@ -279,7 +273,7 @@ for (const surface of TYPING) {
   })
 }
 
-test('a very narrow pane keeps the filter, the cross and the retry and drops New and Settings too', async ($, on) => {
+test('a very narrow pane keeps the filter, the cross and the retry and drops New too', async ($, on) => {
   const world = await open($, on, 'terminal')
   await failTwoMoves($, world)
   const ui = await mount($, 'terminal', 20)
@@ -342,7 +336,7 @@ test(
 
     expect(first?.props.color).toBe('error')
     expect(rows[0]).toMatch(/^ GitHub · gh auth status failed/)
-    expect(rows[1]).toBe(actionsAt(44))
+    expect(rows[1]).toBe(ACTIONS)
     expectReadable(rows, 44)
     await ui.unmount()
   },
