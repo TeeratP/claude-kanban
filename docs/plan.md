@@ -121,10 +121,10 @@ declare module 'claude-code' {
 `hooks/atoms.ts`, following `examples/pane.tsx` (`atom`/`read`/`update` d.ts:15675/15700/15709):
 
 ```ts
-export const boardAtom  = atom({ plugin: 'kanban', key: 'board' } as const, EMPTY_BOARD, { shape: 'board-1' })
+export const boardAtom  = atom({ plugin: 'kanban', key: 'board' } as const, EMPTY_BOARD, { shape: 'board-3' })
 export const uiAtom     = atom({ plugin: 'kanban', key: 'ui' } as const, INITIAL_UI, { shape: 'ui-4' })
-export const syncAtom   = atom({ plugin: 'kanban', key: 'sync' } as const, {}, { shape: 'sync-1' })
-export const detailAtom = atom({ plugin: 'kanban', key: 'detail' } as const, null, { shape: 'detail-1' })
+export const syncAtom   = atom({ plugin: 'kanban', key: 'sync' } as const, {}, { shape: 'sync-3' })
+export const detailAtom = atom({ plugin: 'kanban', key: 'detail' } as const, null, { shape: 'detail-2' })
 export const tickAtom   = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
 ```
 
