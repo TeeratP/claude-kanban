@@ -456,4 +456,9 @@ export const S = {
   badSection: (to: unknown) =>
     `"${String(to)}" is not a column; use backlog, human, claude, done, cancelled or suspended.`,
   legend: { long: '⏎ open · m move · ⇧J/K reorder', short: '⏎ open · m move' },
+
+  // #39
+  paneTitleCount: (waiting: number) => `Kanban · ${waiting}`,
+  retitleFailed: (reason: string) =>
+    `kanban: could not retitle the pane: ${reason}`,
 }
