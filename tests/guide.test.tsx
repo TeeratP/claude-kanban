@@ -261,6 +261,21 @@ test('with nothing saved, auto finds the backend once at the session start, quie
   )
 })
 
+test('a local outcome of the session-start detection is saved too, and the next session needs no lookup', async ($, on) => {
+  const { clock, saved } = boot(on, cards())
+  fakeProcess(on, [])
+  fakeCompose(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+
+  expect((await backlogSection($))?.text).toContain('the .kanban/*.md cards.')
+  // What the next session reads: a saved local backend, which names the section
+  // with no call to gh (see "the backend the last load saved" above).
+  expect(JSON.parse(saved.get(`cache:${CWD}`) ?? 'null')).toEqual(
+    savedBoard('auto', { kind: 'local' })[`cache:${CWD}`],
+  )
+})
+
 test('a tool called while the session-start detection runs shares it', async ($, on) => {
   const { held, go } = gate()
   const { clock } = boot(on, cards())

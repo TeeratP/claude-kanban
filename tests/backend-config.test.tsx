@@ -75,18 +75,21 @@ function fakeRow(on: On) {
   }))
 }
 
-const choose = ($: Engine, value: string) =>
+// A marketplace install keys its rows `kanban@<marketplace>.<field>`.
+const MARKETPLACE_BACKEND = 'kanban@claude-kanban.backend'
+
+const choose = ($: Engine, value: string, key = 'kanban.backend') =>
   $.config.set({
-    key: 'kanban.backend',
+    key,
     value,
     previous: 'auto',
     provider: { plugin: 'kanban', tier: 'user' },
     origin: { kind: 'composer' },
   })
 
-const describe = ($: Engine) =>
+const describe = ($: Engine, key = 'kanban.backend') =>
   $.config.describe({
-    key: 'kanban.backend',
+    key,
     label: 'Card backend',
     description: BACKEND_NOTE,
     isHidden: false,
@@ -153,6 +156,65 @@ test('other rows are left alone', async ($, on) => {
     }),
   ).toEqual({ value: 2 })
   expect(ran).toEqual([])
+})
+
+test('a marketplace install is guarded like a local one', async ($, on) => {
+  const { ran } = fakeGh(on, { ...SIGNED_IN, version: NOT_STARTED })
+  const written = fakeWriter(on)
+
+  expect(await choose($, 'github', MARKETPLACE_BACKEND)).toEqual({
+    deny: S.githubNeedsGh,
+  })
+  expect(await choose($, 'local', MARKETPLACE_BACKEND)).toEqual({
+    value: 'local',
+  })
+  expect(written).toEqual(['local'])
+  expect(ran).toEqual(['gh --version'])
+})
+
+test('a marketplace install is signed-in checked too', async ($, on) => {
+  fakeGh(on, { version: OK, auth: SIGNED_OUT })
+  fakeWriter(on)
+
+  expect(await choose($, 'github', MARKETPLACE_BACKEND)).toEqual({
+    deny: S.githubNeedsSignIn,
+  })
+})
+
+test('rows that are not the backend are passed on, whoever owns them, and ask gh nothing', async ($, on) => {
+  const { ran } = fakeGh(on, { ...SIGNED_IN, version: NOT_STARTED })
+  const written = fakeWriter(on)
+  fakeRow(on)
+
+  // Another row of this mod, another plugin's backend row, and a built-in one.
+  for (const key of [
+    'kanban@claude-kanban.claudeLimit',
+    'other@x.backend',
+    'other.backend',
+    'kanban.backends',
+    'theme',
+  ]) {
+    expect(await choose($, 'github', key)).toEqual({ value: 'github' })
+    expect(await describe($, key)).toEqual({
+      label: 'Card backend',
+      description: BACKEND_NOTE,
+      isHidden: false,
+    })
+  }
+  expect(written).toEqual(Array(5).fill('github'))
+  expect(ran).toEqual([])
+})
+
+test('describe adds the note to a marketplace install too', async ($, on) => {
+  const missing = fakeGh(on, { ...SIGNED_IN, version: NOT_STARTED })
+  fakeRow(on)
+
+  expect(await describe($, MARKETPLACE_BACKEND)).toEqual({
+    label: 'Card backend',
+    description: `${BACKEND_NOTE} ${S.githubUnavailable}`,
+    isHidden: false,
+  })
+  expect(missing.ran).toEqual(['gh --version'])
 })
 
 test('a timeout neither denies nor notes', async ($, on) => {

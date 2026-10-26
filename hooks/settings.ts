@@ -30,9 +30,12 @@ export type Choice = { text: string; value: Value }
 
 const DEFAULT_SUFFIX = / \(default: (.*)\)$/
 
-// The row key is `<plugin>.<field>`, with the marketplace after the plugin's
-// name when it was installed from one.
-const ownField = (key: string): SettingField | undefined =>
+/**
+ * The field of this mod's that a `/config` row key names; undefined for any
+ * other row. The key is `<plugin>.<field>`, with the marketplace after the
+ * plugin's name when it was installed from one.
+ */
+export const ownField = (key: string): SettingField | undefined =>
   SETTING_FIELDS.find(field =>
     new RegExp(`^kanban(@.*)?\\.${field}$`).test(key),
   )
@@ -141,11 +144,7 @@ export async function refreshSettings($: EngineInterface): Promise<void> {
 
 /** Shows the Settings view and reads the rows it lists. */
 export async function openSettings($: EngineInterface): Promise<void> {
-  await updateUi($, ui => ({
-    ...ui,
-    view: { mode: 'settings' },
-    carrySince: 0,
-  }))
+  await updateUi($, ui => ({ ...ui, view: { mode: 'settings' } }))
   await updateSettings($, current => ({ ...current, denied: {} }))
   await refreshSettings($)
 }

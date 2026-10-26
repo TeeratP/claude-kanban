@@ -66,9 +66,8 @@ export type Place = { at: 'top' } | { at: 'before' | 'after'; cardId: string }
 
 /**
  * What the module posts: a click on a row, a card dropped on a section (at a
- * place in it, or last when none) or moved a place up or down in its own, and
- * a group opened or folded, the key that opens Settings, and whether `m` is
- * carrying a card (so that key is its section's instead).
+ * place in it, or last when none) or moved a place up or down in its own, a
+ * group opened or folded, and the key that opens Settings.
  */
 export type BoardPost =
   | { type: 'open'; cardId: string }
@@ -77,7 +76,6 @@ export type BoardPost =
   | { type: 'toggleGroup'; group: string }
   | { type: 'page'; column: string; dir: 'up' | 'down' }
   | { type: 'settings' }
-  | { type: 'carry'; isOn: boolean }
 
 /** Where a drop at a pointer position lands, and the rows that show it. */
 export type DropTarget = {
@@ -462,8 +460,8 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     if (event.ctrl === true || event.meta === true) return
 
     const now = read()
-    // `s` opens Settings, as its button's hotkey does where the keys come here
-    // instead; while `m` carries a card it names Suspended, below.
+    // `s` opens Settings, whose button has no hotkey of its own where this
+    // takes the keys; while `m` carries a card it names Suspended, below.
     if (event.key === 's' && now.moving === null) {
       post({ type: 'settings' })
       return
@@ -489,8 +487,6 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
       surface.setState({ ...now, moving: null })
       if (card?.kind === 'card' && to !== undefined && to !== card.column) {
         post({ type: 'drop', cardId: card.cardId, column: to })
-      } else {
-        post({ type: 'carry', isOn: false })
       }
       return
     }
@@ -528,7 +524,6 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     if (event.key === 'return') activate(at)
     if (event.key === 'm' && at.kind === 'card') {
       surface.setState({ ...now, moving: at.key })
-      post({ type: 'carry', isOn: true })
     }
   })
 

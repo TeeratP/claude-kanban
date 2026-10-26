@@ -641,7 +641,7 @@ for (const surface of CLIENT_SURFACES) {
   })
 }
 
-test('the board view gives r to refresh, n to the add button, f to the filter button, s to Settings and no other Button a hotkey that is also a Client key', async ($, on) => {
+test('the board view gives r to refresh, n to the add button and f to the filter button, and no Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
   // A suggestion adds its own buttons to the board view.
   await $.tool.call({
@@ -659,12 +659,23 @@ test('the board view gives r to refresh, n to the add button, f to the filter bu
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],
   )
 
-  // Settings is on the status row, above the three buttons.
-  expect(hotkeys).toEqual(['s', 'r', 'n', 'f'])
-  // The keys the board's list takes when it has the keyboard. (`s`, which names
-  // Suspended after `m`, is left out: Settings gives its hotkey up while a card
-  // is carried, see settings.test.tsx.)
-  const clientKeys = ['j', 'k', 'm', 'h', 'c', 'b', 'd', '1', '2', '3', '4']
+  // The Settings button, on the status row, has none: the Client takes `s`.
+  expect(hotkeys).toEqual(['r', 'n', 'f'])
+  // The keys the board's list takes when it has the keyboard.
+  const clientKeys = [
+    'j',
+    'k',
+    'm',
+    'h',
+    'c',
+    'b',
+    'd',
+    's',
+    '1',
+    '2',
+    '3',
+    '4',
+  ]
   expect(hotkeys.filter(key => clientKeys.includes(key))).toEqual([])
   await ui.unmount()
 })

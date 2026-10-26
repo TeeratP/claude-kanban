@@ -26,8 +26,6 @@ export const TICK_SHOWN_MS = 2000
 // A card the review has just moved on to ignores decisions for this long, so a
 // key pressed twice, or held, decides one card and not two.
 export const SETTLE_MS = 600
-// A carry (`m` on a card) is forgotten after this long, so one the board lost track of cannot hold `s` for good.
-export const CARRY_MS = 10_000
 
 // The sections of each group, top to bottom.
 export const GROUPS: Record<KanbanGroup, readonly KanbanColumn[]> = {
@@ -99,7 +97,6 @@ export const INITIAL_UI: KanbanUi = {
   draft: '',
   filter: '',
   isFilterOpen: false,
-  carrySince: 0,
 }
 
 export const EMPTY_QUICK_ADD: KanbanQuickAdd = {

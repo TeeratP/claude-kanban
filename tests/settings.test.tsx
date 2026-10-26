@@ -35,6 +35,8 @@ import type { FakeProject } from './zero'
 
 const EVERY_SURFACE = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 const WIDTHS = [24, 30, 44, 80] as const
+// The surfaces that draw the board's list through a Client, which takes the keys.
+const HAS_CLIENT = new Set<RenderSurface>(['terminal', 'desktop'])
 
 const provider = { plugin: 'kanban', tier: 'user' } as const
 
@@ -144,7 +146,13 @@ for (const surface of EVERY_SURFACE) {
     const { config } = await open($, on, surface)
     const ui = await mount($, surface)
 
-    expect((await ui.find({ key: 'settings' }))?.props.hotkey).toBe('s')
+    // Where a Client takes the keys it owns `s`, and the button names the key
+    // in its label; elsewhere the button's hotkey is the key.
+    const props = (await ui.find({ key: 'settings' }))?.props
+    expect(props?.hotkey).toBe(HAS_CLIENT.has(surface) ? undefined : 's')
+    expect(props?.label).toBe(
+      HAS_CLIENT.has(surface) ? 's: Settings' : 'Settings',
+    )
     expect(await ui.find({ key: 'back' })).toBeUndefined()
     await ui.press({ key: 'settings' })
 
@@ -156,7 +164,9 @@ for (const surface of EVERY_SURFACE) {
     )
 
     await ui.press({ key: 'back' })
-    expect((await ui.find({ key: 'settings' }))?.props.label).toBe('Settings')
+    expect((await ui.find({ key: 'settings' }))?.props.label).toBe(
+      HAS_CLIENT.has(surface) ? 's: Settings' : 'Settings',
+    )
     expect(await ui.find({ key: 'back' })).toBeUndefined()
     await ui.unmount()
   })
@@ -765,6 +775,18 @@ async function goTo(ui: BoardUi, key: string) {
   expect(await litRows(ui)).toEqual([key])
 }
 
+// Types keys as the engine hands them out: each to the board's Client, and to
+// the Buttons that had it for a hotkey when it came.
+async function typed(ui: BoardUi, ...names: string[]) {
+  for (const name of names) {
+    const armed = (await ui.findAll({ type: 'Button' })).flatMap(one =>
+      one.props.hotkey === name && one.key !== undefined ? [one.key] : [],
+    )
+    await keys(ui, name)
+    for (const key of armed) await ui.press({ key })
+  }
+}
+
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`m then s moves the carried card to Suspended and does not open Settings, and a bare s opens it on the ${surface}`, async ($, on) => {
     const files: Record<string, string> = {
@@ -778,52 +800,61 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await $.command.run({ ...RUN })
     await world.clock.settle()
     const ui = await mount($, surface)
-    const hotkey = async () =>
-      (await ui.find({ key: 'settings' }))?.props.hotkey
-    expect(await hotkey()).toBe('s')
 
     await goTo(ui, 'card:md:0003-docs')
-    await keys(ui, 'm')
-    // While a card is carried `s` names Suspended: the button waits for it.
-    expect(await hotkey()).toBeUndefined()
-    await keys(ui, 's')
+    await typed(ui, 'm', 's')
     await world.clock.advance(SYNC_PAUSE)
 
     expect(files[path(3, 'docs')]).toContain('status: suspended')
     expect(await ui.find({ key: 'back' })).toBeUndefined()
-    expect(await hotkey()).toBe('s')
 
-    // Not carrying, `s` opens Settings, whether the Client or the button hears it.
+    // Not carrying, `s` opens Settings.
     await keys(ui, 's')
     expect((await ui.find({ key: 'back' }))?.props.hotkey).toBe('b')
     await ui.unmount()
   })
 
-  test(`a carry that ends with another key gives the button its hotkey back on the ${surface}`, async ($, on) => {
-    const world = boot(on, {
+  test(`a fast m then s suspends the card and never opens Settings, though the host hears the Client late on the ${surface}`, async ($, on) => {
+    const files: Record<string, string> = {
       [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-    })
+    }
+    const world = boot(on, files)
     fakeConfig(on, rows())
+    // What the Client posts reaches the host after the next key: its writes of
+    // the pane's state wait until `release`.
+    const held = { isOn: false, release: () => {} }
+    const wait = new Promise<void>(resolve => {
+      held.release = resolve
+    })
+    on('state.set', async (_, e, next) => {
+      if (held.isOn && e.key === 'ui') await wait
+
+      return next(e)
+    })
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
     await world.clock.settle()
     const ui = await mount($, surface)
-    const hotkey = async () =>
-      (await ui.find({ key: 'settings' }))?.props.hotkey
 
     await goTo(ui, 'card:md:0003-docs')
-    await keys(ui, 'm')
-    expect(await hotkey()).toBeUndefined()
-    await keys(ui, 'q')
+    held.isOn = true
+    // `m` is sent but not yet heard by the host when `s` comes.
+    const carrying = typed(ui, 'm')
+    const dropping = typed(ui, 's')
+    held.release()
+    await Promise.all([carrying, dropping])
+    await world.clock.advance(SYNC_PAUSE)
 
-    expect(await hotkey()).toBe('s')
+    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    expect(await ui.find({ key: 'back' })).toBeUndefined()
     await ui.unmount()
   })
 
-  test(`a carry the board lost track of is forgotten after a while on the ${surface}`, async ($, on) => {
-    const world = boot(on, {
+  test(`a carry that ends with another key leaves the card where it was on the ${surface}`, async ($, on) => {
+    const files: Record<string, string> = {
       [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-    })
+    }
+    const world = boot(on, files)
     fakeConfig(on, rows())
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
@@ -831,13 +862,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await mount($, surface)
 
     await goTo(ui, 'card:md:0003-docs')
-    await keys(ui, 'm')
-    expect((await ui.find({ key: 'settings' }))?.props.hotkey).toBeUndefined()
-    // The redraw every 30 seconds, while the pane is open, finds the carry old.
-    world.world.panes.push('kanban')
-    await world.clock.advance(30_000)
+    await typed(ui, 'm', 'q')
+    await world.clock.advance(SYNC_PAUSE)
 
-    expect((await ui.find({ key: 'settings' }))?.props.hotkey).toBe('s')
+    expect(files[path(3, 'docs')]).toContain('status: backlog')
+    expect(await ui.find({ key: 'back' })).toBeUndefined()
     await ui.unmount()
   })
 }
