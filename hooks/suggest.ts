@@ -109,7 +109,10 @@ export async function suggestCard(
 ): Promise<boolean> {
   // A board that cannot be had only means the cards are not compared.
   const { cards } = await ensureBoard($)
-  const open = cards.filter(card => card.column !== 'done')
+  // Suspended counts as open: an idea already on hold is not suggested again.
+  const open = cards.filter(
+    card => card.column !== 'done' && card.column !== 'cancelled',
+  )
   const isOpen = open.some(card => sameTitle(card.title, input.title))
 
   const seen = { isAdded: false }

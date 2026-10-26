@@ -28,7 +28,7 @@ const board = atom({ plugin: 'kanban', key: 'board' } as const, EMPTY_BOARD, {
   shape: 'board-3',
 })
 const ui = atom({ plugin: 'kanban', key: 'ui' } as const, INITIAL_UI, {
-  shape: 'ui-3',
+  shape: 'ui-4',
 })
 const sync = atom(
   { plugin: 'kanban', key: 'sync' } as const,

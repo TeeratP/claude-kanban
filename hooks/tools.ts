@@ -1,6 +1,11 @@
 import type { EngineInterface, ToolSpec } from 'claude-code'
 
-import type { KanbanBackendInfo, KanbanBoard, KanbanCard } from '../types'
+import type {
+  KanbanBackendInfo,
+  KanbanBoard,
+  KanbanCard,
+  KanbanColumn,
+} from '../types'
 import { readDetailState, readQueue, updateDetailState } from './atoms'
 import { appendSection, createCard, readDetail } from './backend'
 import { ensureBoard, inBackground, refresh, setBoard } from './board'
@@ -12,7 +17,14 @@ import {
   isHandoffValid,
 } from './handoff'
 import { sectionList } from './layout'
-import { COLUMNS, errorMessage, isColumn, isPendingId, withCard } from './model'
+import {
+  COLUMNS,
+  errorMessage,
+  isColumn,
+  isPendingId,
+  parseColumn,
+  withCard,
+} from './model'
 import { S } from './strings'
 import { suggestCard } from './suggest'
 import { moveCard } from './sync'
@@ -25,6 +37,14 @@ type ToolName =
   | 'kanban_create'
   | 'kanban_ask'
   | 'kanban_suggest'
+
+// Where Claude may move a card, and create one. Suspended and Cancelled are the
+// person's calls, so a card in either is left where it is.
+const MOVE_TO: readonly KanbanColumn[] = ['human', 'claude', 'backlog', 'done']
+const CREATE_IN: readonly KanbanColumn[] = ['claude', 'backlog', 'done']
+
+const isSetAside = (card: KanbanCard) =>
+  card.column === 'suspended' || card.column === 'cancelled'
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -78,7 +98,7 @@ export const TOOL_SPECS: ToolSpec[] = [
       type: 'object',
       properties: {
         card: { type: 'integer', description: S.toolMove.card },
-        to: { type: 'string', enum: [...COLUMNS], description: S.toolMove.to },
+        to: { type: 'string', enum: [...MOVE_TO], description: S.toolMove.to },
       },
       required: ['card', 'to'],
     },
@@ -94,7 +114,7 @@ export const TOOL_SPECS: ToolSpec[] = [
         spec: { type: 'string', description: S.toolCreate.spec },
         column: {
           type: 'string',
-          enum: COLUMNS.filter(one => one !== 'human'),
+          enum: [...CREATE_IN],
           description: S.toolCreate.column,
         },
       },
@@ -136,9 +156,10 @@ async function list(
   $: EngineInterface,
   input: Record<string, unknown>,
 ): Promise<ToolAnswer> {
-  const { column } = input
-  if (column !== undefined && !isColumn(column))
-    return { deny: S.badColumn(column) }
+  const { column: asked } = input
+  const column = asked === undefined ? undefined : parseColumn(asked)
+  if (asked !== undefined && column === undefined)
+    return { deny: S.badSection(asked) }
 
   const board = await ensureBoard($)
   if (board.fetchedAt === 0) return { deny: S.boardUnavailable(board.error) }
@@ -264,6 +285,8 @@ async function ask(
   if ('deny' in found) return found
 
   const { card, info } = found
+  if (isSetAside(card)) return { deny: S.setAside(card) }
+
   try {
     const date = new Date(await $.clock.now()).toISOString().slice(0, 10)
     await appendSection($, info, card, formatQuestion(question, date))
@@ -296,12 +319,15 @@ async function move(
   input: Record<string, unknown>,
 ): Promise<ToolAnswer> {
   const { to } = input
-  if (!isColumn(to)) return { deny: S.badColumn(to) }
+  if (!isColumn(to) || !MOVE_TO.includes(to)) {
+    return { deny: S.badColumn(to) }
+  }
 
   const found = await find($, input)
   if ('deny' in found) return found
 
   const { card, info } = found
+  if (isSetAside(card)) return { deny: S.setAside(card) }
   if (to === 'human') {
     try {
       const { sections } = await readDetail($, info, card)
@@ -331,7 +357,8 @@ async function create(
   const column = input.column ?? 'backlog'
   if (title === undefined || title === '') return { deny: S.badTitle }
   if (spec === undefined) return { deny: S.badText('spec') }
-  if (!isColumn(column)) return { deny: S.badColumn(column) }
+  if (!isColumn(column) || (column !== 'human' && !CREATE_IN.includes(column)))
+    return { deny: S.badColumn(column) }
   if (column === 'human') return { deny: S.createNotHuman }
 
   const loaded = await ready($)

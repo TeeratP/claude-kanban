@@ -11,7 +11,12 @@ import type {
 import { noteCardPrompt } from './activity'
 import { readBoard, updateBoard, updateQueue, updateSync } from './atoms'
 import { sectionList } from './layout'
-import { DEFAULT_CLAUDE_LIMIT, errorMessage } from './model'
+import {
+  DEFAULT_CLAUDE_LIMIT,
+  NEWEST_LIMIT,
+  errorMessage,
+  isOrdered,
+} from './model'
 import { S } from './strings'
 
 // A card the person moves to Claude while Claude is at its limit waits here
@@ -77,23 +82,36 @@ export function queuePlace(
   return index < 0 ? undefined : index + 1
 }
 
+/** What a section header says on its right, whole and short. */
+export type HeaderMeta = { long: string; short: string; isWarning: boolean }
+
 /**
- * The count a section header shows: the cards the filter lets through out of
- * all of them while filtering, else Claude's load against its limit when it
- * has one.
+ * The meta a section header shows on its right: Claude's limit, who waits for a
+ * slot and how many cards are over the limit (Claude moved them in itself);
+ * Done and Cancelled say they list only their newest ten once they hold more.
  */
-export function headerCount(
+export function headerMeta(
   column: KanbanColumn,
-  shown: number,
   total: number,
   view: QueueView,
-  isFiltered = false,
-): string {
-  if (isFiltered) return S.filterCount(shown, total)
+): HeaderMeta | undefined {
+  if (column === 'claude') {
+    if (view.limit <= 0) return undefined
 
-  return column === 'claude' && view.limit > 0
-    ? S.claudeCount(view.running, view.limit, view.waiting.length)
-    : S.count(shown, total)
+    const over = Math.max(0, view.running - view.limit)
+    const queued = view.waiting.length
+
+    return {
+      long: S.claudeMeta(view.limit, queued, over, false),
+      short: S.claudeMeta(view.limit, queued, over, true),
+      isWarning: over > 0,
+    }
+  }
+  if (isOrdered(column) || total <= NEWEST_LIMIT) return undefined
+
+  const newest = S.newestMeta(NEWEST_LIMIT)
+
+  return { long: newest, short: newest, isWarning: false }
 }
 
 const queueKey = (cwd: string, mode: KanbanBackendMode) =>

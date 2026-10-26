@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { KanbanCard, KanbanColumn, KanbanDetail } from '../types'
 import { escapeMarkers, gistOf, parseSections, questionOf } from './handoff'
-import { KANBAN_DIR, isColumn, maxOrder } from './model'
+import { KANBAN_DIR, maxOrder, parseColumn } from './model'
 import { placeIn } from './order'
 import { S } from './strings'
 
@@ -73,7 +73,7 @@ export function parseCardFile(
       id: `md:${stem}`,
       number,
       title: fields.get('title') || stem,
-      column: isColumn(status) ? status : 'backlog',
+      column: parseColumn(status) ?? 'backlog',
       order: fields.get('order') && Number.isFinite(order) ? order : number,
       createdAt: created,
       updatedAt: fields.get('updated') || created,

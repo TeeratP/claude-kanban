@@ -286,7 +286,7 @@ for (const surface of ['terminal', 'vscode'] as const) {
   test(`the form and the filter field open under both toolbar rows and the suggestions follow them on the ${surface}`, async ($, on) => {
     await open($, on, surface)
     const ui = await mount($, surface, 44)
-    const list = surface === 'terminal' ? 'board' : 'hdr:human'
+    const list = surface === 'terminal' ? 'board' : 'grp:active'
 
     expect((await treeKinds(ui)).slice(0, 3)).toEqual(['Text', 'refresh', list])
 

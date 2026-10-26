@@ -2,6 +2,7 @@ import type {
   KanbanBackendMode,
   KanbanCard,
   KanbanColumn,
+  KanbanGroup,
   KanbanSection,
   KanbanTag,
 } from '../types'
@@ -11,6 +12,8 @@ const COL = {
   claude: 'Claude',
   backlog: 'Backlog',
   done: 'Done',
+  cancelled: 'Cancelled',
+  suspended: 'Suspended',
 } satisfies Record<KanbanColumn, string>
 
 const SECTION_NAME = {
@@ -43,8 +46,6 @@ export const S = {
     human: 'hum',
     question: '?',
   } satisfies Record<KanbanTag, string>,
-  count: (shown: number, total: number) =>
-    shown === total ? String(total) : `${shown} of ${total}`,
   empty: '  (empty)',
   noCards: 'No cards yet. Add .kanban/0001-title.md',
   more: (dir: 'up' | 'down', n: number) =>
@@ -77,12 +78,12 @@ export const S = {
 
   toolList: {
     description:
-      'List the cards on the kanban board, one per line: #number [column] title. Done lists only its 10 newest.',
+      'List the cards on the kanban board, one per line: #number [column] title. Done and Cancelled list only their 10 newest.',
     column: 'Only list cards in this column.',
   },
   toolMove: {
     description:
-      'Move a kanban card to another column (human, claude, backlog or done).',
+      'Move a kanban card to another column (human, claude, backlog or done). Suspended and Cancelled are set by the person only.',
     card: 'The card number, as shown by kanban_list.',
     to: 'The column to move the card to.',
   },
@@ -158,7 +159,7 @@ export const S = {
   noBoardItem: (card: KanbanCard) =>
     `#${card.number} is not on the project board.`,
   closeNotVerified: (card: KanbanCard) =>
-    `#${card.number} is still open after gh issue close.`,
+    `#${card.number} is not closed as expected after gh issue close.`,
   noStatusField: (projectNumber: string) =>
     `Project #${projectNumber} has no Status field.`,
   missingStatusOption: (name: string) =>
@@ -219,7 +220,6 @@ export const S = {
     `project board: ${reason}; check the IDs in CLAUDE.md`,
   // #11
   keyHint: '↑↓ ⏎ open · m move',
-  moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
 
   // #19
   checkHeading: 'Check',
@@ -322,8 +322,6 @@ export const S = {
     `kanban: could not record Claude's activity: ${reason}`,
 
   // #20
-  claudeCount: (running: number, limit: number, queued: number) =>
-    `${running}/${limit}${queued === 0 ? '' : ` · ${queued} queued`}`,
   queuedMark: (place: number) => `queued ${place}`,
   queueSaveFailed: (reason: string) =>
     `kanban: could not save the queue: ${reason}`,
@@ -429,4 +427,33 @@ export const S = {
 
   // #34
   filterQuery: (query: string) => `Find "${query}"`,
+  // #35
+  group: { active: 'Active', inactive: 'Inactive' } satisfies Record<
+    KanbanGroup,
+    string
+  >,
+  groupsFolded: '  Press a group to open it',
+  groupEmpty: 'empty',
+  groupMatches: (n: number) =>
+    n === 0 ? 'no matches' : n === 1 ? '1 match' : `${n} matches`,
+  // A section's count in a folded group's summary: `12 Done`, or `12D` when short.
+  groupCount: (n: number, column: KanbanColumn, isShort: boolean) =>
+    isShort ? `${n}${COL[column].charAt(0)}` : `${n} ${COL[column]}`,
+  newestMeta: (n: number) => `${n} newest`,
+  // Claude's limit, who waits for a slot and who is over it; `short` for a narrow pane.
+  claudeMeta: (limit: number, queued: number, over: number, isShort: boolean) =>
+    [
+      isShort ? `lim ${limit}` : `limit ${limit}`,
+      ...(queued === 0 ? [] : [isShort ? `${queued}q` : `${queued} queued`]),
+      ...(over === 0 ? [] : [`${over} over`]),
+    ].join(' · '),
+  setAside: (card: KanbanCard) =>
+    `Card #${card.number} is ${card.column} by the person; leave it unless they move it back.`,
+  stillWorking: (card: KanbanCard) =>
+    `Claude is still working on #${card.number}. Press Esc in the prompt to stop it.`,
+  setAsideTo: { done: 'Done', suspended: 'Suspend', cancelled: 'Cancel' },
+  suspendedLabelDescription: 'on hold (kanban Suspended)',
+  badSection: (to: unknown) =>
+    `"${String(to)}" is not a column; use backlog, human, claude, done, cancelled or suspended.`,
+  legend: { long: '⏎ open · m move · ⇧J/K reorder', short: '⏎ open · m move' },
 }
