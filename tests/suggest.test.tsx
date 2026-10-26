@@ -404,9 +404,9 @@ test('a prompt that already holds the section is not given a second', async ($, 
 })
 
 // With a strip of five rows above the list, the wheel and a drag still find
-// their rows. Rows of the tree: 0 toolbar, 1-5 strip, then the layout from its
-// row 1: 6 Human header, 7 (empty), 8 Claude header, 9 (empty), 10 Backlog
-// header, 11-15 its cards, 16 its more row.
+// their rows. Rows of the tree: 0-1 toolbar, 2-6 strip, then the layout from its
+// row 2: 7 Human header, 8 (empty), 9 Claude header, 10 (empty), 11 Backlog
+// header, 12-16 its cards, 17 its more row.
 const STRIP = stripRows(5)
 
 async function startWithStrip($: Engine, on: On) {
@@ -424,16 +424,17 @@ test('with a strip above the list the wheel scrolls the section under the pointe
   const { scrolls, ui } = await startWithStrip($, on)
   expect(STRIP).toBe(5)
 
-  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 12 } })
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 13 } })
   expect(scrolls).toHaveLength(0)
   expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
 
   // The Claude header, which the same row would be were the strip not counted
   // out, is a card of Backlog; and the strip's own rows are the engine's.
-  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 8 } })
-  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 3 } })
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 9 } })
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 4 } })
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 1 } })
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 0 } })
-  expect(scrolls).toHaveLength(3)
+  expect(scrolls).toHaveLength(4)
   expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
   await ui.unmount()
 })

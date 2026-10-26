@@ -291,6 +291,7 @@ test('the second row follows its card and belongs to its section', () => {
 
   expect(kinds(rows)).toEqual([
     'toolbar',
+    'toolbar',
     'header:human',
     'empty:human',
     'header:claude',
@@ -303,9 +304,9 @@ test('the second row follows its card and belongs to its section', () => {
     'empty:done',
   ])
   // The row is the tree row it is drawn on, so a wheel over it is the Claude section's.
-  expect(hitTest(rows, 5)).toBe('claude')
   expect(hitTest(rows, 6)).toBe('claude')
-  expect(hitTest(rows, 8)).toBe('backlog')
+  expect(hitTest(rows, 7)).toBe('claude')
+  expect(hitTest(rows, 9)).toBe('backlog')
 })
 
 test('with no second rows the layout is as it was', () => {

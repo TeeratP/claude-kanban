@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { CWD, PANE, RUN, boot, card, path } from './fakes'
-import { rowKeys } from './board-ui'
+import { rowKeys, toolbar } from './board-ui'
 import { boardReply, fakeProcess, issueNode } from './fake-gh'
 import type { Reply, Route } from './fake-gh'
 import {
@@ -147,7 +147,30 @@ test('in a narrow pane the board name is cut, not the backend or the status', as
   const narrow = await view($)
 
   expect(narrow.toolbar).toMatch(/^ GitHub \(auto\) · #2 .+… · updated/)
-  expect(narrow.toolbar.length).toBeLessThanOrEqual(38)
+  expect(narrow.toolbar.length).toBeLessThanOrEqual(44)
+})
+
+test('the board name is cut to the status row at 30, 44 and 80 columns, with the buttons on the row below', async ($, on) => {
+  await open($, on, ready({ linked: [SHARED] }))
+  const expected = {
+    30: ' GitHub (auto) · updated now',
+    44: " GitHub (auto) · #2 @TeeratP'… · updated now",
+    80: " GitHub (auto) · #2 @TeeratP's Kanban · updated now · ↑↓ ⏎ open · m move",
+  }
+
+  for (const width of [30, 44, 80] as const) {
+    const ui = await $.ui.mount({
+      ...PANE,
+      props: { ...PANE.props, bodyColumns: width },
+      surface: 'terminal',
+    })
+
+    expect(await toolbar(ui)).toEqual([
+      expected[width],
+      ' r: Refresh   n: New   f: Find',
+    ])
+    await ui.unmount()
+  }
 })
 
 test('the board is detected from a repo that has no CLAUDE.md or AGENTS.md at all', async ($, on) => {

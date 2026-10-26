@@ -24,6 +24,7 @@ import type { BoardProps } from './board-client'
 import { parseBoardMessage, toRowViews } from './board-rows'
 import { isFiltering } from './filter'
 import {
+  TOOLBAR_ROWS,
   applyFilter,
   capFor,
   cardLine,
@@ -35,7 +36,7 @@ import {
   sectionList,
 } from './layout'
 import type { Row } from './layout'
-import { TICK_BRIGHT_MS, ageLabel, cellWidth, oneLine, truncate } from './model'
+import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
 import { headerCount, queuePlace, queueView } from './queue'
 import { toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
@@ -44,6 +45,8 @@ import { dropCard, shiftCard } from './reorder'
 import { S } from './strings'
 import { stripRows } from './suggest'
 import { retryAll } from './sync'
+import { planActions } from './toolbar'
+import type { PlacedAction } from './toolbar'
 import { openDetail } from './view-detail'
 import { clearFilter, renderFilter, toggleFilter } from './view-filter'
 import { pickRows, renderPicker } from './view-pick'
@@ -251,9 +254,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const { bodyColumns: columns, scroll } = e.props
   // Terminal and desktop draw the list through a Client, which takes the keys.
   const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
-  const canAdd = e.surface !== 'mobile'
-  // The text fields are the same ones: the mobile app has none.
-  const canFilter = canAdd
+  // New and Find open text fields, which the mobile app has none of.
+  const canType = e.surface !== 'mobile'
   const isFiltered = isFiltering(ui.filter)
   // The sections as drawn: a collapsed one with a match is open while filtering.
   const { ui: shown } = applyFilter(board.cards, ui)
@@ -276,137 +278,157 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     return one === undefined ? [] : detailSegs(columns, one, activity.live, now)
   }
 
+  // The status text, dim: the backend, the board, how fresh it is, and why not.
+  const statusRow = () => {
+    const backendName = S.backendLabel(board.mode, board.backend?.kind)
+    const note = localNote(board.backend)
+    const isNoted = note !== undefined
+    const detected =
+      board.backend?.kind === 'github' && board.backend.isDetected === true
+        ? board.backend
+        : undefined
+    const boardName =
+      detected?.title === undefined
+        ? ''
+        : S.boardName(detected.projectNumber, detected.title)
+    const status =
+      board.error ??
+      (board.isLoading
+        ? S.loading
+        : pausedUntil > now
+          ? S.rateLimitLow(minutesLeft(pausedUntil - now))
+          : board.fetchedAt === 0
+            ? ''
+            : S.updated(ageLabel(board.fetchedAt, now)))
+    const room = columns
+    const join = (parts: string[]) =>
+      ` ${parts.filter(part => part !== '').join(' · ')}`
+    // A detected board's name takes what the backend's name and the status leave,
+    // cut to fit; with too little room left it is left out.
+    const nameRoom =
+      room - (cellWidth(join([`${backendName} · X`, status])) - 1)
+    const shownName =
+      boardName === '' || nameRoom < cellWidth('#00 …')
+        ? ''
+        : truncate(boardName, nameRoom)
+    const label =
+      note !== undefined
+        ? `${backendName} · ${note}`
+        : shownName === ''
+          ? backendName
+          : `${backendName} · ${shownName}`
+    // The key hint shows whole or not at all: a cut hint is noise.
+    const withHint = join([label, status, S.keyHint])
+    // A status that fits only without the backend's name is shown whole, not cut;
+    // a note on why the board is local is never dropped for it.
+    const whole = join([label, status])
+    const bare = join([status])
+    const text =
+      hasClient && board.error === undefined && cellWidth(withHint) <= room
+        ? withHint
+        : cellWidth(whole) > room &&
+            !isNoted &&
+            status !== '' &&
+            cellWidth(bare) <= room
+          ? bare
+          : truncate(whole, room)
+
+    if (board.error !== undefined) {
+      return (
+        <Text color="error" wrap="truncate-end">
+          {text}
+        </Text>
+      )
+    }
+
+    return detected === undefined ? (
+      <Text dimColor wrap="truncate-end">
+        {text}
+      </Text>
+    ) : (
+      <Button key="source" plain dimColor onPress={() => changeBoard($)}>
+        <Text dimColor wrap="truncate-end">
+          {text}
+        </Text>
+      </Button>
+    )
+  }
+
+  // The buttons, each labelled with its hotkey as the engine draws a plain
+  // Button that has one (`n: New`), apart by Text rather than side by side.
+  const actionsRow = () => {
+    const actions = planActions({
+      columns,
+      canType,
+      query: ui.filter,
+      failed: failed.length,
+    })
+    const button = (action: PlacedAction) => {
+      switch (action.key) {
+        case 'refresh':
+          return (
+            <Button
+              key="refresh"
+              plain
+              hotkey={action.hotkey}
+              onPress={() => refresh($)}
+            >
+              {action.label}
+            </Button>
+          )
+        case 'add':
+          return (
+            <Button
+              key="add"
+              plain
+              hotkey={action.hotkey}
+              onPress={() => toggleQuickAdd($)}
+            >
+              {action.label}
+            </Button>
+          )
+        case 'filter':
+          return (
+            <Button
+              key="filter"
+              plain
+              hotkey={action.hotkey}
+              onPress={() => toggleFilter($)}
+            >
+              {action.label}
+            </Button>
+          )
+        case 'filter:clear':
+          return (
+            <Button key="filter:clear" plain onPress={() => clearFilter($)}>
+              {action.label}
+            </Button>
+          )
+        case 'retry-all':
+          return (
+            <Button key="retry-all" plain onPress={() => retryAll($)}>
+              <Text color="error">{action.label}</Text>
+            </Button>
+          )
+      }
+    }
+
+    return (
+      <Box flexDirection="row">
+        {actions.flatMap(action => [
+          action.before > 0 && (
+            <Text key={`gap:${action.key}`}>{' '.repeat(action.before)}</Text>
+          ),
+          button(action),
+        ])}
+      </Box>
+    )
+  }
+
   const draw = (row: Row) => {
     switch (row.kind) {
-      case 'toolbar': {
-        const backendName = S.backendLabel(board.mode, board.backend?.kind)
-        const note = localNote(board.backend)
-        const isNoted = note !== undefined
-        const detected =
-          board.backend?.kind === 'github' && board.backend.isDetected === true
-            ? board.backend
-            : undefined
-        const boardName =
-          detected?.title === undefined
-            ? ''
-            : S.boardName(detected.projectNumber, detected.title)
-        const status =
-          board.error ??
-          (board.isLoading
-            ? S.loading
-            : pausedUntil > now
-              ? S.rateLimitLow(minutesLeft(pausedUntil - now))
-              : board.fetchedAt === 0
-                ? ''
-                : S.updated(ageLabel(board.fetchedAt, now)))
-        const retryLabel = S.retryAll(failed.length)
-        const spare =
-          columns -
-          1 -
-          (canAdd ? cellWidth(S.add) + 1 : 0) -
-          (canFilter ? cellWidth(S.filter) + 1 : 0) -
-          (isFiltered ? cellWidth(S.filterClear) + 1 : 0) -
-          (failed.length === 0 ? 0 : cellWidth(retryLabel) + 1)
-        // The query takes up to half of what is left; the status gets the rest.
-        const query = isFiltered
-          ? ` ${truncate(oneLine(ui.filter), Math.floor(spare / 2))}`
-          : ''
-        const room = spare - cellWidth(query)
-        const join = (parts: string[]) =>
-          ` ${parts.filter(part => part !== '').join(' · ')}`
-        // A detected board's name takes what the backend's name and the status leave,
-        // cut to fit; with too little room left it is left out.
-        const nameRoom =
-          room - (cellWidth(join([`${backendName} · X`, status])) - 1)
-        const shownName =
-          boardName === '' || nameRoom < cellWidth('#00 …')
-            ? ''
-            : truncate(boardName, nameRoom)
-        const label =
-          note !== undefined
-            ? `${backendName} · ${note}`
-            : shownName === ''
-              ? backendName
-              : `${backendName} · ${shownName}`
-        // The key hint shows whole or not at all: a cut hint is noise.
-        const withHint = join([label, status, S.keyHint])
-        // A status that fits only without the backend's name is shown whole, not cut;
-        // a note on why the board is local is never dropped for it.
-        const whole = join([label, status])
-        const bare = join([status])
-        const text =
-          hasClient && board.error === undefined && cellWidth(withHint) <= room
-            ? withHint
-            : cellWidth(whole) > room &&
-                !isNoted &&
-                status !== '' &&
-                cellWidth(bare) <= room
-              ? bare
-              : truncate(whole, room)
-
-        return (
-          <Box flexDirection="row">
-            <Button key="refresh" plain onPress={() => refresh($)}>
-              {S.refresh}
-            </Button>
-            {canAdd && (
-              <Button
-                key="add"
-                plain
-                hotkey="n"
-                onPress={() => toggleQuickAdd($)}
-              >
-                {' '}
-                {S.add}
-              </Button>
-            )}
-            {canFilter && (
-              <Button
-                key="filter"
-                plain
-                hotkey="f"
-                onPress={() => toggleFilter($)}
-              >
-                {' '}
-                {S.filter}
-              </Button>
-            )}
-            {isFiltered && <Text wrap="truncate-end">{query}</Text>}
-            {isFiltered && (
-              <Button key="filter:clear" plain onPress={() => clearFilter($)}>
-                {' '}
-                {S.filterClear}
-              </Button>
-            )}
-            {board.error !== undefined ? (
-              <Text color="error" wrap="truncate-end">
-                {text}
-              </Text>
-            ) : detected !== undefined ? (
-              <Button
-                key="source"
-                plain
-                dimColor
-                onPress={() => changeBoard($)}
-              >
-                <Text dimColor wrap="truncate-end">
-                  {text}
-                </Text>
-              </Button>
-            ) : (
-              <Text dimColor wrap="truncate-end">
-                {text}
-              </Text>
-            )}
-            {failed.length > 0 && (
-              <Button key="retry-all" plain onPress={() => retryAll($)}>
-                {' '}
-                <Text color="error">{retryLabel}</Text>
-              </Button>
-            )}
-          </Box>
-        )
-      }
+      case 'toolbar':
+        return row.line === 'status' ? statusRow() : actionsRow()
 
       case 'header': {
         const { column } = row
@@ -514,12 +536,12 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   if (!hasClient) {
     return (
       <Box flexDirection="column">
-        {rows.slice(0, 1).map(draw)}
+        {rows.slice(0, TOOLBAR_ROWS).map(draw)}
         {picker}
         {filterField}
         {quickAdd}
         {suggested}
-        {rows.slice(1).map(draw)}
+        {rows.slice(TOOLBAR_ROWS).map(draw)}
       </Box>
     )
   }
@@ -545,7 +567,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
 
   return (
     <Box flexDirection="column">
-      {draw({ kind: 'toolbar' })}
+      {rows.slice(0, TOOLBAR_ROWS).map(draw)}
       {picker}
       {filterField}
       {quickAdd}

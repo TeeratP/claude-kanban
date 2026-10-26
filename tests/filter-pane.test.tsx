@@ -3,7 +3,16 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import { cellWidth } from '../hooks/model'
-import { click, keys, litRows, row, rowIndex, rowKeys } from './board-ui'
+import {
+  TOOLBAR_ROWS,
+  click,
+  keys,
+  litRows,
+  row,
+  rowIndex,
+  rowKeys,
+  toolbar,
+} from './board-ui'
 import type { BoardUi } from './board-ui'
 import { boardReply, fakeProcess, issueNode, queryOf } from './fake-gh'
 import type { Route } from './fake-gh'
@@ -128,7 +137,7 @@ for (const surface of SURFACES) {
   test(`the filter button opens a field, and typing filters every section live on the ${surface}`, async ($, on) => {
     const { ui } = await start($, on, surface)
     const button = await ui.find({ key: 'filter' })
-    expect(button?.text).toBe(' 🔍')
+    expect(button?.text).toBe('Find')
     expect(button?.props.hotkey).toBe('f')
     expect(await ui.find({ key: FIELD })).toBeUndefined()
     expect(await textOf(ui, 'hdr:claude')).toBe('▾ Claude 1/1')
@@ -161,9 +170,9 @@ for (const surface of SURFACES) {
     expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 3/4')
     // Done is collapsed but has a match, so it shows.
     expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 1/2')
-    // The text shows in the toolbar with a button to clear it.
-    expect(await ui.find({ type: 'Text', text: ' fix' })).toBeDefined()
-    expect((await ui.find({ key: 'filter:clear' }))?.text).toBe(' ✕')
+    // The text shows in the toolbar's Find button, with a button to clear it.
+    expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "fix"')
+    expect((await ui.find({ key: 'filter:clear' }))?.text).toBe('✕')
 
     await ui.input({ key: FIELD, text: 'fix login', kind: 'change' })
     expect(await under(ui, 'hdr:human')).toEqual([LOGIN])
@@ -178,7 +187,7 @@ for (const surface of SURFACES) {
     await ui.input({ key: FIELD, text: 'fix' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
     expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, BETA, GAMMA])
-    expect(await ui.find({ type: 'Text', text: ' fix' })).toBeDefined()
+    expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "fix"')
 
     await ui.press({ key: 'filter' })
     expect((await ui.find({ key: FIELD }))?.props.value).toBe('fix')
@@ -190,7 +199,7 @@ for (const surface of SURFACES) {
     await ui.press({ key: 'filter:clear' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
     expect(await ui.find({ key: 'filter:clear' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: ' fix' })).toBeUndefined()
+    expect((await ui.find({ key: 'filter' }))?.text).toBe('Find')
     expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, HIDDEN, BETA, GAMMA])
     // Done is collapsed again: the filter never touched its stored flag.
     expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 2')
@@ -306,8 +315,11 @@ for (const surface of WITH_CLIENT) {
       $.ui.scroll({
         ...SCROLL,
         by,
-        // The toolbar is the first row of the tree.
-        pointer: { column: 3, row: (await rowIndex(ui, 'card:md:0013-b')) + 1 },
+        // The toolbar is the first two rows of the tree.
+        pointer: {
+          column: 3,
+          row: (await rowIndex(ui, 'card:md:0013-b')) + TOOLBAR_ROWS,
+        },
       })
 
     // Unfiltered, this row is on Human's card; a scroll there moves Human.
@@ -357,7 +369,10 @@ for (const surface of WITH_CLIENT) {
     await $.ui.scroll({
       ...SCROLL,
       by: 40,
-      pointer: { column: 3, row: (await rowIndex(ui, 'hdr:backlog')) + 1 },
+      pointer: {
+        column: 3,
+        row: (await rowIndex(ui, 'hdr:backlog')) + TOOLBAR_ROWS,
+      },
     })
     expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 1 more')
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
@@ -365,7 +380,10 @@ for (const surface of WITH_CLIENT) {
     await $.ui.scroll({
       ...SCROLL,
       by: -1,
-      pointer: { column: 3, row: (await rowIndex(ui, 'hdr:backlog')) + 1 },
+      pointer: {
+        column: 3,
+        row: (await rowIndex(ui, 'hdr:backlog')) + TOOLBAR_ROWS,
+      },
     })
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
 
@@ -395,7 +413,10 @@ for (const surface of WITH_CLIENT) {
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
-      pointer: { column: 3, row: (await rowIndex(ui, 'hdr:done')) + 2 },
+      pointer: {
+        column: 3,
+        row: (await rowIndex(ui, 'hdr:done')) + TOOLBAR_ROWS + 1,
+      },
     })
 
     expect(scrolls).toHaveLength(0)
@@ -650,22 +671,18 @@ test('label filters read the GitHub labels, and a reorder goes after the nearest
   await ui.unmount()
 })
 
-test('a long filter is cut to fit the toolbar and leaves the status its room', async ($, on) => {
+test('a long filter is cut to fit the action row and the status row keeps its text', async ($, on) => {
   const { ui } = await start($, on, 'terminal')
   const query = 'label:ai label:feature -label:human area:UIX words that go on'
 
   await applyFilter(ui, query)
 
-  const [chip, status] = await ui.findAll({ type: 'Text' })
-  const buttons = await Promise.all(
-    ['refresh', 'add', 'filter', 'filter:clear'].map(key => ui.find({ key })),
+  const [status, actions] = await toolbar(ui)
+  expect(actions).toMatch(
+    /^ r: Refresh {3}n: New {3}f: Find "label:ai[^"]*…" ✕$/,
   )
-  const width = [chip, status, ...buttons].reduce(
-    (sum, one) => sum + cellWidth(one?.text ?? ''),
-    0,
-  )
-  expect(chip?.text.endsWith('…')).toBe(true)
-  expect(status?.text).toContain('updated')
-  expect(width).toBeLessThanOrEqual(PANE.props.bodyColumns)
+  expect(status).toContain('updated')
+  expect(cellWidth(status)).toBeLessThanOrEqual(PANE.props.bodyColumns)
+  expect(cellWidth(actions)).toBeLessThanOrEqual(PANE.props.bodyColumns)
   await ui.unmount()
 })

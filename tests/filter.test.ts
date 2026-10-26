@@ -211,6 +211,7 @@ test('a section with no match is an empty row, and the empty-board note stays aw
 
   expect(kinds(rows)).toEqual([
     'toolbar',
+    'toolbar',
     'header:human',
     'empty:human',
     'header:claude',

@@ -2,7 +2,7 @@
 
 A Claude Code mod that puts a kanban board in a side pane: four sections that show, at a glance, who holds the ball on every task. Cards live in your GitHub Issues and Projects board, or in plain `.kanban/*.md` files when GitHub isn't set up.
 
-<!-- screenshot: the board pane (Human / Claude / Backlog / Done) -->
+<!-- screenshot: the board pane (Human / Claude / Backlog / Done), with the two-row toolbar: the dim status row over `r: Refresh   n: New   f: Find` -->
 
 ## Sections
 
@@ -43,7 +43,7 @@ Type `/kanban` to open the board in a side pane. Click a card to open its detail
 
 Claude can work the board without the pane open (see [Claude's tools](#claudes-tools-and-the-handoff)).
 
-The toolbar shows the refresh button, the active backend, when the board was last updated, and any error. When a move has failed it also shows `✕N retry`, and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. While the pane is open the board refreshes every 45 seconds. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
+The toolbar is two rows. The first is dim status text: the active backend, when the board was last updated, and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find` (on mobile, which has no text field, only `r: Refresh`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
 
 ### Moving cards
 
@@ -69,13 +69,13 @@ A queued card is in Status In progress on GitHub like any card in Claude: a colu
 
 ### Adding a card
 
-Press `+` in the toolbar (or `n` while the pane has the keys) to open a title field at the top of the board. `Enter` adds the card to Backlog; `Add details` opens a second, taller field for the spec (a new line is typed there as in the prompt box; `Enter` in either field adds the card). `Cancel`, or `+` again, closes the form and drops what you typed; `Esc` only gives the keys back to the prompt, so a half-typed card is not lost. An empty title is refused with a toast. The button is not shown on mobile, which has no text field.
+Press `n: New` in the toolbar (or the `n` key while the pane has the keys) to open a title field at the top of the board. `Enter` adds the card to Backlog; `Add details` opens a second, taller field for the spec (a new line is typed there as in the prompt box; `Enter` in either field adds the card). `Cancel`, or `n: New` again, closes the form and drops what you typed; `Esc` only gives the keys back to the prompt, so a half-typed card is not lost. An empty title is refused with a toast. The button is not shown on mobile, which has no text field.
 
 The card shows at once with a pulsing `⟳` (`#0` until its backend has numbered it) and `✓` when it exists. On the local backend it is written to `.kanban/NNNN-slug.md`. On GitHub it is an issue with the `triage` label (created in the repo if missing, never overwritten), added to the project board with Status Backlog: that label marks it for grooming. If the backend refuses, the card disappears, a toast gives the reason and the form comes back with your text. If GitHub made the issue but could not add it to the board, the toast names the issue.
 
 ### Filtering the board
 
-Press `🔍` in the toolbar (or `f` while the pane has the keys) to open a filter field under it. The board follows what you type, in every section at once:
+Press `f: Find` in the toolbar (or the `f` key while the pane has the keys) to open a filter field under it. The board follows what you type, in every section at once:
 
 | You type | It shows |
 | --- | --- |
@@ -87,13 +87,13 @@ Press `🔍` in the toolbar (or `f` while the pane has the keys) to open a filte
 
 The words, labels and kinds of term all have to hold together: `@backlog label:ai area:UIX retry`. A key with nothing after it yet (`label:`) asks for nothing, and an unknown `@name` is a word.
 
-Each header counts the cards shown out of all it holds while a filter is on (`Backlog 3/41`; Claude's header shows this too instead of its load, which is back when the filter is cleared), a collapsed section with a match opens for as long as the filter is on (its fold is not changed), and Done's ten newest are taken from the cards that match. A section with none says `(no matches)`. The text shows in the toolbar with a `✕` that clears it; `Enter` in the field shuts the field and keeps the filter, so the board can be walked by key. `Esc` only gives the keys back to the prompt (it is the engine's), so clearing is the `✕`. The filter is not saved: it lasts until the session ends.
+Each header counts the cards shown out of all it holds while a filter is on (`Backlog 3/41`; Claude's header shows this too instead of its load, which is back when the filter is cleared), a collapsed section with a match opens for as long as the filter is on (its fold is not changed), and Done's ten newest are taken from the cards that match. A section with none says `(no matches)`. The text shows in the toolbar as `f: Find "fix login"` followed by a `✕` that clears it (cut with an ellipsis to fit the row, and left out when there is no room); `Enter` in the field shuts the field and keeps the filter, so the board can be walked by key. `Esc` only gives the keys back to the prompt (it is the engine's), so clearing is the `✕`. The filter is not saved: it lasts until the session ends.
 
 The filter only changes what is drawn. Everything you do acts on the cards you can see: the keyboard cursor, a click, a drop, the wheel and `J`/`K` all use the visible rows. A card put at a place in a section goes right after the nearest visible card above that place, ahead of any hidden cards that followed it (first in the section when none is above), so the visible order is the one you made and the hidden cards keep their order among themselves. The field is not shown on mobile, which has no text field. While the field is open the wheel scrolls the pane, not a section.
 
 ### Suggestions from Claude
 
-When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `+` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
 
 ## Backends
 
