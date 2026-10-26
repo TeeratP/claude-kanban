@@ -429,4 +429,9 @@ export const S = {
 
   // #34
   filterQuery: (query: string) => `Find "${query}"`,
+
+  // #39
+  paneTitleCount: (waiting: number) => `Kanban · ${waiting}`,
+  retitleFailed: (reason: string) =>
+    `kanban: could not retitle the pane: ${reason}`,
 }
