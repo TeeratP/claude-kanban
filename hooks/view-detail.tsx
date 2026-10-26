@@ -36,6 +36,7 @@ import {
   ageLabel,
   capDiff,
   errorMessage,
+  isOrdered,
   isPendingId,
 } from './model'
 import { shiftCard } from './reorder'
@@ -345,7 +346,7 @@ export async function renderDetail(
   const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
   const siblings = sectionList(board.cards, card.column)
   const place = siblings.findIndex(one => one.id === card.id)
-  const canReorder = !hasClient && card.column !== 'done' && place >= 0
+  const canReorder = !hasClient && isOrdered(card.column) && place >= 0
 
   const drawDiff = (shown: KanbanDetail) => {
     switch (shown.diffState) {
@@ -483,7 +484,13 @@ export async function renderDetail(
         {COLUMNS.filter(column => column !== card.column).map(column => (
           <Button
             key={`move:${column}`}
-            label={S.col[column]}
+            label={
+              column === 'done' ||
+              column === 'suspended' ||
+              column === 'cancelled'
+                ? S.setAsideTo[column]
+                : S.col[column]
+            }
             onPress={() =>
               moveCard($, card.id, column, moveOptions(card.column, column))
             }

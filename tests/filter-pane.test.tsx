@@ -6,6 +6,8 @@ import { cellWidth } from '../hooks/model'
 import {
   TOOLBAR_ROWS,
   click,
+  group,
+  header,
   keys,
   litRows,
   row,
@@ -70,12 +72,17 @@ async function start<S extends RenderSurface>(
   on: On,
   surface: S,
   files: Files = board(),
+  bodyRows: number = PANE.props.scroll.bodyRows,
 ) {
   const world = boot(on, files)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
-  const ui = await $.ui.mount({ ...PANE, surface })
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, scroll: { offset: 0, bodyRows } },
+  })
 
   return { ...world, files, ui }
 }
@@ -96,13 +103,26 @@ async function applyFilter(ui: FilterUi, text: string) {
   await ui.input({ key: FIELD, text })
 }
 
-// The keys of the rows under a header, up to the next one.
+// The keys of the rows under a header, up to the next header or group. Only
+// where the list is a Client: elsewhere a section header is not a row.
 async function under(ui: BoardUi, header: string) {
   const all = await rowKeys(ui)
   const rest = all.slice(all.indexOf(header) + 1)
-  const next = rest.findIndex(key => key.startsWith('hdr:'))
+  const next = rest.findIndex(
+    key => key.startsWith('hdr:') || key.startsWith('grp:'),
+  )
 
   return next < 0 ? rest : rest.slice(0, next)
+}
+
+// The cards of a section, in the order shown, on any surface: the section is
+// told by the status in the card's file.
+async function cardsIn(ui: BoardUi, files: Files, column: string) {
+  const members = Object.entries(files)
+    .filter(([, text]) => text.includes(`\nstatus: ${column}\n`))
+    .map(([file]) => `card:md:${file.slice('.kanban/'.length, -'.md'.length)}`)
+
+  return (await rowKeys(ui)).filter(key => members.includes(key))
 }
 
 const textOf = async (ui: BoardUi, key: string) => (await row(ui, key))?.text
@@ -112,15 +132,16 @@ const orderOf = (files: Files, id: number, slug: string) =>
 
 type Pointer = Mounted<'terminal'>['pointer']
 
-// Drags `from` onto `to`, the pointer moving straight from one to the other.
-async function drag(ui: BoardUi, from: string, to: string) {
+// Drags `from` onto `to`, the pointer moving straight from one to the other
+// and ending at column `x` of it.
+async function drag(ui: BoardUi, from: string, to: string, x = 3) {
   const { pointer } = ui as unknown as { pointer: Pointer }
   const start = await rowIndex(ui, from)
   const end = await rowIndex(ui, to)
 
   await pointer({ type: 'down', x: 3, y: start, button: 'left' })
-  await pointer({ type: 'move', x: 3, y: end, button: 'left' })
-  await pointer({ type: 'up', x: 3, y: end, button: 'left' })
+  await pointer({ type: 'move', x, y: end, button: 'left' })
+  await pointer({ type: 'up', x, y: end, button: 'left' })
 }
 
 // Brings the cursor up and walks it down to `key`.
@@ -135,12 +156,12 @@ async function walkTo(ui: BoardUi, key: string) {
 
 for (const surface of SURFACES) {
   test(`the filter button opens a field, and typing filters every section live on the ${surface}`, async ($, on) => {
-    const { ui } = await start($, on, surface)
+    const { ui, files } = await start($, on, surface)
     const button = await ui.find({ key: 'filter' })
     expect(button?.text).toBe('Find')
     expect(button?.props.hotkey).toBe('f')
     expect(await ui.find({ key: FIELD })).toBeUndefined()
-    expect(await textOf(ui, 'hdr:claude')).toBe('▾ Claude 1/1')
+    expect(await header(ui, 'claude')).toBe('Claude 1')
 
     await ui.press({ key: 'filter' })
     const field = await ui.find({ key: FIELD })
@@ -150,43 +171,44 @@ for (const surface of SURFACES) {
 
     await ui.input({ key: FIELD, text: 'fix', kind: 'change' })
     expect((await ui.find({ key: FIELD }))?.props.value).toBe('fix')
-    // (Without a Client, an empty row is not a Button.)
-    const noMatch = surface === 'vscode' ? [] : ['empty:claude']
+    // (Without a Client, an empty row is a Text with no key.)
     expect(await rowKeys(ui)).toEqual([
-      'hdr:human',
-      LOGIN,
-      'hdr:claude',
-      ...noMatch,
+      'grp:active',
       'hdr:backlog',
       ALPHA,
       BETA,
       GAMMA,
-      'hdr:done',
-      OLDER,
+      'hdr:human',
+      LOGIN,
+      'hdr:claude',
+      ...(surface === 'vscode' ? [] : ['empty:claude']),
+      'grp:inactive',
     ])
     // Each header counts the cards shown out of all it holds, Claude's too.
-    expect(await textOf(ui, 'hdr:human')).toBe('▾ Human 1/1')
-    expect(await textOf(ui, 'hdr:claude')).toBe('▾ Claude 0/1')
-    expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 3/4')
-    // Done is collapsed but has a match, so it shows.
-    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 1/2')
+    expect(await header(ui, 'human')).toBe('Human 1/1')
+    expect(await header(ui, 'claude')).toBe('Claude 0/1')
+    expect(await header(ui, 'backlog')).toBe('Backlog 3/4')
+    // Inactive is folded, and says how many of its cards match.
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(
+      /^▸ Inactive\s+1 match$/,
+    )
     // The text shows in the toolbar's Find button, with a button to clear it.
     expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "fix"')
     expect((await ui.find({ key: 'filter:clear' }))?.text).toBe('✕')
 
     await ui.input({ key: FIELD, text: 'fix login', kind: 'change' })
-    expect(await under(ui, 'hdr:human')).toEqual([LOGIN])
-    expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 0/4')
+    expect(await cardsIn(ui, files, 'human')).toEqual([LOGIN])
+    expect(await header(ui, 'backlog')).toBe('Backlog 0/4')
     await ui.unmount()
   })
 
   test(`Enter keeps the filter and shuts the field, the button brings it back and the cross clears it on the ${surface}`, async ($, on) => {
-    const { ui } = await start($, on, surface)
+    const { ui, files } = await start($, on, surface)
     await typeFilter(ui, 'fix')
 
     await ui.input({ key: FIELD, text: 'fix' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
-    expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, BETA, GAMMA])
+    expect(await cardsIn(ui, files, 'backlog')).toEqual([ALPHA, BETA, GAMMA])
     expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "fix"')
 
     await ui.press({ key: 'filter' })
@@ -194,78 +216,108 @@ for (const surface of SURFACES) {
     // The button shuts the field again; the filter stays.
     await ui.press({ key: 'filter' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
-    expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, BETA, GAMMA])
+    expect(await cardsIn(ui, files, 'backlog')).toEqual([ALPHA, BETA, GAMMA])
 
     await ui.press({ key: 'filter:clear' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
     expect(await ui.find({ key: 'filter:clear' })).toBeUndefined()
     expect((await ui.find({ key: 'filter' }))?.text).toBe('Find')
-    expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, HIDDEN, BETA, GAMMA])
-    // Done is collapsed again: the filter never touched its stored flag.
-    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 2')
-    expect(await textOf(ui, 'hdr:claude')).toBe('▾ Claude 1/1')
+    expect(await cardsIn(ui, files, 'backlog')).toEqual([
+      ALPHA,
+      HIDDEN,
+      BETA,
+      GAMMA,
+    ])
+    // Inactive is folded again: the filter never touched the stored group.
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(
+      /^▸ Inactive\s+2 Done$/,
+    )
+    expect(await header(ui, 'claude')).toBe('Claude 1')
     await ui.unmount()
   })
 
   test(`a section with no match says so and the cross brings the cards back on the ${surface}`, async ($, on) => {
-    const { ui } = await start($, on, surface)
+    const { ui, files } = await start($, on, surface)
 
     await typeFilter(ui, 'zzz')
-    expect(await textOf(ui, 'hdr:human')).toBe('▾ Human 0/1')
-    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 0/2')
-    expect(await rowKeys(ui)).not.toContain('note')
-    expect(await under(ui, 'hdr:backlog')).toEqual(
-      surface === 'vscode' ? [] : ['empty:backlog'],
+    expect(await header(ui, 'human')).toBe('Human 0/1')
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(
+      /^▸ Inactive\s+no matches$/,
     )
+    expect(await rowKeys(ui)).not.toContain('note')
     if (surface !== 'vscode') {
+      expect(await under(ui, 'hdr:backlog')).toEqual(['empty:backlog'])
       expect(await textOf(ui, 'empty:backlog')).toBe('  (no matches)')
     }
 
     await ui.press({ key: 'filter:clear' })
-    expect(await under(ui, 'hdr:human')).toEqual([LOGIN])
+    expect(await cardsIn(ui, files, 'human')).toEqual([LOGIN])
     await ui.unmount()
   })
 
-  // #31: a header press under a filter changes what is shown, not the stored flag.
-  test(`a header pressed under a filter collapses or opens its section on screen, and clearing the filter gives the stored flags back on the ${surface}`, async ($, on) => {
-    const { ui } = await start($, on, surface)
+  // A group press under a filter changes what is shown, not the stored group.
+  test(`a group pressed under a filter turns on screen, and clearing the filter gives the stored group back on the ${surface}`, async ($, on) => {
+    const { ui, files } = await start($, on, surface)
     await applyFilter(ui, 'fix')
-    // Done is collapsed but has a match, so the filter opens it.
-    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 1/2')
-    expect(await under(ui, 'hdr:done')).toEqual([OLDER])
+    // Active has matches, so it is the one drawn open; Inactive says what it holds.
+    expect((await row(ui, 'grp:active'))?.text).toBe('▾ Active')
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(/1 match$/)
 
-    await click(ui, 'hdr:done')
-    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 1/2')
-    expect(await under(ui, 'hdr:done')).toEqual([])
-    // An open section collapses the same way.
-    await click(ui, 'hdr:backlog')
-    expect(await textOf(ui, 'hdr:backlog')).toBe('▸ Backlog 3/4')
-    expect(await under(ui, 'hdr:backlog')).toEqual([])
+    await group(ui, 'inactive')
+    expect(await header(ui, 'done')).toBe('Done 1/2')
+    expect(await cardsIn(ui, files, 'done')).toEqual([OLDER])
+    expect((await row(ui, 'grp:active'))?.text).toMatch(
+      /^▸ Active\s+4 matches$/,
+    )
 
-    // A second press opens the one the filter had opened.
-    await click(ui, 'hdr:done')
-    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 1/2')
+    // Pressing the open group folds both.
+    await group(ui, 'inactive')
+    expect(await header(ui, 'done')).toBeUndefined()
+    expect(await header(ui, 'backlog')).toBeUndefined()
+    expect(await rowKeys(ui)).toEqual(
+      surface === 'vscode'
+        ? ['grp:active', 'grp:inactive']
+        : ['grp:active', 'grp:inactive', 'folded'],
+    )
+
+    // A second press opens the one the filter had left open.
+    await group(ui, 'active')
+    expect((await row(ui, 'grp:active'))?.text).toBe('▾ Active')
+    expect(await header(ui, 'backlog')).toBe('Backlog 3/4')
 
     await ui.press({ key: 'filter:clear' })
-    // Done is collapsed as stored, Backlog open as stored.
-    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 2')
-    expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 4')
-    expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, HIDDEN, BETA, GAMMA])
+    // Active is open as stored.
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(
+      /^▸ Inactive\s+2 Done$/,
+    )
+    expect(await header(ui, 'backlog')).toBe('Backlog 4')
+    expect(await cardsIn(ui, files, 'backlog')).toEqual([
+      ALPHA,
+      HIDDEN,
+      BETA,
+      GAMMA,
+    ])
 
-    // Without a filter a header press still changes the stored flag.
-    await click(ui, 'hdr:done')
-    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 2')
+    // Without a filter a press still changes the stored group.
+    await group(ui, 'inactive')
+    expect(await header(ui, 'done')).toBe('Done 2')
+    expect(await header(ui, 'backlog')).toBeUndefined()
     await ui.unmount()
   })
 
-  test(`a section collapsed under a filter opens again when the filter text changes on the ${surface}`, async ($, on) => {
+  test(`a group chosen under a filter is dropped when the filter text changes on the ${surface}`, async ($, on) => {
     const { ui } = await start($, on, surface)
     await applyFilter(ui, 'fix')
-    await click(ui, 'hdr:done')
-    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 1/2')
+    await group(ui, 'inactive')
+    await group(ui, 'inactive')
+    expect(await header(ui, 'done')).toBeUndefined()
 
+    // Only Inactive matches `old`, so it is the one drawn open.
     await typeFilter(ui, 'old')
-    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 2/2')
+    expect(await header(ui, 'done')).toBe('Done 2/2')
+    expect((await row(ui, 'grp:active'))?.text).toMatch(
+      /^▸ Active\s+no matches$/,
+    )
     await ui.unmount()
   })
 }
@@ -295,10 +347,10 @@ test('the filter stays through a visit to a card and is not saved', async ($, on
   await ui.unmount()
 })
 
-// Seven Human cards and eight Backlog ones: Human's cards come first on the board.
+// Nine Human cards and eight Backlog ones; Backlog comes first on the board.
 const long = (): Files => {
   const files: Files = {}
-  for (let n = 1; n <= 7; n += 1) {
+  for (let n = 1; n <= 9; n += 1) {
     files[path(n, 'h')] = card(n, { status: 'human', title: `Human ${n}` })
   }
   for (let n = 11; n <= 18; n += 1) {
@@ -322,11 +374,12 @@ for (const surface of WITH_CLIENT) {
         },
       })
 
-    // Unfiltered, this row is on Human's card; a scroll there moves Human.
+    // Unfiltered, this row is on a card of Backlog; a filter that leaves
+    // Human nothing changes what the rows under it are.
     await typeFilter(ui, 'backlog')
-    expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 8/8')
-    expect(await textOf(ui, 'hdr:human')).toBe('▾ Human 0/7')
-    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 3 more')
+    expect(await header(ui, 'backlog')).toBe('Backlog 8/8')
+    expect(await header(ui, 'human')).toBe('Human 0/9')
+    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 2 more')
 
     // While the field is open the list sits lower than the layout knows.
     await wheel(1)
@@ -337,6 +390,7 @@ for (const surface of WITH_CLIENT) {
     await wheel(2)
     expect(scrolls).toHaveLength(1)
     expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
+    expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     expect(await row(ui, 'more:human:up')).toBeUndefined()
     expect(await row(ui, 'more:human:down')).toBeUndefined()
 
@@ -347,39 +401,42 @@ for (const surface of WITH_CLIENT) {
     await ui.press({ key: 'filter' })
     await ui.input({ key: FIELD, text: 'backlog ', kind: 'change' })
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
-    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 3 more')
+    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 2 more')
 
     // And so does clearing it.
     await ui.input({ key: FIELD, text: 'backlog' })
     await wheel(40)
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 3 more')
+    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
     await ui.press({ key: 'filter:clear' })
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
-    expect(await textOf(ui, 'more:human:down')).toBe('  ↓ 2 more')
+    expect(await textOf(ui, 'more:human:down')).toBe('  ↓ 3 more')
     await ui.unmount()
   })
 
   test(`the window stops at the last card that matches and follows a card moved past its edge on the ${surface}`, async ($, on) => {
-    const { ui } = await start($, on, surface, long())
-    // Six of Backlog's eight cards, so five show and one is below.
+    // A pane of 22 rows: five rows under each header.
+    const { ui } = await start($, on, surface, long(), 22)
+    // Six of Backlog's eight cards, so four show and two are below.
     await applyFilter(ui, '#11 #12 #13 #14 #15 #16')
-    expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 6/8')
-    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 1 more')
+    expect(await header(ui, 'backlog')).toBe('Backlog 6/8')
+    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 2 more')
 
     await $.ui.scroll({
       ...SCROLL,
+      bodyRows: 22,
       by: 40,
       pointer: {
         column: 3,
         row: (await rowIndex(ui, 'hdr:backlog')) + TOOLBAR_ROWS,
       },
     })
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 1 more')
+    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
-    // One back is all the way back: the window never went past the matches.
+    // Two back is all the way back: the window never went past the matches.
     await $.ui.scroll({
       ...SCROLL,
-      by: -1,
+      bodyRows: 22,
+      by: -2,
       pointer: {
         column: 3,
         row: (await rowIndex(ui, 'hdr:backlog')) + TOOLBAR_ROWS,
@@ -388,28 +445,31 @@ for (const surface of WITH_CLIENT) {
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
 
     // The last card in sight goes a place down, past the edge: the window follows.
-    await walkTo(ui, 'card:md:0015-b')
+    await walkTo(ui, 'card:md:0014-b')
     await keys(ui, 'J')
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 1 more')
-    expect(await litRows(ui)).toEqual(['card:md:0015-b'])
+    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
+    expect(await litRows(ui)).toEqual(['card:md:0014-b'])
     await ui.unmount()
   })
 
-  test(`the wheel scrolls a collapsed section the filter has opened on the ${surface}`, async ($, on) => {
+  test(`the wheel scrolls a group the filter has opened on the ${surface}`, async ($, on) => {
     const files: Files = {}
-    for (let n = 1; n <= 7; n += 1) {
+    for (let n = 1; n <= 12; n += 1) {
       files[path(n, 'o')] = card(n, {
         status: 'done',
         title: `Old ${n}`,
-        updated: `2026-10-25T11:0${n}:00Z`,
+        updated: `2026-10-25T11:${String(n).padStart(2, '0')}:00Z`,
       })
     }
     const { ui, scrolls } = await start($, on, surface, files)
-    expect(await textOf(ui, 'hdr:done')).toBe('▸ Done 7')
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(
+      /^▸ Inactive\s+12 Done$/,
+    )
 
     await applyFilter(ui, 'old')
-    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 7/7')
-    expect(await textOf(ui, 'more:done:down')).toBe('  ↓ 3 more')
+    // Done lists its ten newest: six show, and four are below.
+    expect(await header(ui, 'done')).toBe('Done 12/12')
+    expect(await textOf(ui, 'more:done:down')).toBe('  ↓ 4 more')
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
@@ -430,22 +490,20 @@ for (const surface of WITH_CLIENT) {
     const { ui } = await start($, on, surface)
     await applyFilter(ui, 'fix')
 
-    // The hidden card, the empty row and the collapsed Done's card are never stops.
+    // The hidden card, the empty row, the section headers and the folded
+    // group's card are never stops.
     const stops: string[] = []
-    for (let step = 0; step < 9; step += 1) {
+    for (let step = 0; step < 6; step += 1) {
       await keys(ui, 'down')
       stops.push(...(await litRows(ui)))
     }
     expect(stops).toEqual([
-      'hdr:human',
-      LOGIN,
-      'hdr:claude',
-      'hdr:backlog',
+      'grp:active',
       ALPHA,
       BETA,
       GAMMA,
-      'hdr:done',
-      OLDER,
+      LOGIN,
+      'grp:inactive',
     ])
 
     await keys(ui, 'up', 'up', 'up')
@@ -471,7 +529,8 @@ for (const surface of WITH_CLIENT) {
     expect(files[path(11, 'hidden')]).toContain('status: backlog')
     expect(files[path(12, 'beta')]).toContain('status: backlog')
     expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, BETA])
-    expect(await under(ui, 'hdr:done')).toContain(GAMMA)
+    // It joined Done's older match in the folded group, which says so.
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(/2 matches$/)
     await ui.unmount()
   })
 
@@ -549,17 +608,19 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
-  test(`a card dragged onto a header of another section moves there from a filtered board on the ${surface}`, async ($, on) => {
+  test(`a card dragged onto a chip of the folded group moves there from a filtered board on the ${surface}`, async ($, on) => {
     const { clock, ui, files } = await start($, on, surface)
     await applyFilter(ui, 'fix')
 
-    await drag(ui, BETA, 'hdr:done')
+    // At 44 columns Done's chip is over cells 10 to 16.
+    await drag(ui, BETA, 'grp:inactive', 12)
     await clock.advance(SYNC_PAUSE)
 
     expect(files[path(12, 'beta')]).toContain('status: done')
     expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, GAMMA])
+    await group(ui, 'inactive')
+    expect(await header(ui, 'done')).toBe('Done 2/3')
     expect(await under(ui, 'hdr:done')).toContain(BETA)
-    expect(await textOf(ui, 'hdr:done')).toBe('▾ Done 2/3')
     await ui.unmount()
   })
 }
@@ -575,9 +636,14 @@ test("a card's own view moves it a place in its whole section, whatever the boar
   // One place up is above the hidden card, not above Alpha.
   expect(orderOf(files, 12, 'beta')).toBe(15)
   await ui.press({ key: 'back' })
-  expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, BETA, GAMMA])
+  expect(await cardsIn(ui, files, 'backlog')).toEqual([ALPHA, BETA, GAMMA])
   await ui.press({ key: 'filter:clear' })
-  expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, BETA, HIDDEN, GAMMA])
+  expect(await cardsIn(ui, files, 'backlog')).toEqual([
+    ALPHA,
+    BETA,
+    HIDDEN,
+    GAMMA,
+  ])
   await ui.unmount()
 })
 
@@ -622,7 +688,7 @@ test('label filters read the GitHub labels, and a reorder goes after the nearest
     'card:gh:3',
     'card:gh:4',
   ])
-  expect(await textOf(ui, 'hdr:backlog')).toBe('▾ Backlog 3/4')
+  expect(await header(ui, 'backlog')).toBe('Backlog 3/4')
 
   await applyFilter(ui, '-label:docs')
   expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:2'])
@@ -630,7 +696,7 @@ test('label filters read the GitHub labels, and a reorder goes after the nearest
 
   await applyFilter(ui, 'label:ai -label:docs @backlog #2')
   expect(await rowKeys(ui)).toContain('card:gh:2')
-  expect(await textOf(ui, 'hdr:claude')).toBe('▾ Claude 0/1')
+  expect(await header(ui, 'claude')).toBe('Claude 0/1')
 
   // Issue 2 is hidden between 1 and 3: issue 4 before issue 3 goes after issue 1.
   await applyFilter(ui, 'label:docs')

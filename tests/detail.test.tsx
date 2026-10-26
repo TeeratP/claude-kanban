@@ -5,7 +5,7 @@ import type { On } from 'claude-code'
 import type { KanbanBoard, KanbanDetail } from '../types'
 import { formatFeedback } from '../hooks/handoff'
 import { SETTLE_MS, capDiff } from '../hooks/model'
-import { click, rowKeys } from './board-ui'
+import { click, under } from './board-ui'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -103,10 +103,7 @@ for (const surface of SURFACES) {
       '#2 Build API',
     )
     await ui.press({ key: 'back' })
-    const keys = await rowKeys(ui)
-    expect(
-      keys.slice(keys.indexOf('hdr:claude'), keys.indexOf('hdr:backlog')),
-    ).toEqual(['hdr:claude', 'card:md:0001-login'])
+    expect(await under(ui, 'hdr:claude')).toEqual(['card:md:0001-login'])
 
     await click(ui, 'card:md:0001-login')
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
@@ -223,6 +220,55 @@ for (const surface of SURFACES) {
     }
     expect(files[path(3, 'docs')]).toContain('status: claude')
     expect(prompts).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test(`the move buttons offer the five other sections, the three set aside as verbs, and Suspend moves a Claude card on the ${surface}`, async ($, on) => {
+    const { clock, ui, files, prompts } = await open($, on, surface)
+    const labels = async () =>
+      Promise.all(
+        ['human', 'claude', 'backlog', 'done', 'suspended', 'cancelled'].map(
+          async column =>
+            [column, (await ui.find({ key: `move:${column}` }))?.text] as const,
+        ),
+      )
+
+    await click(ui, 'card:md:0003-docs')
+    expect(await labels()).toEqual([
+      ['human', 'Human'],
+      ['claude', 'Claude'],
+      ['backlog', undefined],
+      ['done', 'Done'],
+      ['suspended', 'Suspend'],
+      ['cancelled', 'Cancel'],
+    ])
+    await ui.press({ key: 'move:claude' })
+    await clock.advance(SYNC_PAUSE)
+    expect(prompts).toHaveLength(1)
+    expect((await labels())[1]).toEqual(['claude', undefined])
+
+    // Setting a card aside asks Claude nothing; the way back is a move like any other.
+    await ui.press({ key: 'move:suspended' })
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    expect(await labels()).toEqual([
+      ['human', 'Human'],
+      ['claude', 'Claude'],
+      ['backlog', 'Backlog'],
+      ['done', 'Done'],
+      ['suspended', undefined],
+      ['cancelled', 'Cancel'],
+    ])
+    expect(prompts).toHaveLength(1)
+
+    await ui.press({ key: 'move:cancelled' })
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(3, 'docs')]).toContain('status: cancelled')
+    await ui.press({ key: 'move:claude' })
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(3, 'docs')]).toContain('status: claude')
+    expect(prompts).toHaveLength(2)
+    await clock.advance(2000)
     await ui.unmount()
   })
 }

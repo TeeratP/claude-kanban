@@ -1,5 +1,5 @@
 import type { KanbanCard, KanbanColumn } from '../types'
-import { isColumn } from './model'
+import { GROUPS, parseColumn } from './model'
 
 // What a filter query asks for. Words, labels and exclusions each have to hold;
 // of numbers, title tags, areas and sections a card need only be one.
@@ -41,13 +41,16 @@ function parseFilter(query: string): Filter {
     const number = NUMBER.exec(term)?.[1]
     const tag = TAG.exec(term)?.[1]
     const section = term.startsWith('@') ? term.slice(1) : ''
+    const column = parseColumn(section)
 
     if (number !== undefined) filter.numbers.push(Number(number))
     else if (tag !== undefined) filter.tags.push(tag)
     else if (term.startsWith('label:')) pushValue(filter.withLabels, term)
     else if (term.startsWith('-label:')) pushValue(filter.withoutLabels, term)
     else if (term.startsWith('area:')) pushValue(filter.areas, term)
-    else if (isColumn(section)) filter.columns.push(section)
+    else if (column !== undefined) filter.columns.push(column)
+    else if (section === 'active') filter.columns.push(...GROUPS.active)
+    else if (section === 'inactive') filter.columns.push(...GROUPS.inactive)
     else if (term !== '') filter.words.push(term)
   }
 
@@ -93,7 +96,8 @@ function passes(card: KanbanCard, filter: Filter): boolean {
  * (case aside; "a phrase" in quotes counts as one); `#12` is the number;
  * `label:ai` needs the label and `-label:ai` refuses it; `[KANB-UIX]` (or
  * `[KANB]`) and `area:UIX` read the title's `[PRJ-AREA]` prefix; `@claude`
- * names a section. Several numbers, tags, areas or sections are alternatives.
+ * names a section, `@active` and `@inactive` the three of a group. Several
+ * numbers, tags, areas or sections are alternatives.
  */
 export function matchesFilter(card: KanbanCard, query: string): boolean {
   return passes(card, parseFilter(query))

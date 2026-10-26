@@ -24,7 +24,7 @@ import {
   runCommand,
   viewerLogin,
 } from './github'
-import type { ParsedClaudeMd } from './github'
+import type { ParsedClaudeMd, StatusOption } from './github'
 import {
   appendLocal,
   createLocal,
@@ -40,11 +40,16 @@ import { S } from './strings'
 // named top-level functions, so these dispatch on `info.kind` instead of
 // calling methods on an object.
 
+/** What a load brings: the cards, and the Status options a GitHub board reported (none for local). */
+export type Loaded = { cards: KanbanCard[]; statusOptions: StatusOption[] }
+
 export async function loadCards(
   $: EngineInterface,
   info: KanbanBackendInfo,
-): Promise<KanbanCard[]> {
-  if (info.kind === 'local') return loadLocal($)
+): Promise<Loaded> {
+  if (info.kind === 'local') {
+    return { cards: await loadLocal($), statusOptions: [] }
+  }
 
   return loadGithubPaced($, info)
 }

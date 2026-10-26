@@ -4,6 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import {
   click,
+  group,
   keys,
   lineRows,
   litRows,
@@ -58,7 +59,10 @@ async function goTo(ui: BoardUi, key: string) {
   expect(await litRows(ui)).toEqual([key])
 }
 
-// Eight Backlog cards: five show, a `more` row pages to the rest.
+// The rows the cursor can rest on: a group's header, a card or a `more` row.
+const STOP = /^(grp|card|more)\b/
+
+// Eight Backlog cards: six show, a `more` row pages to the rest.
 const backlog = () => {
   const files: Record<string, string> = {}
   for (let n = 1; n <= 8; n += 1) {
@@ -74,18 +78,19 @@ for (const surface of WITH_CLIENT) {
     expect(await litRows(ui)).toEqual([])
 
     await keys(ui, 'return')
-    expect(await litRows(ui)).toEqual(['hdr:human'])
+    expect(await litRows(ui)).toEqual(['grp:active'])
     expect(await row(ui, LOGIN)).toBeDefined()
 
+    // The next one acts: Active is open, so it folds, and with it every section.
     await keys(ui, 'return')
     expect(await row(ui, LOGIN)).toBeUndefined()
-    expect(await litRows(ui)).toEqual(['hdr:human'])
+    expect(await litRows(ui)).toEqual(['grp:active'])
     await ui.unmount()
   })
 
   test(`up, down, k and j move the cursor and stop at the ends on the ${surface}`, async ($, on) => {
     const { ui } = await start($, on, surface)
-    const all = await rowKeys(ui)
+    const all = (await rowKeys(ui)).filter(key => STOP.test(key))
     const lit = async () => (await litRows(ui)).join()
 
     await keys(ui, 'down')
@@ -117,29 +122,45 @@ for (const surface of WITH_CLIENT) {
 
     // A click on a text row records nothing for the keys to start from.
     await click(ui, 'empty:claude')
-    await goTo(ui, 'hdr:claude')
+    await goTo(ui, LOGIN)
+    // Past the Claude header, its empty row and its filler, to the Inactive group.
     await keys(ui, 'down')
-    expect(await litRows(ui)).toEqual(['hdr:backlog'])
+    expect(await litRows(ui)).toEqual(['grp:inactive'])
     await keys(ui, 'up')
-    expect(await litRows(ui)).toEqual(['hdr:claude'])
+    expect(await litRows(ui)).toEqual([LOGIN])
+    await ui.unmount()
+  })
+
+  test(`the cursor rests on group headers, cards and more rows, never on a section header or filler on the ${surface}`, async ($, on) => {
+    const { ui } = await start($, on, surface, backlog())
+    const stops = (await rowKeys(ui)).filter(key => STOP.test(key))
+    const labels = (await rowKeys(ui)).filter(key => !STOP.test(key))
+
+    expect(labels).toContain('hdr:backlog')
+    expect(labels).toContain('hdr:human')
+    expect(labels.some(key => key.startsWith('empty:'))).toBe(true)
+    for (const stop of stops) {
+      await keys(ui, 'down')
+      expect(await litRows(ui)).toEqual([stop])
+    }
     await ui.unmount()
   })
 
   test(`a click draws no cursor and the keys start from the row it hit on the ${surface}`, async ($, on) => {
     const { ui } = await start($, on, surface)
 
-    await click(ui, 'hdr:claude')
-    expect(await row(ui, API)).toBeUndefined()
+    await click(ui, 'grp:inactive')
+    expect(await row(ui, DOCS)).toBeUndefined()
     expect(await litRows(ui)).toEqual([])
 
     await keys(ui, 'down')
-    expect(await litRows(ui)).toEqual(['hdr:claude'])
+    expect(await litRows(ui)).toEqual(['grp:inactive'])
     await keys(ui, 'down')
-    expect(await litRows(ui)).toEqual(['hdr:backlog'])
+    expect(await litRows(ui)).toEqual(['card:md:0004-old'])
 
     // A click while the cursor shows moves it to the row clicked.
-    await click(ui, 'hdr:human')
-    expect(await litRows(ui)).toEqual(['hdr:human'])
+    await click(ui, 'grp:active')
+    expect(await litRows(ui)).toEqual(['grp:active'])
     await ui.unmount()
   })
 
@@ -159,19 +180,21 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
-  test(`Enter on a header folds it on the ${surface}`, async ($, on) => {
+  test(`Enter on a group header opens it and folds the other on the ${surface}`, async ($, on) => {
     const { ui } = await start($, on, surface)
 
-    await goTo(ui, 'hdr:done')
+    await goTo(ui, 'grp:inactive')
     // The cursor's highlight runs to the pane's edge, so its row has trailing spaces.
-    const done = async () => (await row(ui, 'hdr:done'))?.text.trimEnd()
-    expect(await done()).toBe('▸ Done 1')
+    const inactive = async () => (await row(ui, 'grp:inactive'))?.text.trimEnd()
+    expect(await inactive()).toMatch(/^▸ Inactive\s+1 Done$/)
     await keys(ui, 'return')
-    expect(await done()).toBe('▾ Done 1')
+    expect(await inactive()).toBe('▾ Inactive')
     expect(await row(ui, 'card:md:0004-old')).toBeDefined()
-    expect(await litRows(ui)).toEqual(['hdr:done'])
+    expect(await row(ui, DOCS)).toBeUndefined()
+    expect(await litRows(ui)).toEqual(['grp:inactive'])
     await keys(ui, 'return')
-    expect(await done()).toBe('▸ Done 1')
+    expect(await inactive()).toMatch(/^▸ Inactive\s+1 Done$/)
+    expect(await row(ui, 'card:md:0004-old')).toBeUndefined()
     await ui.unmount()
   })
 
@@ -181,7 +204,7 @@ for (const surface of WITH_CLIENT) {
     await goTo(ui, 'more:backlog:down')
     await keys(ui, 'return')
 
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 3 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 2 more')
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     // Its row gone, the cursor rests on the nearest one.
     expect(await litRows(ui)).toEqual(['card:md:0008-b'])
@@ -195,25 +218,31 @@ for (const surface of WITH_CLIENT) {
       const { clock, ui, files } = await start($, on, surface)
       await goTo(ui, DOCS)
 
+      // The other sections show the keys that send the card there, in place of
+      // their meta; the folded group shows its three on its own header.
       await keys(ui, 'm')
-      expect((await row(ui, 'hdr:human'))?.text).toBe('▾ Human 1  1/h')
-      expect((await row(ui, 'hdr:claude'))?.text).toBe('▾ Claude 1  2/c')
-      expect((await row(ui, 'hdr:done'))?.text).toBe('▸ Done 1  4/d')
-      expect((await row(ui, 'hdr:backlog'))?.text).toBe('▾ Backlog 1')
+      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Human 1 ─+ 2\/h$/)
+      expect((await row(ui, 'hdr:claude'))?.text).toMatch(/Claude 1 ─+ 3\/c$/)
+      expect((await row(ui, 'hdr:backlog'))?.text).toMatch(/Backlog 1 ─+$/)
+      expect((await row(ui, 'grp:inactive'))?.text).toMatch(
+        /^▸ Inactive\s+4\/d 5\/x 6\/s$/,
+      )
 
       await keys(ui, 'h')
       const keysNow = await rowKeys(ui)
-      expect(keysNow.slice(keysNow.indexOf('hdr:human') + 1, 3)).toEqual([
-        LOGIN,
-        DOCS,
-      ])
-      expect((await row(ui, 'hdr:human'))?.text).toBe('▾ Human 2')
+      expect(
+        keysNow.slice(
+          keysNow.indexOf('hdr:human') + 1,
+          keysNow.indexOf('hdr:claude'),
+        ),
+      ).toEqual([LOGIN, DOCS])
+      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Human 2 ─+$/)
       // The cursor follows the card into its new section.
       expect(await litRows(ui)).toEqual([DOCS])
       await clock.advance(SYNC_PAUSE)
       expect(files[path(3, 'docs')]).toContain('status: human')
 
-      await keys(ui, 'm', '3')
+      await keys(ui, 'm', '1')
       await clock.advance(SYNC_PAUSE)
       expect(files[path(3, 'docs')]).toContain('status: backlog')
       expect(await litRows(ui)).toEqual([DOCS])
@@ -228,6 +257,29 @@ for (const surface of WITH_CLIENT) {
     },
   )
 
+  for (const [name, column] of [
+    ['d', 'done'],
+    ['x', 'cancelled'],
+    ['s', 'suspended'],
+    ['4', 'done'],
+    ['5', 'cancelled'],
+    ['6', 'suspended'],
+  ] as const) {
+    test(`m then ${name} moves the card to ${column}, though that group is folded, on the ${surface}`, async ($, on) => {
+      const { clock, ui, files } = await start($, on, surface)
+      await goTo(ui, DOCS)
+
+      await keys(ui, 'm', name)
+      await clock.advance(SYNC_PAUSE)
+
+      expect(files[path(3, 'docs')]).toContain(`status: ${column}`)
+      expect(await row(ui, DOCS)).toBeUndefined()
+      await group(ui, 'inactive')
+      expect(await row(ui, DOCS)).toBeDefined()
+      await ui.unmount()
+    })
+  }
+
   test(
     `a card moved from Backlog to Claude by key asks Claude to work on it, any other move does not on the ${surface}`,
     { options: { claudeLimit: 0 } },
@@ -240,8 +292,13 @@ for (const surface of WITH_CLIENT) {
       expect(files[path(1, 'login')]).toContain('status: claude')
       expect(prompts).toEqual([])
 
-      await goTo(ui, DOCS)
-      await keys(ui, 'm', '2')
+      // Docs is above Login, which went down to Claude with the cursor on it.
+      for (let step = 0; step < 30; step += 1) {
+        if ((await litRows(ui)).includes(DOCS)) break
+        await keys(ui, 'up')
+      }
+      expect(await litRows(ui)).toEqual([DOCS])
+      await keys(ui, 'm', '3')
       expect(prompts).toEqual([])
       await clock.advance(SYNC_PAUSE)
       expect(files[path(3, 'docs')]).toContain('status: claude')
@@ -258,11 +315,11 @@ for (const surface of WITH_CLIENT) {
     const { clock, ui, files } = await start($, on, surface)
     const before = { ...files }
     const moving = async () =>
-      ((await row(ui, 'hdr:human'))?.text ?? '').includes('1/h')
+      ((await row(ui, 'hdr:human'))?.text ?? '').includes('2/h')
     await goTo(ui, DOCS)
 
     // The key that ends it is spent: the cursor stays where it was.
-    for (const key of ['x', 'm', 'j', 'return', 'b', 'tab']) {
+    for (const key of ['q', 'm', 'j', 'return', 'b', 'tab']) {
       await keys(ui, 'm')
       expect(await moving()).toBe(true)
       await keys(ui, key)
@@ -271,12 +328,12 @@ for (const surface of WITH_CLIENT) {
     }
 
     await keys(ui, 'm')
-    await click(ui, 'hdr:done')
+    await click(ui, 'grp:inactive')
     expect(await moving()).toBe(false)
 
-    // On a header or a more row, `m` starts nothing.
-    await click(ui, 'hdr:human')
-    await goTo(ui, 'hdr:claude')
+    // On a group header or a more row, `m` starts nothing.
+    await click(ui, 'grp:active')
+    await goTo(ui, 'grp:inactive')
     await keys(ui, 'm')
     expect(await moving()).toBe(false)
 
@@ -298,7 +355,7 @@ for (const surface of WITH_CLIENT) {
 
     expect(await litRows(ui)).toEqual([LOGIN])
     expect(await ui.find({ type: 'Client' })).toBeDefined()
-    expect(await row(ui, 'hdr:human')).toMatchObject({ text: '▾ Human 1' })
+    expect((await row(ui, 'hdr:human'))?.text).toMatch(/^ {2}Human 1 ─+$/)
     await clock.advance(SYNC_PAUSE)
     expect(files).toEqual(before)
     await ui.unmount()
@@ -309,13 +366,17 @@ for (const surface of WITH_CLIENT) {
     await goTo(ui, DOCS)
     const was = await rowIndex(ui, DOCS)
 
-    calls.edit(path(5, 'new'), card(5, { status: 'human', title: 'Fresh' }))
+    // A card that sorts above Docs in its section.
+    calls.edit(
+      path(5, 'new'),
+      card(5, { status: 'backlog', title: 'Fresh', order: 0 }),
+    )
     await ui.press({ key: 'refresh' })
 
     expect(await rowIndex(ui, DOCS)).toBe(was + 1)
     expect(await litRows(ui)).toEqual([DOCS])
     await keys(ui, 'k')
-    expect(await litRows(ui)).toEqual(['hdr:backlog'])
+    expect(await litRows(ui)).toEqual(['card:md:0005-new'])
     await ui.unmount()
   })
 
@@ -327,9 +388,9 @@ for (const surface of WITH_CLIENT) {
     await ui.press({ key: 'refresh' })
 
     expect(await row(ui, DOCS)).toBeUndefined()
-    expect(await litRows(ui)).toEqual(['hdr:backlog'])
+    expect(await litRows(ui)).toEqual(['grp:active'])
     await keys(ui, 'down')
-    expect(await litRows(ui)).toEqual(['hdr:done'])
+    expect(await litRows(ui)).toEqual([LOGIN])
     await ui.unmount()
   })
 

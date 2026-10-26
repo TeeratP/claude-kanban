@@ -47,7 +47,7 @@ const header = (column: string): RowView => ({
   kind: 'header',
   column,
   moveKeys: [],
-  hint: '',
+  carrySegs: [],
   isOrdered: true,
 })
 const card = (id: string, column: string): RowView => ({
@@ -315,11 +315,11 @@ test("a click on a card's second row opens the card, and the cursor never rests 
   board.pointer(at('up', 2))
   expect(board.posts).toEqual([{ type: 'open', cardId: 'a' }])
 
-  // The first key brings the cursor up; then it walks past the second rows.
-  expect(lit(board.key({ key: 'down' }))).toEqual(['hdr:claude'])
+  // The first key brings the cursor up, on the first card (the headers are labels);
+  // then it walks past the second rows.
   expect(lit(board.key({ key: 'down' }))).toEqual(['card:a'])
   expect(lit(board.key({ key: 'down' }))).toEqual(['card:b'])
-  expect(lit(board.key({ key: 'down' }))).toEqual(['hdr:backlog'])
+  expect(lit(board.key({ key: 'down' }))).toEqual(['card:c'])
   expect(lit(board.key({ key: 'up' }))).toEqual(['card:b'])
   expect(lit(board.key({ key: 'up' }))).toEqual(['card:a'])
 })

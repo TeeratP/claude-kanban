@@ -1,9 +1,9 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { KanbanCard, KanbanGithub } from '../types'
+import type { KanbanGithub } from '../types'
 import { readPausedUntil, updatePausedUntil } from './atoms'
 import { isRateLimited, loadGithub } from './github'
-import type { RateLimitedError } from './github'
+import type { GithubLoad, RateLimitedError } from './github'
 import { errorMessage } from './model'
 import { S } from './strings'
 
@@ -37,12 +37,12 @@ const pauseUntil = (now: number, resetAt: number | undefined) =>
 export async function loadGithubPaced(
   $: EngineInterface,
   info: KanbanGithub,
-): Promise<KanbanCard[]> {
+): Promise<Pick<GithubLoad, 'cards' | 'statusOptions'>> {
   const left = await pauseLeft($)
   if (left > 0) $.ui.toast(S.refreshWhilePaused(minutesLeft(left)))
 
   try {
-    const { cards, rateLimit } = await loadGithub($, info)
+    const { cards, rateLimit, statusOptions } = await loadGithub($, info)
     const now = await $.clock.now()
     const until =
       rateLimit !== undefined && rateLimit.remaining <= LOW_REMAINING
@@ -50,7 +50,7 @@ export async function loadGithubPaced(
         : 0
     await updatePausedUntil($, () => until)
 
-    return cards
+    return { cards, statusOptions }
   } catch (error) {
     if (!isRateLimited(error)) throw error
 

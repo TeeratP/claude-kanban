@@ -9,8 +9,9 @@ import type {
 } from '../types'
 import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
+import type { Loaded } from './backend'
 import { choicesOf, forgetDetected } from './detect'
-import { isRateLimited } from './github'
+import { isRateLimited, withStatusOptions } from './github'
 import {
   EMPTY_BOARD,
   PANE,
@@ -339,7 +340,7 @@ async function detectInto(
 async function loadOrRedetect(
   $: EngineInterface,
   info: KanbanBackendInfo,
-): Promise<KanbanCard[]> {
+): Promise<Loaded> {
   try {
     return await loadCards($, info)
   } catch (error) {
@@ -375,7 +376,7 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     const info = await ensureBackend($)
     const confirmed = new Set<string>()
     confirmedDuringLoad = confirmed
-    const remote = await loadOrRedetect($, info)
+    const loaded = await loadOrRedetect($, info)
     const sync = await readSync($)
     const fetchedAt = await $.clock.now()
 
@@ -385,7 +386,13 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
 
       return {
         ...current,
-        cards: mergeRemote(remote, current.cards, sync, confirmed),
+        cards: mergeRemote(loaded.cards, current.cards, sync, confirmed),
+        // The board's own Cancelled and Suspended options, as this load found them.
+        ...(current.backend?.kind === 'github'
+          ? {
+              backend: withStatusOptions(current.backend, loaded.statusOptions),
+            }
+          : {}),
         fetchedAt,
         isLoading: false,
       }

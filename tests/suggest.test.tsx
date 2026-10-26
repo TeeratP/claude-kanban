@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
-import { marks, row, rowIndex, rowKeys } from './board-ui'
+import { marks, row, rowIndex, under } from './board-ui'
 import { cellWidth } from '../hooks/model'
 import { stripRows } from '../hooks/suggest'
 import { PANE, RUN, SCROLL, SYNC_PAUSE, boot, card, path } from './fakes'
@@ -70,14 +70,6 @@ const savedTitles = (saved: Map<string, string>) => {
 
 const suggest = ($: Engine, input: Record<string, unknown> = FLAKY) =>
   $.tool.call({ ...FLAKY, ...input })
-
-async function under(ui: Parameters<typeof rowKeys>[0], header: string) {
-  const all = await rowKeys(ui)
-  const rest = all.slice(all.indexOf(header) + 1)
-  const next = rest.findIndex(key => key.startsWith('hdr:'))
-
-  return next < 0 ? rest : rest.slice(0, next)
-}
 
 test('stripRows counts the header, up to three suggestions and a +N more row', () => {
   expect([0, 1, 2, 3, 4, 9].map(stripRows)).toEqual([0, 2, 3, 4, 5, 5])
@@ -264,6 +256,29 @@ test('a suggestion with the title of an open card or of another suggestion is fo
   await ui.unmount()
 })
 
+test('a suggestion with the title of a Cancelled card is added, and one with the title of a Suspended card is folded in', async ($, on) => {
+  const files = {
+    ...cards(),
+    [path(5, 'dropped')]: card(5, {
+      status: 'cancelled',
+      title: 'Dropped idea',
+    }),
+    [path(6, 'parked')]: card(6, { status: 'suspended', title: 'Parked idea' }),
+  }
+  const { saved, toasts, ui } = await open($, on, 'terminal', files)
+
+  expect(await suggest($, { title: 'dropped  IDEA' })).toMatchObject({
+    result: expect.stringContaining('Suggested "dropped IDEA"'),
+  })
+  expect(await suggest($, { title: 'parked idea' })).toMatchObject({
+    result:
+      '"parked idea" is already a card or a suggestion; nothing was added.',
+  })
+  expect(savedTitles(saved)).toEqual(['dropped IDEA'])
+  expect(toasts).toHaveLength(1)
+  await ui.unmount()
+})
+
 test('the suggestions survive a reload: they come back from the store', async ($, on) => {
   const { toasts, saved, ui } = await open($, on, 'terminal', cards(), {
     [STORED]: {
@@ -405,8 +420,8 @@ test('a prompt that already holds the section is not given a second', async ($, 
 
 // With a strip of five rows above the list, the wheel and a drag still find
 // their rows. Rows of the tree: 0-1 toolbar, 2-6 strip, then the layout from its
-// row 2: 7 Human header, 8 (empty), 9 Claude header, 10 (empty), 11 Backlog
-// header, 12-16 its cards, 17 its more row.
+// row 2: 7 Active group, 8 Backlog header, 9-13 its cards, 14 its more row,
+// 15 Human header, 16 (empty), 17 Claude header.
 const STRIP = stripRows(5)
 
 async function startWithStrip($: Engine, on: On) {
@@ -428,9 +443,9 @@ test('with a strip above the list the wheel scrolls the section under the pointe
   expect(scrolls).toHaveLength(0)
   expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
 
-  // The Claude header, which the same row would be were the strip not counted
-  // out, is a card of Backlog; and the strip's own rows are the engine's.
-  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 9 } })
+  // The Human header, which the same row would be a card of Backlog were the
+  // strip not counted out; and the strip's own rows are the engine's.
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 15 } })
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 4 } })
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 1 } })
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 0 } })

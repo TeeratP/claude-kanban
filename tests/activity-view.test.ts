@@ -18,7 +18,7 @@ import {
   totalsOf,
   truncateStart,
 } from '../hooks/activity-view'
-import { detailReserve, hitTest, layoutBoard } from '../hooks/layout'
+import { hitTest, layoutBoard, sectionWindow } from '../hooks/layout'
 import type { Row } from '../hooks/layout'
 import { EMPTY_ACTIVITY, INITIAL_UI, cellWidth } from '../hooks/model'
 
@@ -246,12 +246,12 @@ function cardOf(number: number, column: KanbanColumn): KanbanCard {
   }
 }
 
-const open = {
-  ...INITIAL_UI,
-  collapsed: { human: false, claude: false, backlog: false, done: false },
-}
+const open = INITIAL_UI
 const kinds = (rows: Row[]) =>
   rows.map(row => ('column' in row ? `${row.kind}:${row.column}` : row.kind))
+// Without the blank filler that keeps the sections' heights.
+const content = (rows: Row[]) =>
+  kinds(rows).filter(kind => !kind.startsWith('blank'))
 
 const worked = (...numbers: number[]): KanbanActivity => ({
   ...EMPTY_ACTIVITY,
@@ -289,24 +289,25 @@ test('the second row follows its card and belongs to its section', () => {
     details: new Set(['md:1']),
   })
 
-  expect(kinds(rows)).toEqual([
+  expect(content(rows)).toEqual([
     'toolbar',
     'toolbar',
+    'group',
+    'header:backlog',
+    'card:backlog',
     'header:human',
     'empty:human',
     'header:claude',
     'card:claude',
     'detail:claude',
     'card:claude',
-    'header:backlog',
-    'card:backlog',
-    'header:done',
-    'empty:done',
+    'group',
   ])
   // The row is the tree row it is drawn on, so a wheel over it is the Claude section's.
-  expect(hitTest(rows, 6)).toBe('claude')
-  expect(hitTest(rows, 7)).toBe('claude')
-  expect(hitTest(rows, 9)).toBe('backlog')
+  const at = rows.findIndex(row => row.kind === 'detail')
+  expect(hitTest(rows, at)).toBe('claude')
+  expect(hitTest(rows, at + 1)).toBe('claude')
+  expect(hitTest(rows, at - 5)).toBe('human')
 })
 
 test('with no second rows the layout is as it was', () => {
@@ -332,23 +333,45 @@ test('the tree still fits the pane when second rows are on show', () => {
 
     expect(rows.length).toBeLessThanOrEqual(bodyRows)
     expect(bare.length).toBeLessThanOrEqual(bodyRows)
-    expect(rows.filter(row => row.kind === 'detail').length).toBe(
-      rows.filter(row => row.kind === 'card' && row.column === 'claude').length,
+    // A second row shows with its card, and the section is no taller for it.
+    const shown = rows.filter(
+      row => row.kind === 'card' && row.column === 'claude',
     )
+    expect(rows.filter(row => row.kind === 'detail').length).toBe(shown.length)
+    expect(rows.length).toBe(bare.length)
   }
 })
 
-test('second rows are kept room for only while the Claude section is open', () => {
-  const cards = [cardOf(1, 'claude'), cardOf(2, 'claude')]
-  const details = new Set(['md:1', 'md:2'])
+test('a Claude section holds as many rows as another: its cards with second rows take two each', () => {
+  const claude = Array.from({ length: 12 }, (_, i) => cardOf(i + 1, 'claude'))
+  const details = new Set(claude.map(one => one.id))
+  const rows = layoutBoard({ cards: claude, ui: open, bodyRows: 30, details })
+  const claudeRows = rows.filter(
+    row => 'column' in row && row.column === 'claude' && row.kind !== 'header',
+  )
 
-  expect(detailReserve(cards, open, details)).toBe(2)
-  expect(detailReserve(cards, open, undefined)).toBe(0)
-  expect(
-    detailReserve(
-      cards,
-      { ...open, collapsed: { ...open.collapsed, claude: true } },
-      details,
-    ),
-  ).toBe(0)
+  // Seven rows: three cards with their second rows, and the count of the nine others.
+  expect(claudeRows.map(row => row.kind)).toEqual([
+    'card',
+    'detail',
+    'card',
+    'detail',
+    'card',
+    'detail',
+    'more',
+  ])
+  expect(claudeRows.at(-1)).toMatchObject({ dir: 'down', n: 9 })
+})
+
+test('a window pages by the cards it shows, however many rows their second rows take', () => {
+  const claude = Array.from({ length: 12 }, (_, i) => cardOf(i + 1, 'claude'))
+  const details = new Set(claude.map(one => one.id))
+
+  const first = sectionWindow(claude, 'claude', 0, 7, details)
+  expect(first.taken).toBe(3)
+  const second = sectionWindow(claude, 'claude', first.taken, 7, details)
+  // The count above takes a row, so two cards with their second rows fit with the count below.
+  expect(second.rows[0]).toMatchObject({ kind: 'more', dir: 'up', n: 3 })
+  expect(second.taken).toBe(2)
+  expect(second.rows).toHaveLength(7)
 })

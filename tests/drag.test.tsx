@@ -1,10 +1,11 @@
 import type { On, RenderSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, Mounted } from 'claude-code/testing'
 
 import {
   TOOLBAR_ROWS,
   click,
+  group,
   lineRows,
   row,
   rowIndex,
@@ -56,13 +57,14 @@ for (const surface of WITH_CLIENT) {
     expect(await ui.find({ type: 'Button', key: LOGIN })).toBeUndefined()
     expect((await row(ui, LOGIN))?.text).toContain('#1 Fix login')
     expect(await rowKeys(ui)).toEqual([
+      'grp:active',
+      'hdr:backlog',
+      DOCS,
       'hdr:human',
       LOGIN,
       'hdr:claude',
       'card:md:0002-api',
-      'hdr:backlog',
-      DOCS,
-      'hdr:done',
+      'grp:inactive',
     ])
     await ui.unmount()
   })
@@ -79,7 +81,7 @@ for (const surface of WITH_CLIENT) {
     // A header puts the card at the top of its section.
     const keys = await rowKeys(ui)
     expect(between(keys, 'hdr:human', 'hdr:claude')).toEqual([DOCS, LOGIN])
-    expect(between(keys, 'hdr:backlog', 'hdr:done')).toEqual(['empty:backlog'])
+    expect(between(keys, 'hdr:backlog', 'hdr:human')).toEqual(['empty:backlog'])
     expect(
       await ui.find({ type: 'Text', text: '#3 Write docs' }),
     ).toBeUndefined()
@@ -173,6 +175,148 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
+  // At 44 columns the closed Inactive group draws `▸ Inactive` then its chips:
+  // Done over cells 10-16, Cancelled 16-27, Suspended 27-38.
+  const chipDrop = async (
+    ui: Mounted<(typeof WITH_CLIENT)[number], 'Pane'>,
+    x: number,
+  ) => {
+    const from = await rowIndex(ui, DOCS)
+    const to = await rowIndex(ui, 'grp:inactive')
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    await ui.pointer({ type: 'move', x, y: to, button: 'left' })
+    await ui.pointer({ type: 'up', x, y: to, button: 'left' })
+  }
+
+  test(`a card dragged onto a chip of the closed Inactive group moves to that section on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await start($, on, surface)
+
+    await chipDrop(ui, 30)
+    await clock.advance(SYNC_PAUSE)
+
+    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    await group(ui, 'inactive')
+    expect(await rowKeys(ui)).toContain(DOCS)
+    expect(
+      between(await rowKeys(ui), 'hdr:suspended', 'hdr:cancelled'),
+    ).toEqual([])
+    await ui.unmount()
+  })
+
+  for (const [x, column] of [
+    [12, 'done'],
+    [20, 'cancelled'],
+    [30, 'suspended'],
+  ] as const) {
+    test(`the ${column} chip of the closed group sends the card to ${column} on the ${surface}`, async ($, on) => {
+      const { clock, ui, files } = await start($, on, surface)
+
+      await chipDrop(ui, x)
+      await clock.advance(SYNC_PAUSE)
+
+      expect(files[path(3, 'docs')]).toContain(`status: ${column}`)
+      await ui.unmount()
+    })
+  }
+
+  test(`the chip under the pointer is lit while a card is dragged, and the group shows its label again after on the ${surface}`, async ($, on) => {
+    const { ui } = await start($, on, surface)
+    const chip = async (name: string) =>
+      (
+        await ui.find({
+          type: 'Text',
+          in: 'board',
+          text: new RegExp(`^ ${name} $`),
+        })
+      )?.props
+    const from = await rowIndex(ui, DOCS)
+    const to = await rowIndex(ui, 'grp:inactive')
+
+    expect(await chip('Suspended')).toBeUndefined()
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    await ui.pointer({ type: 'move', x: 30, y: to, button: 'left' })
+
+    expect((await chip('Suspended'))?.inverse).toBe(true)
+    expect((await chip('Done'))?.inverse).toBeUndefined()
+    await ui.pointer({ type: 'move', x: 12, y: to, button: 'left' })
+    expect((await chip('Done'))?.inverse).toBe(true)
+    expect((await chip('Suspended'))?.inverse).toBeUndefined()
+
+    await ui.pointer({ type: 'up', x: 12, y: to, button: 'left' })
+    expect(await chip('Done')).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test(`a drop on the label of the closed group, or past its chips, moves nothing on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await start($, on, surface)
+    const before = { ...files }
+
+    await chipDrop(ui, 3)
+    await chipDrop(ui, 43)
+    await clock.advance(SYNC_PAUSE)
+
+    expect(files).toEqual(before)
+    expect(await rowKeys(ui)).toContain(DOCS)
+    await ui.unmount()
+  })
+
+  test(`the open group's header is no target on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await start($, on, surface)
+    const from = await rowIndex(ui, DOCS)
+    const to = await rowIndex(ui, 'grp:active')
+    const before = { ...files }
+
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    await ui.pointer({ type: 'move', x: 30, y: to, button: 'left' })
+    expect(await lineRows(ui)).toEqual([])
+    await ui.pointer({ type: 'up', x: 30, y: to, button: 'left' })
+
+    await clock.advance(SYNC_PAUSE)
+    expect(files).toEqual(before)
+    await ui.unmount()
+  })
+
+  test(`a card dropped on a blank row of a section goes last in it on the ${surface}`, async ($, on) => {
+    const { clock, ui, files } = await start($, on, surface, {
+      ...cards(),
+      [path(5, 'more')]: card(5, { status: 'backlog', title: 'More docs' }),
+    })
+    const from = await rowIndex(ui, LOGIN)
+    const to = await rowIndex(ui, 'blank:backlog:3')
+
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
+    expect(await lineRows(ui)).toEqual(['card:md:0005-more'])
+    await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
+
+    expect(between(await rowKeys(ui), 'hdr:backlog', 'hdr:human')).toEqual([
+      DOCS,
+      'card:md:0005-more',
+      LOGIN,
+    ])
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(1, 'login')]).toContain('status: backlog')
+    await ui.unmount()
+  })
+
+  test(`a drop on a blank row of an empty section puts the card first in it on the ${surface}`, async ($, on) => {
+    const { ui } = await start($, on, surface, {
+      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
+    })
+    const from = await rowIndex(ui, DOCS)
+    const to = await rowIndex(ui, 'blank:human:3')
+
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
+    expect(await lineRows(ui)).toEqual(['hdr:human'])
+    await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
+
+    expect(between(await rowKeys(ui), 'hdr:human', 'hdr:claude')).toEqual([
+      DOCS,
+    ])
+    await ui.unmount()
+  })
+
   test(`a click on a card opens its detail on the ${surface}`, async ($, on) => {
     const { ui } = await start($, on, surface)
 
@@ -189,26 +333,36 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
-  test(`a click on a header folds it and a click on a more row pages on the ${surface}`, async ($, on) => {
+  test(`a click on a group header opens it and folds the other, and a click on a more row pages on the ${surface}`, async ($, on) => {
     const files: Record<string, string> = {}
     for (let n = 1; n <= 8; n += 1) {
       files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
     }
     const { ui } = await start($, on, surface, files)
 
-    expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 3 more')
+    // Seven rows under the header: six cards and the count of the other two.
+    expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
     await click(ui, 'more:backlog:down')
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 3 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 2 more')
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     await click(ui, 'more:backlog:up')
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
 
-    expect((await row(ui, 'hdr:done'))?.text).toBe('▸ Done 0')
-    await click(ui, 'hdr:done')
-    expect((await row(ui, 'hdr:done'))?.text).toBe('▾ Done 0')
-    await click(ui, 'hdr:backlog')
-    expect((await row(ui, 'hdr:backlog'))?.text).toBe('▸ Backlog 8')
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(
+      /^▸ Inactive\s+empty$/,
+    )
+    await click(ui, 'grp:inactive')
+    expect((await row(ui, 'grp:inactive'))?.text).toBe('▾ Inactive')
+    expect((await row(ui, 'grp:active'))?.text).toMatch(
+      /^▸ Active\s+8 Backlog$/,
+    )
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
+    await click(ui, 'grp:inactive')
+    expect(await row(ui, 'grp:active')).toBeDefined()
+    expect((await row(ui, 'grp:inactive'))?.text).toMatch(/^▸ Inactive/)
+    await click(ui, 'grp:active')
+    expect((await row(ui, 'grp:active'))?.text).toBe('▾ Active')
+    expect(await row(ui, 'more:backlog:down')).toBeDefined()
     await ui.unmount()
   })
 
@@ -253,8 +407,12 @@ for (const surface of WITH_CLIENT) {
     const { clock, ui, files, calls } = await start($, on, surface)
     const docs = await rowIndex(ui, DOCS)
     const human = await rowIndex(ui, 'hdr:human')
+    // A card that sorts above Docs in its own section.
     const fresh = () =>
-      calls.edit(path(5, 'new'), card(5, { status: 'human', title: 'Fresh' }))
+      calls.edit(
+        path(5, 'new'),
+        card(5, { status: 'backlog', title: 'Fresh', order: 0 }),
+      )
 
     // A click: a card arrives above, so the row under the pointer is another.
     await ui.pointer({ type: 'down', x: 3, y: docs, button: 'left' })
@@ -264,7 +422,7 @@ for (const surface of WITH_CLIENT) {
     expect(
       await ui.find({ type: 'Text', text: '#3 Write docs' }),
     ).toBeUndefined()
-    expect((await row(ui, 'hdr:backlog'))?.text).toBe('▾ Backlog 1')
+    expect(await ui.find({ type: 'Text', text: '#5 Fresh' })).toBeUndefined()
 
     // A drag: the card still moves, found by what it is, not where it was.
     expect(await rowIndex(ui, DOCS)).toBe(docs + 1)
@@ -329,14 +487,21 @@ for (const surface of WITHOUT_CLIENT) {
     expect((await ui.find({ type: 'Button', key: LOGIN }))?.text).toContain(
       '#1 Fix login',
     )
+    // The section headers are labels here: only the cards and the groups press.
+    expect(
+      (await ui.findAll({ type: 'Button' })).flatMap(one =>
+        one.key !== undefined && /^(grp|card):/.test(one.key) ? [one.key] : [],
+      ),
+    ).toEqual(['grp:active', DOCS, LOGIN, 'card:md:0002-api', 'grp:inactive'])
     expect(await rowKeys(ui)).toEqual([
+      'grp:active',
+      'hdr:backlog',
+      DOCS,
       'hdr:human',
       LOGIN,
       'hdr:claude',
       'card:md:0002-api',
-      'hdr:backlog',
-      DOCS,
-      'hdr:done',
+      'grp:inactive',
     ])
 
     await click(ui, DOCS)

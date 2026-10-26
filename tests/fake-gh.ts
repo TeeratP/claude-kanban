@@ -139,6 +139,8 @@ export type FakeIssue = {
   title?: string
   status?: string
   state?: 'OPEN' | 'CLOSED'
+  /** Why the issue was closed or reopened; none for an issue that never was. */
+  stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'DUPLICATE' | 'REOPENED'
   labels?: string[]
   prs?: { number: number; repo?: string }[]
   repo?: string
@@ -163,6 +165,9 @@ export function issueNode(issue: FakeIssue) {
       title: issue.title ?? `Issue ${issue.number}`,
       url: `https://github.com/${repo}/issues/${issue.number}`,
       state: issue.state ?? 'OPEN',
+      ...(issue.stateReason === undefined
+        ? {}
+        : { stateReason: issue.stateReason }),
       createdAt: `2026-10-0${issue.number % 9}T10:00:00Z`,
       updatedAt: `2026-10-1${issue.number % 9}T10:00:00Z`,
       repository: { nameWithOwner: repo },
@@ -189,26 +194,35 @@ export function issueNode(issue: FakeIssue) {
 
 const PAGE = 100
 
+/** A Status option of the board's field, as the board query lists it. */
+export type FakeOption = { id: string; name: string }
+
 /**
  * How a `gh api graphql` answers: the nodes 100 at a time by cursor, like the real one,
- * for the signed-in `viewer`.
+ * for the signed-in `viewer`. The Status field's `options` come with the query
+ * that asks for the field, which is the first page's only.
  */
 export function boardReply(
   nodes: readonly unknown[],
   rateLimit: Record<string, unknown> = LIVE_RATE_LIMIT,
   viewer = 'TeeratP',
+  options: readonly FakeOption[] = [],
 ) {
   return (argv: readonly string[]): Reply => {
     const cursor = argv.find(part => part.startsWith('cursor='))
     const from =
       cursor === undefined ? 0 : Number(cursor.slice('cursor=c'.length))
     const to = Math.min(from + PAGE, nodes.length)
+    const asksOptions = queryOf(argv).includes('field(name: "Status")')
 
     return {
       stdout: JSON.stringify({
         data: {
           viewer: { login: viewer },
           node: {
+            ...(asksOptions && options.length > 0
+              ? { field: { options } }
+              : {}),
             items: {
               pageInfo: { hasNextPage: to < nodes.length, endCursor: `c${to}` },
               nodes: nodes.slice(from, to),
@@ -225,10 +239,11 @@ export function boardReply(
 export function boardRoute(
   nodes: readonly unknown[],
   rateLimit: Record<string, unknown> = LIVE_RATE_LIMIT,
+  options: readonly FakeOption[] = [],
 ): Route {
   return {
     match: ['gh', 'api', 'graphql'],
-    reply: boardReply(nodes, rateLimit),
+    reply: boardReply(nodes, rateLimit, 'TeeratP', options),
   }
 }
 
