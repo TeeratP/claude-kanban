@@ -21,6 +21,7 @@ import {
   COLUMNS,
   errorMessage,
   isColumn,
+  isOrdered,
   isPendingId,
   parseColumn,
   withCard,
@@ -46,6 +47,12 @@ const CREATE_IN: readonly KanbanColumn[] = ['claude', 'backlog', 'done']
 const SET_ASIDE: readonly KanbanColumn[] = ['suspended', 'cancelled']
 
 const isSetAside = (card: KanbanCard) => SET_ASIDE.includes(card.column)
+
+// The card a new one goes after in a section: its last, or null when it has none.
+const lastIn = (cards: readonly KanbanCard[], column: KanbanColumn) =>
+  sectionList(cards, column)
+    .filter(one => !isPendingId(one.id))
+    .at(-1) ?? null
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -369,7 +376,14 @@ async function create(
   if ('deny' in loaded) return loaded
 
   try {
-    const card = await createCard($, loaded.info, title, spec, column)
+    const card = await createCard(
+      $,
+      loaded.info,
+      title,
+      spec,
+      column,
+      isOrdered(column) ? lastIn(loaded.board.cards, column) : undefined,
+    )
     // Shown at once; the reload behind it settles what a load in flight missed.
     await setBoard($, board => ({
       ...board,
@@ -394,9 +408,13 @@ async function suggest(
   if (spec === undefined) return { deny: S.badText('spec') }
   if (why === undefined) return { deny: S.badText('why') }
 
-  const isAdded = await suggestCard($, { title, spec, why })
+  const outcome = await suggestCard($, { title, spec, why })
+  if (outcome === 'dismissed') return { result: S.suggestDismissed(title) }
 
-  return { result: isAdded ? S.suggestedResult(title) : S.suggestFolded(title) }
+  return {
+    result:
+      outcome === 'added' ? S.suggestedResult(title) : S.suggestFolded(title),
+  }
 }
 
 /** Serves one of this plugin's tools. */

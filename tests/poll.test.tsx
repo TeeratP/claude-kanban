@@ -705,7 +705,8 @@ test('a board saved under another setting does not set the status line', async (
   await startClosed($)
   await clock.settle()
 
-  expect(statuses).toEqual([])
+  // Finding the backend clears the line; it never shows a count.
+  expect(statuses.filter(text => text !== undefined)).toEqual([])
   expect(calls.lists).toBe(0)
 })
 
@@ -728,7 +729,8 @@ test('no saved board leaves the status line alone at the session start', async (
   await startClosed($)
   await clock.settle()
 
-  expect(statuses).toEqual([])
+  // Finding the backend clears the line; it never shows a count.
+  expect(statuses.filter(text => text !== undefined)).toEqual([])
   expect(calls.lists).toBe(0)
 })
 
@@ -740,7 +742,8 @@ test('a board saved for another directory does not set the status line', async (
   await startClosed($)
   await clock.settle()
 
-  expect(statuses).toEqual([])
+  // Finding the backend clears the line; it never shows a count.
+  expect(statuses.filter(text => text !== undefined)).toEqual([])
 })
 
 test('a load after the session start replaces the saved count and tools never see the saved cards', async ($, on) => {

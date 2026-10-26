@@ -383,7 +383,7 @@ export const S = {
   detectSaveFailed: (reason: string) =>
     `kanban: could not save the detected board: ${reason}`,
   githubNoGh: (reason: string) =>
-    `gh is not installed: install it from https://cli.github.com (${reason})`,
+    `gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (${reason})`,
   originNotGithub: (url: string) => `origin ${url} is not a github.com URL`,
   githubLookupFailed: (repo: string, reason: string) =>
     `could not list the GitHub Projects of ${repo}: ${reason}; run gh auth refresh -s read:project`,
@@ -538,4 +538,80 @@ export const S = {
     long: '↑↓ walk · ⏎ open · m+key move',
     short: '↑↓ ⏎ open · m move',
   },
+
+  // #29
+  // A card just added that the filter keeps off the screen: `notes` say why.
+  added: (number: number, notes: readonly string[]) =>
+    [`Added #${number}`, ...notes].join(' · '),
+  hiddenByFilter: 'hidden by the filter',
+  groupFolded: (group: string) => `${group} is folded`,
+
+  // #27
+  dismissedShow: (n: number) => `Show dismissed (${n})`,
+  dismissedHide: (n: number) => `Hide dismissed (${n})`,
+  dismissedRestore: 'Restore',
+  suggestDismissed: (title: string) =>
+    `"${title}" was suggested before and the person dismissed it; nothing was added. Do not suggest it again.`,
+  // #43
+  githubNeedsGh:
+    'GitHub needs the gh CLI. Install it (https://cli.github.com, or `brew install gh`), run `gh auth login`, then choose GitHub again.',
+  githubNeedsSignIn:
+    'Sign in first: run `gh auth login`, then choose GitHub again.',
+  githubUnavailable: 'GitHub is unavailable here: gh is not installed.',
+
+  // #42
+  // The system prompt's section on the backlog: what it is, which depends on the backend, then the rules.
+  backlogIs: {
+    github: (owner: string, project: number) =>
+      `This project's backlog is GitHub Issues on board ${owner}/#${project}.`,
+    // The `github` setting, before any board is known.
+    githubAny: "This project's backlog is GitHub Issues.",
+    local: "This project's backlog is the .kanban/*.md cards.",
+    unknown: "This project's backlog is a kanban board.",
+  },
+  backlogRules: [
+    'Keep it current with the kanban tools:',
+    '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
+    '- When the work a card tracks is done, record kanban_handoff, then kanban_move it to human. Never move a card to done: the person approves it.',
+    '- Blocked on a decision only the person can make: kanban_ask.',
+    '- Follow-ups: kanban_suggest. Use kanban_create only when asked.',
+    '- Never move cards into or out of Suspended or Cancelled.',
+    '- Use the kanban tools, not raw gh issue/gh project edits or hand edits of .kanban files, so the board stays in sync.',
+  ].join('\n'),
+  // Submitted when a turn ends with a card still in Claude and no handoff, question or move.
+  reconcilePrompt: (n: number) =>
+    `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.`,
+  // Toasted once a session when a turn changed files and no card was in play.
+  untrackedWork:
+    'This turn changed files with no card in Claude. If it is backlog work, move or create its card.',
+  reconcileFailed: (reason: string) =>
+    `kanban: could not check the turn's cards: ${reason}`,
+
+  // #44
+  // The toolbar button and the view's title.
+  settings: 'Settings',
+  settingsShort: 'Set…',
+  settingsLoading: 'Loading…',
+  settingsNone: 'No kanban settings found. Try /config.',
+  settingsFailed: (reason: string) => `Could not read the settings: ${reason}`,
+  settingsFooter: 'Also in /config',
+  // One line under each setting, by its `userConfig` field.
+  settingHelp: {
+    backend: 'auto uses GitHub when it finds a board.',
+    claudeLimit: 'Cards Claude works at once; 0 is no limit.',
+    reconcile: 'Remind Claude to hand off at turn end.',
+  },
+  settingOn: 'on',
+  settingOff: 'off',
+  // Marks the option a setting starts with: `auto (default)`, `− 1 + (default 1)`.
+  settingDefault: ' (default)',
+  settingDefaultIs: (value: string) => ` (default ${value})`,
+  settingCurrent: '✓',
+  settingLess: '−',
+  settingMore: '+',
+  settingLocked: 'Set by your organization.',
+  settingDenied: (reason: string) => `Not changed: ${reason}`,
+  boardHeading: 'Board',
+  changeBoardLink: 'Change board',
+  boardFromConfig: 'Named in CLAUDE.md or AGENTS.md',
 }

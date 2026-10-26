@@ -48,6 +48,7 @@ export type BoardMessage =
   | { type: 'shift'; cardId: string; dir: 'up' | 'down' }
   | { type: 'toggleGroup'; group: KanbanGroup }
   | { type: 'page'; column: KanbanColumn; dir: 'up' | 'down' }
+  | { type: 'settings' }
 
 const seg = (text: string, style: Partial<Omit<Seg, 'text'>> = {}): Seg => ({
   text,
@@ -597,6 +598,8 @@ export function parseBoardMessage(data: unknown): BoardMessage | undefined {
       return isColumn(column) && (dir === 'up' || dir === 'down')
         ? { type, column, dir }
         : undefined
+    case 'settings':
+      return { type }
     default:
       return undefined
   }

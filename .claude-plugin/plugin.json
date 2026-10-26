@@ -1,6 +1,6 @@
 {
   "name": "kanban",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A kanban side pane: Active (Backlog, Human, Claude) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards.",
   "author": {
     "name": "TeeratP"
@@ -9,16 +9,22 @@
   "userConfig": {
     "backend": {
       "type": "string",
-      "title": "Card backend",
-      "description": "Where cards live. auto: GitHub when CLAUDE.md or AGENTS.md names a repo and project board, or else when git and gh find a GitHub Project linked to the origin remote's repo (no config needed; press the board name in the toolbar to change it), and gh is signed in; otherwise local .kanban/ files. github: GitHub only, a failing check is shown instead of falling back. local: always .kanban/ files.",
+      "title": "Card backend (default: auto)",
+      "description": "Where cards live: GitHub, local .kanban/ files, or auto to use GitHub when a board is found.",
       "options": ["auto", "github", "local"],
       "default": "auto"
     },
     "claudeLimit": {
       "type": "number",
-      "title": "Claude limit",
-      "description": "How many cards Claude works on at once. Cards moved to Claude beyond that wait in a queue and start, in order, as cards leave Claude. 0 means no limit.",
+      "title": "Claude limit (default: 1)",
+      "description": "How many cards Claude works on at once; 0 means no limit.",
       "default": 1
+    },
+    "reconcile": {
+      "type": "boolean",
+      "title": "Reconcile at turn end (default: on)",
+      "description": "At the end of a turn, remind Claude to hand off or move a card it left in Claude.",
+      "default": true
     }
   }
 }

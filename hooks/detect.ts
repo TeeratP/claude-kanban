@@ -77,6 +77,30 @@ export function parseOrigin(url: string): string | undefined {
   return match === null ? undefined : `${match[1]}/${match[2]}`
 }
 
+/** Throws, with the reason `explain.gh` gives, when `gh` is not installed. */
+export async function checkGh(
+  $: EngineInterface,
+  explain: Explain,
+  timeoutMs = CHECK_MS,
+): Promise<void> {
+  await check(
+    () => runCommand($, ['gh', '--version'], { timeoutMs }),
+    explain.gh,
+  )
+}
+
+/** Throws, with the reason `explain.auth` gives, when `gh` is not signed in. */
+export async function checkSignedIn(
+  $: EngineInterface,
+  explain: Explain,
+  timeoutMs = CHECK_MS,
+): Promise<void> {
+  await check(
+    () => runCommand($, ['gh', 'auth', 'status'], { timeoutMs }),
+    explain.auth,
+  )
+}
+
 /** The origin remote's URL. */
 export async function readOrigin($: EngineInterface): Promise<string> {
   const url = await runCommand($, ['git', 'remote', 'get-url', 'origin'], {
@@ -317,19 +341,32 @@ function isSaved(value: unknown): value is Saved {
   )
 }
 
-async function readSaved(
-  $: EngineInterface,
-  origin: string,
-): Promise<KanbanGithub | undefined> {
+async function loadSaved($: EngineInterface): Promise<Saved | undefined> {
   try {
     const saved = await $.store.get(await savedKey($))
 
-    return isSaved(saved) && saved.origin === origin ? saved.info : undefined
+    return isSaved(saved) ? saved : undefined
   } catch (error) {
     $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
 
     return undefined
   }
+}
+
+async function readSaved(
+  $: EngineInterface,
+  origin: string,
+): Promise<KanbanGithub | undefined> {
+  const saved = await loadSaved($)
+
+  return saved?.origin === origin ? saved.info : undefined
+}
+
+/** The board remembered for this directory whatever its origin was, with no call to git or gh. */
+export async function savedDetected(
+  $: EngineInterface,
+): Promise<KanbanGithub | undefined> {
+  return (await loadSaved($))?.info
 }
 
 /** Remembers the board found for this directory and origin, so later sessions skip the search. */
@@ -375,14 +412,8 @@ export async function detectZero(
   if (saved !== undefined) return saved
 
   const repo = repoOf(origin)
-  await check(
-    () => runCommand($, ['gh', '--version'], { timeoutMs: CHECK_MS }),
-    explain.gh,
-  )
-  await check(
-    () => runCommand($, ['gh', 'auth', 'status'], { timeoutMs: CHECK_MS }),
-    explain.auth,
-  )
+  await checkGh($, explain)
+  await checkSignedIn($, explain)
 
   const found = pool(await search($, repo, explain))
   const [first, second] = found

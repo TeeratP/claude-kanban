@@ -3,9 +3,12 @@ import type {
   KanbanBoard,
   KanbanCard,
   KanbanColumn,
+  KanbanDismissed,
   KanbanGroup,
   KanbanQueue,
   KanbanQuickAdd,
+  KanbanSettings,
+  KanbanReconcile,
   KanbanUi,
 } from '../types'
 
@@ -101,6 +104,27 @@ export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
   hasDetails: false,
   title: '',
   spec: '',
+}
+
+export const EMPTY_SETTINGS: KanbanSettings = {
+  isLoaded: false,
+  rows: [],
+  denied: {},
+}
+
+export const EMPTY_DISMISSED: KanbanDismissed = { items: [], isShown: false }
+
+export const EMPTY_TURN: KanbanReconcile['turn'] = {
+  isReconcile: false,
+  hasEdits: false,
+  cards: {},
+}
+
+export const EMPTY_RECONCILE: KanbanReconcile = {
+  turn: EMPTY_TURN,
+  sent: {},
+  waiting: [],
+  isNudged: false,
 }
 
 // A card shown before its backend has made it carries this prefix in its id.

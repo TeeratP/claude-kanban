@@ -138,7 +138,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
   const ui = await mount($, 44)
 
   expect(await fits(ui, 44, 'active open')).toEqual([
-    ' Local (auto) · updated just now',
+    ' Local (auto) · updated just now s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 8 ────────────────────────────────',
@@ -178,7 +178,7 @@ test('Active open at 30 columns drops (auto), the Refresh label stays and the lo
   const lines = await fits(ui, 30, 'active open')
 
   expect(lines.slice(0, 7)).toEqual([
-    ' Local · updated just now',
+    ' Local             s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 8 ──────────────────',
@@ -201,7 +201,7 @@ test('Inactive open: Active is a summary, the dim cards keep the title column an
   await group(ui, 'inactive')
 
   expect(await fits(ui, 44, 'inactive open')).toEqual([
-    ' Local (auto) · updated just now',
+    ' Local (auto) · updated just now s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▸ Active      8 Backlog · 3 Human · 2 Claude',
     '▾ Inactive',
@@ -241,7 +241,7 @@ test('both groups folded: two summaries and the line that says to press one, whi
   await group(ui, 'active')
 
   expect(await fits(ui, 44, 'both folded')).toEqual([
-    ' Local (auto) · updated just now',
+    ' Local (auto) · updated just now s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▸ Active      8 Backlog · 3 Human · 2 Claude',
     '▸ Inactive                         12D 1C 1S',
@@ -262,7 +262,7 @@ test('an empty board says what each section is for, and where cards live', async
   const ui = await mount($, 44)
 
   expect(await fits(ui, 44, 'empty')).toEqual([
-    ' Local (auto) · updated just now',
+    ' Local (auto) · updated just now s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 0 ────────────────────────────────',
@@ -314,7 +314,7 @@ test('the first load draws bars where the cards will be, never an empty board', 
   const ui = await mount($, 44)
 
   expect(await fits(ui, 44, 'loading')).toEqual([
-    ' Local (auto) · loading…',
+    ' Local (auto) · loading…         s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog ──────────────────────────────────',

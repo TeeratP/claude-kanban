@@ -60,6 +60,8 @@ export type KanbanChoice = {
   owner: string
 }
 export type KanbanBackendMode = 'auto' | 'github' | 'local'
+/** What the /config checks last learned of `gh`: installed, missing, or not known yet. */
+export type KanbanGhState = 'unknown' | 'found' | 'missing'
 export type KanbanBoard = {
   mode: KanbanBackendMode
   backend: KanbanBackendInfo | null
@@ -91,7 +93,9 @@ export type KanbanQueue = {
   held: Record<string, KanbanPrompt>
 }
 export type KanbanView =
-  { mode: 'board' } | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
+  | { mode: 'board' }
+  | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
+  | { mode: 'settings' }
 export type KanbanUi = {
   view: KanbanView
   offsets: Record<KanbanColumn, number>
@@ -105,6 +109,26 @@ export type KanbanUi = {
   /** The group a header press chose while filtering; dropped when the filter changes. */
   filterGroup?: KanbanGroup | 'none'
 }
+/** One of the mod's `/config` rows as `$.config.list()` returns it. */
+export type KanbanSettingRow = {
+  /** What `$.config.set` takes: `<plugin>.<field>`. */
+  key: string
+  /** The row's label, which ends in ` (default: X)`. */
+  label: string
+  kind: 'boolean' | 'choice' | 'number'
+  value: boolean | string | number
+  options?: string[]
+  /** Whether a trusted source owns the value, so a change is refused. */
+  isLocked: boolean
+}
+export type KanbanSettings = {
+  isLoaded: boolean
+  rows: KanbanSettingRow[]
+  /** Why a change was refused, by row key; dropped when a change goes through. */
+  denied: Record<string, string>
+  /** Why the rows could not be read. */
+  error?: string
+}
 export type KanbanQuickAdd = {
   isOpen: boolean
   hasDetails: boolean
@@ -116,6 +140,12 @@ export type KanbanSuggestion = {
   title: string
   spec: string
   why?: string
+}
+export type KanbanDismissed = {
+  /** The suggestions the person dismissed, oldest first. */
+  items: KanbanSuggestion[]
+  /** Whether the strip lists them (this session only). */
+  isShown: boolean
 }
 export type KanbanSection = {
   kind: 'handoff' | 'feedback' | 'question' | 'answer' | 'check'
@@ -178,6 +208,21 @@ export type KanbanActivity = {
   /** Each subagent seen, by its id: its name and the card it inherited. */
   agents: Record<string, { name: string; cardId: string }>
 }
+/** What the turn-end check keeps: the running main turn, and what it has already said this session. */
+export type KanbanReconcile = {
+  /** The turn's cards, each true once it got a handoff, a question or a move out of Claude; and whether it changed files. */
+  turn: {
+    isReconcile: boolean
+    hasEdits: boolean
+    cards: Record<string, boolean>
+  }
+  /** Per card, how many rounds it had when its reconcile prompt was sent. */
+  sent: Record<string, number>
+  /** Reconcile prompts submitted whose turn has not begun. */
+  waiting: string[]
+  /** Whether the once-a-session toast for work with no card has been shown. */
+  isNudged: boolean
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -191,9 +236,13 @@ declare module 'claude-code' {
       queue: Shaped<KanbanQueue>
       pausedUntil: number
       viewer: string
+      ghInstalled: KanbanGhState
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
+      settings: Shaped<KanbanSettings>
       suggestions: Shaped<KanbanSuggestion[]>
+      dismissed: Shaped<KanbanDismissed>
+      reconcile: Shaped<KanbanReconcile>
     }
   }
 }

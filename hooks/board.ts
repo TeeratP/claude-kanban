@@ -16,7 +16,7 @@ import {
 } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
 import type { Loaded } from './backend'
-import { choicesOf, forgetDetected } from './detect'
+import { choicesOf, forgetDetected, savedDetected } from './detect'
 import { isRateLimited, withStatusOptions } from './github'
 import {
   EMPTY_BOARD,
@@ -49,6 +49,7 @@ type BoardCache = {
 }
 
 let loading: Promise<KanbanBoard> | undefined
+let detecting: Promise<KanbanBackendInfo> | undefined
 let isStale = false
 let pollTimer: Timer | undefined
 let ageTimer: Timer | undefined
@@ -57,6 +58,9 @@ let ageTimer: Timer | undefined
 let pollingRun = 0
 // The Human count the pane's title follows; undefined until the pane opens.
 let titledFor: number | undefined
+// Counts the closes of the pane: a retitle that was asked before one must not open the
+// pane again, however late in its wait the close came.
+let closes = 0
 // Cards whose move the backend confirmed while a load was reading: it may have read them
 // from before the move. Not the sync entries, which are gone two seconds after a confirm,
 // sooner than a slow load can land.
@@ -65,6 +69,11 @@ let confirmedDuringLoad: Set<string> | undefined
 /** Notes that the backend confirmed a card's move, so a load reading now does not undo it. */
 export function noteConfirmed(cardId: string): void {
   confirmedDuringLoad?.add(cardId)
+}
+
+/** Notes that the pane closed, so a retitle waiting on the panes does not open it again. */
+export function noteClosed(): void {
+  closes += 1
 }
 
 /** The status line: how many cards sit in Human, or nothing when none do. */
@@ -82,6 +91,7 @@ function updateStatusLine($: EngineInterface, cards: readonly KanbanCard[]) {
 // raise or focus it (`PaneOpenArgs`), left out here; the size is repeated because
 // each open sets it anew, and one the person set wins. A failure is only logged.
 async function retitle($: EngineInterface): Promise<void> {
+  const closedAt = closes
   try {
     const pane = (await $.ui.panes()).find(one => one.id === PANE)
     // Read after the wait: a later change wins over the one that asked.
@@ -92,11 +102,12 @@ async function retitle($: EngineInterface): Promise<void> {
     if (pane.title === title) return
 
     // The list above may be older than this open, which would bring back a pane
-    // closed since: ask again right before it.
+    // closed since: ask again right before it. That list can be older than a close
+    // too, so a close counted since the retitle began stops it as well.
     const isOpen = (await $.ui.panes()).some(
       one => one.id === PANE && one.isPlaced,
     )
-    if (!isOpen) return
+    if (!isOpen || closes !== closedAt) return
 
     await $.ui.open({
       id: 'kanban',
@@ -355,13 +366,38 @@ async function showCachedStatus($: EngineInterface) {
   }
 }
 
-/** The board's backend, detected and remembered on first use. */
+/**
+ * The backend this directory used last, from what is saved and with no call to
+ * gh: the one the last load saved under this `backend` setting, else the board a
+ * detection found. It only names the backend; the board is not set to it, and
+ * the origin is not checked. Undefined when nothing is saved.
+ */
+export async function rememberedBackend(
+  $: EngineInterface,
+  mode: KanbanBackendMode,
+): Promise<KanbanBackendInfo | undefined> {
+  try {
+    const cached = await readCache($)
+    if (cached?.mode === mode) return cached.backend
+  } catch (error) {
+    $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
+  }
+
+  return savedDetected($)
+}
+
+/** The board's backend, detected and remembered on first use; callers that ask while it is being detected share that detection. */
 export async function ensureBackend(
   $: EngineInterface,
 ): Promise<KanbanBackendInfo> {
   const { backend, mode } = await readBoard($)
+  if (backend !== null) return backend
 
-  return backend === null ? detectInto($, mode) : backend
+  detecting ??= detectInto($, mode).finally(() => {
+    detecting = undefined
+  })
+
+  return detecting
 }
 
 // Detects the backend and puts it on the board, or the boards to pick from when detection asks.
@@ -546,12 +582,35 @@ export async function openBoard($: EngineInterface): Promise<void> {
   await refresh($)
 }
 
+// Under `auto`, with nothing saved to name the backend from, detects it now, as
+// the pane's first load would, and saves it, so the system prompt can name it and
+// a later session needs no detection. No cards are loaded. A failure, a rate
+// limit among them, is only logged.
+async function findBackend($: EngineInterface): Promise<void> {
+  const { mode, backend } = await readBoard($)
+  if (mode !== 'auto' || backend !== null) return
+  if ((await rememberedBackend($, mode)) !== undefined) return
+
+  try {
+    await ensureBackend($)
+    // The board as it stands now: a plain read is the moment the dispatch
+    // began, before the backend was found.
+    await saveCache($, await updateBoard($, board => board))
+  } catch (error) {
+    $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+  }
+}
+
 /**
  * Called at session start and on a hot reload: refreshes a pane still open;
- * with none, restores the status line from the saved cards.
+ * with none, restores the status line from the saved cards and, when no saved
+ * backend is known, finds it in the background.
  */
 export async function bootstrap($: EngineInterface): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) await openBoard($)
-  else await showCachedStatus($)
+  else {
+    await showCachedStatus($)
+    await findBackend($)
+  }
 }

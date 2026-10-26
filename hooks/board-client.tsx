@@ -66,8 +66,8 @@ export type Place = { at: 'top' } | { at: 'before' | 'after'; cardId: string }
 
 /**
  * What the module posts: a click on a row, a card dropped on a section (at a
- * place in it, or last when none) or moved a place up or down in its own, and
- * a group opened or folded.
+ * place in it, or last when none) or moved a place up or down in its own, a
+ * group opened or folded, and the key that opens Settings.
  */
 export type BoardPost =
   | { type: 'open'; cardId: string }
@@ -75,6 +75,7 @@ export type BoardPost =
   | { type: 'shift'; cardId: string; dir: 'up' | 'down' }
   | { type: 'toggleGroup'; group: string }
   | { type: 'page'; column: string; dir: 'up' | 'down' }
+  | { type: 'settings' }
 
 /** Where a drop at a pointer position lands, and the rows that show it. */
 export type DropTarget = {
@@ -459,6 +460,13 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     if (event.ctrl === true || event.meta === true) return
 
     const now = read()
+    // `s` opens Settings, whose button has no hotkey of its own where this
+    // takes the keys; while `m` carries a card it names Suspended, below.
+    if (event.key === 's' && now.moving === null) {
+      post({ type: 'settings' })
+      return
+    }
+
     const here = now.cursor === null ? stops[0] : place(rows, stops, now.cursor)
     const at = here === undefined ? undefined : rows[here]
     if (here === undefined || at === undefined) return

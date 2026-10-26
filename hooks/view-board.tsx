@@ -14,7 +14,6 @@ import {
   readQueue,
   readPausedUntil,
   readQuickAdd,
-  readSuggestions,
   readSync,
   readTick,
   readUi,
@@ -39,14 +38,22 @@ import {
   titleColumn,
 } from './layout'
 import type { Row } from './layout'
-import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
+import { TICK_BRIGHT_MS, ageLabel } from './model'
 import { queuePlace, queueView } from './queue'
 import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { changeBoard } from './pick'
 import { dropCard, shiftCard } from './reorder'
+import { openSettings } from './settings'
 import { S } from './strings'
-import { stripRows } from './suggest'
+import { readStripRows } from './suggest'
+import {
+  SETTINGS_KEY,
+  planStatus,
+  settingsLabel,
+  settingsText,
+  settingsWidth,
+} from './status'
 import { retryAll } from './sync'
 import { planActions } from './toolbar'
 import type { PlacedAction } from './toolbar'
@@ -55,9 +62,6 @@ import { clearFilter, renderFilter, toggleFilter } from './view-filter'
 import { pickRows, renderPicker } from './view-pick'
 import { renderQuickAdd } from './view-quick-add'
 import { renderSuggestions } from './view-suggest'
-
-// Under this many columns the status row drops " (auto)" from the backend's name.
-const AUTO_SHOWN_FROM = 40
 
 // Where the pane's window sat at the last draw, and the rows above the list that
 // the layout was told of; a wheel row is relative to it.
@@ -81,7 +85,7 @@ function glyphOf(entry: KanbanSync, tick: number, now: number) {
 }
 
 // Why a local board has no GitHub behind it, when the backend knows.
-function localNote(info: KanbanBackendInfo | null): string | undefined {
+export function localNote(info: KanbanBackendInfo | null): string | undefined {
   if (info?.kind !== 'local') return undefined
   if (info.isConfigUnclear === true) return S.configUnclear
 
@@ -199,7 +203,7 @@ export async function handleBoardScroll(
   const board = await readBoard($)
   const { cards } = board
   // The picker and the suggestions sit between the toolbar and the list; the layout is told of them.
-  const strip = stripRows((await readSuggestions($)).length) + pickRows(board)
+  const strip = (await readStripRows($)) + pickRows(board)
   const rows = layoutBoard({
     cards,
     ui,
@@ -249,6 +253,9 @@ export async function handleBoardMessage(
     case 'toggleGroup':
       await toggleGroup($, message.group)
       break
+    case 'settings':
+      await openSettings($)
+      break
     case 'page':
       await scrollSection(
         $,
@@ -286,7 +293,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   // The rows above the list, which the equal-height sections give way to.
   const extraRows =
     pickRows(board) +
-    stripRows((await readSuggestions($)).length) +
+    (await readStripRows($)) +
     (filterField === null ? 0 : 1) +
     (quickAdd === null ? 0 : quickAddRows(await readQuickAdd($)))
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows, extraRows }
@@ -318,15 +325,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       : detailSegs(columns, one, activity.live, now, titleAt)
   }
 
-  // The status text, dim: the backend, the board, how fresh it is, and why not.
+  // The status text, dim: the backend, the board, how fresh it is, and why not;
+  // with `s: Settings` at the right end of the row.
   const statusRow = () => {
-    const backendName = S.backendLabel(
-      board.mode,
-      board.backend?.kind,
-      columns < AUTO_SHOWN_FROM,
-    )
     const note = localNote(board.backend)
-    const isNoted = note !== undefined
     const detected =
       board.backend?.kind === 'github' && board.backend.isDetected === true
         ? board.backend
@@ -335,6 +337,11 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       detected?.title === undefined
         ? ''
         : S.boardName(detected.projectNumber, detected.title)
+    const isAge =
+      board.error === undefined &&
+      !(board.isLoading || isLoading) &&
+      !(pausedUntil > now) &&
+      board.fetchedAt !== 0
     const status =
       board.error ??
       (board.isLoading || isLoading
@@ -344,60 +351,52 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           : board.fetchedAt === 0
             ? ''
             : S.updated(ageLabel(board.fetchedAt, now)))
-    const room = columns
-    const join = (parts: string[]) =>
-      ` ${parts.filter(part => part !== '').join(' · ')}`
-    // A detected board's name takes what the backend's name and the status leave,
-    // cut to fit; with too little room left it is left out.
-    const nameRoom =
-      room - (cellWidth(join([`${backendName} · X`, status])) - 1)
-    const shownName =
-      boardName === '' || nameRoom < cellWidth('#00 …')
-        ? ''
-        : truncate(boardName, nameRoom)
-    const label =
-      note !== undefined
-        ? `${backendName} · ${note}`
-        : shownName === ''
-          ? backendName
-          : `${backendName} · ${shownName}`
-    // The key hint shows whole or not at all: a cut hint is noise.
-    const withHint = join([label, status, S.keyHint])
-    // A status that fits only without the backend's name is shown whole, not cut;
-    // a note on why the board is local is never dropped for it.
-    const whole = join([label, status])
-    const bare = join([status])
-    const text =
-      hasClient &&
-      board.error === undefined &&
-      !isLoading &&
-      cellWidth(withHint) <= room
-        ? withHint
-        : cellWidth(whole) > room &&
-            !isNoted &&
-            status !== '' &&
-            cellWidth(bare) <= room
-          ? bare
-          : truncate(whole, room)
+    const plan = planStatus({
+      columns,
+      mode: board.mode,
+      kind: board.backend?.kind,
+      note,
+      boardName,
+      status,
+      isAge,
+      canHint: hasClient && board.error === undefined && !isLoading,
+    })
+    const { text } = plan
 
-    if (board.error !== undefined) {
-      return (
+    const shown =
+      board.error !== undefined ? (
         <Text color="error" wrap="truncate-end">
           {text}
         </Text>
-      )
-    }
-
-    return detected === undefined ? (
-      <Text dimColor wrap="truncate-end">
-        {text}
-      </Text>
-    ) : (
-      <Button key="source" plain dimColor onPress={() => changeBoard($)}>
+      ) : detected === undefined ? (
         <Text dimColor wrap="truncate-end">
           {text}
         </Text>
-      </Button>
+      ) : (
+        <Button key="source" plain dimColor onPress={() => changeBoard($)}>
+          <Text dimColor wrap="truncate-end">
+            {text}
+          </Text>
+        </Button>
+      )
+    if (plan.settings === undefined) return shown
+
+    return (
+      <Box flexDirection="row">
+        <Box width={columns - settingsWidth(plan.settings)}>{shown}</Box>
+        <Button
+          key="settings"
+          plain
+          dimColor
+          hotkey={hasClient ? undefined : SETTINGS_KEY}
+          label={
+            hasClient
+              ? settingsText(plan.settings)
+              : settingsLabel(plan.settings)
+          }
+          onPress={() => openSettings($)}
+        />
+      </Box>
     )
   }
 

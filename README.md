@@ -29,7 +29,7 @@ At the prompt of a terminal session:
 /plugin install kanban --marketplace TeeratP/claude-kanban
 ```
 
-Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)) and the `claudeLimit` option (see [How many cards Claude works on at once](#how-many-cards-claude-works-on-at-once)).
+Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)), the `claudeLimit` option (see [How many cards Claude works on at once](#how-many-cards-claude-works-on-at-once)) and the `reconcile` option (see [How Claude keeps the board current](#how-claude-keeps-the-board-current)).
 
 From a shell:
 
@@ -47,7 +47,7 @@ Type `/kanban` to open the board in a side pane. Click a card to open its detail
 
 Claude can work the board without the pane open (see [Claude's tools](#claudes-tools-and-the-handoff)).
 
-The toolbar is two rows. The first is dim status text: the active backend (`Local (auto)`, without the `(auto)` in a pane under 40 columns), when the board was last updated (`updated just now`, `updated 5m ago`), and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find` (on mobile, which has no text field, only `r: Refresh`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds and its ages (the status row's, each card's) redraw every 30. While cards wait in Human the pane's title reads `Kanban · N`, which shows as its tab when several panes are open. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
+The toolbar is two rows. The first is dim status text: the active backend (`Local (auto)`, without the `(auto)` in a pane under 40 columns), when the board was last updated (`updated just now`, `updated 5m ago`), and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). At the right end of the row a dim `s: Settings` opens the Settings view; the status gives way to it (` (auto)` goes first, then the age), and in a pane too narrow for both it reads `s: Set…`, then is left out, but the backend's name stays. In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find` (on mobile, which has no text field, only `r: Refresh`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds and its ages (the status row's, each card's) redraw every 30. While cards wait in Human the pane's title reads `Kanban · N`, which shows as its tab when several panes are open. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
 
 ### Moving cards
 
@@ -98,7 +98,42 @@ The filter only changes what is drawn. Everything you do acts on the cards you c
 
 ### Suggestions from Claude
 
-When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts.
+
+A dismissed suggestion is remembered (the last 200 per directory, also across restarts): if Claude suggests the same title again, nothing is added, no toast is shown, and Claude is told you dismissed it. A dim `Show dismissed (N)` row under the strip lists the newest three (`Hide dismissed (N)` shuts them again, then `+N more`); `Restore` puts one back at the top of the strip. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+
+### How Claude keeps the board current
+
+A session with the plugin knows the board is the project's backlog without a line in CLAUDE.md or AGENTS.md. The plugin adds one short section to Claude's system prompt (to every request but a `--bare` one) that names the backlog and states the rules:
+
+- On a GitHub board: `This project's backlog is GitHub Issues on board <owner>/#<n>.`
+- On local cards: `This project's backlog is the .kanban/*.md cards.`
+- While the backend is not known yet: `This project's backlog is a kanban board.`
+
+The backend is named from the `backend` setting and what is already known, with no call to `gh`. `local` says the `.kanban` cards at once; `github` says `GitHub Issues.` (and the board, once it is known). Under `auto` it is the backend the board has, else the one the last load saved for the directory, else the board an earlier detection found (see [How GitHub is detected](#how-github-is-detected)). When none of those exists, the first session in a directory detects it in the background at its start, as the pane would on opening, without opening the pane; an error there, a rate limit among them, only goes to the debug log, and the only toast is the one-time note that a board has no In review status. The section names the backend from the next request, and later sessions read what was saved.
+
+The rules are the same for all three. Asked to work the backlog, or given no task, Claude takes the top Backlog card (`kanban_list`) and moves it to Claude before writing code. When the work a card tracks is done it records `kanban_handoff` and moves the card to Human; it never moves a card to Done, which you approve. Blocked on a decision only you can make, it calls `kanban_ask`. For follow-ups it calls `kanban_suggest`, and it creates a card with `kanban_create` only when asked. It never moves a card into or out of Suspended or Cancelled, and it uses the kanban tools, not `gh issue` or `gh project` edits or hand edits of `.kanban` files, so the board stays in sync.
+
+Claude can forget the last step, so the plugin checks when a turn ends. The `reconcile` setting (on by default; off turns off only what follows, not the section above) covers a turn of the main session that Claude answered: not one you interrupted, one that ended in an error or a refusal, a subagent's, nor one the check itself started.
+
+- **A card still in Claude.** The turn worked on a card if it began with that card's work, resume or answer prompt, or called `kanban_show`, `kanban_handoff`, `kanban_move` or `kanban_ask` on it. If the card is still in Claude and the turn left it no handoff, no question and no move out of Claude (a move into Claude says nothing about the work), the plugin sends one prompt: `Card #12 is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.` A card waiting in the queue is not asked about.
+- **Work with no card.** If the turn changed files (`Edit`, `Write` or `NotebookEdit`, other than a `.kanban/*.md` card file), touched no card and no card is in Claude, a toast says `This turn changed files with no card in Claude. If it is backlog work, move or create its card.` once a session. It is a toast, not a prompt, so it costs no turn and Claude creates no card you did not ask for.
+
+The check cannot loop. A turn that a check prompt started is never checked; a card is asked about once per round (a round ends when the card leaves Claude, and a new one starts when it is worked on again), however many turns it takes; nothing is sent while a prompt that starts work is on its way (a card moved to Claude whose move the backend has not yet confirmed); a card waiting in the queue is no reason to wait, since it starts the moment a slot is free; and the work-with-no-card toast shows once a session.
+
+### Settings
+
+Press `s: Settings` at the right end of the status row (or the `s` key while the pane has the keys) to open the Settings view in the pane; `b: ← Board` returns. It lists every setting the mod has, which are the same rows `/config` shows for the plugin, each with its name, its value and one line of help:
+
+| Setting | Row | What it takes |
+|---|---|---|
+| Card backend (`backend`) | its options as links, the current one marked `✓` | `auto`, `github`, `local` |
+| Claude limit (`claudeLimit`) | `−` and `+` around the number | a whole number from 0 up; `−` rests at 0, which means no limit |
+| Reconcile at turn end (`reconcile`) | `on` and `off`, the current one marked | on or off |
+
+The option a setting starts with is marked `(default)`, read from the `(default: X)` that ends each setting's title in `/config`. Pressing another option, or `−` / `+`, changes the setting through the engine, which applies the same checks as `/config`; if a check refuses, the value stays, and the reason shows under the row and in a toast. A setting an organization's policy sets shows its value with no buttons. Like a change in `/config`, a change reloads the plugin with the new value; the view stays open.
+
+Under the settings, a Board row names the board in use (`GitHub · owner/repo`, the board's number and name, or `Local · .kanban/` with the reason it is local) and, where it can be changed, a `Change board` link: for a board found without config it opens the board picker on the board (or says there is no other), and for local files under `auto` it looks for a GitHub board again. A board named in CLAUDE.md or AGENTS.md is changed there. Which board a project uses is not a setting, because settings are for every project. The last line, `Also in /config`, is a reminder that `/config` edits the same settings.
 
 ## Backends
 
@@ -109,7 +144,7 @@ A project uses one backend. They do not sync with each other.
 | GitHub | Issues of one repo, laid out by one Projects-v2 board's Status field. |
 | Local | Markdown files in `.kanban/` in the working directory. |
 
-The `backend` setting picks which. You choose it on the settings screen at install, and can change it later in the plugin's settings in the config menu; changing it reloads the plugin with the new value. A stored value that is not one of the three counts as unset (`auto`).
+The `backend` setting picks which. You choose it on the settings screen at install, and can change it later in the plugin's settings in the config menu; changing it reloads the plugin with the new value. A stored value that is not one of the three counts as unset (`auto`). Choosing `github` there is refused while `gh` is not installed or not signed in, and the row says so when `gh` is missing.
 
 | `backend` | Behaviour |
 |---|---|
@@ -145,7 +180,7 @@ The board reads `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md` in the working 
 
 The repo and the project number are required; without both, `auto` uses local. Missing IDs are looked up with `gh project field-list` and `gh project view`, so the minimal CLAUDE.md is just those two lines. The matching is tolerant of wording and formatting, not of missing pieces; the repo line stays strict (a backticked `owner/name` after a `Repo:` label), because a move writes to that repo.
 
-Besides the config, `auto` needs `gh auth status` to succeed and `git remote get-url origin` to succeed. Any failure means local.
+Besides the config, `auto` needs `gh --version`, `gh auth status` and `git remote get-url origin` to succeed. Any failure means local.
 
 #### No config needed
 

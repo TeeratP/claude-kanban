@@ -13,6 +13,7 @@ import {
   rowKeys,
   under,
 } from './board-ui'
+import type { BoardUi } from './board-ui'
 import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
 import { overflow, renderPane } from './render'
 import type { Route } from './fake-gh'
@@ -408,6 +409,7 @@ test('on GitHub Enter creates the issue with the triage label, puts it on the bo
   await clock.settle()
 
   expect(writes(calls)).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
     LABEL_LIST,
@@ -470,7 +472,7 @@ test('on GitHub a refused create snaps the card out with a toast, runs nothing m
   expect(toasts).toEqual([
     'Could not add the card: HTTP 403: Resource not accessible',
   ])
-  expect(writes(calls).slice(2)).toEqual([LABEL_LIST, ISSUE_CREATE])
+  expect(writes(calls).slice(3)).toEqual([LABEL_LIST, ISSUE_CREATE])
   expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:4'])
   expect(await marks(ui, '⟳')).toHaveLength(0)
   expect((await ui.find({ key: TITLE }))?.props.value).toBe(
@@ -496,7 +498,7 @@ test('on GitHub an issue made but not put on the board is named in the toast, an
   expect(toasts).toEqual([
     `Could not add the card: Created ${ISSUE_URL} but could not finish adding it: GraphQL: insufficient scopes`,
   ])
-  expect(writes(calls).slice(2)).toEqual([LABEL_LIST, ISSUE_CREATE, ITEM_ADD])
+  expect(writes(calls).slice(3)).toEqual([LABEL_LIST, ISSUE_CREATE, ITEM_ADD])
   expect(loads()).toBeGreaterThan(before)
   expect(
     (await under(ui, 'hdr:backlog')).some(key => key.startsWith('card:new:')),
@@ -533,6 +535,7 @@ test('kanban_create on a GitHub board makes a triage issue on the board in Backl
     result: `Created #30 [backlog] Fix the login loop in ${ISSUE_URL}.`,
   })
   expect(writes(calls)).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
     LABEL_LIST,
@@ -582,7 +585,7 @@ test('kanban_create still refuses an empty title and a start in Human on a GitHu
 
   expect(await create($, { title: '  ' })).toHaveProperty('deny')
   expect(await create($, { column: 'human' })).toHaveProperty('deny')
-  expect(writes(calls).slice(2)).toEqual([])
+  expect(writes(calls).slice(3)).toEqual([])
 })
 
 const CLIENT_SURFACES = ['terminal', 'desktop'] as const
@@ -638,7 +641,7 @@ for (const surface of CLIENT_SURFACES) {
   })
 }
 
-test('the board view gives r to refresh, n to the add button, f to the filter button and no other Button a hotkey that is also a Client key', async ($, on) => {
+test('the board view gives r to refresh, n to the add button and f to the filter button, and no Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
   // A suggestion adds its own buttons to the board view.
   await $.tool.call({
@@ -656,9 +659,23 @@ test('the board view gives r to refresh, n to the add button, f to the filter bu
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],
   )
 
+  // The Settings button, on the status row, has none: the Client takes `s`.
   expect(hotkeys).toEqual(['r', 'n', 'f'])
   // The keys the board's list takes when it has the keyboard.
-  const clientKeys = ['j', 'k', 'm', 'h', 'c', 'b', 'd', '1', '2', '3', '4']
+  const clientKeys = [
+    'j',
+    'k',
+    'm',
+    'h',
+    'c',
+    'b',
+    'd',
+    's',
+    '1',
+    '2',
+    '3',
+    '4',
+  ]
   expect(hotkeys.filter(key => clientKeys.includes(key))).toEqual([])
   await ui.unmount()
 })
@@ -793,5 +810,158 @@ test('Hide details folds the field away, keeps what was typed in it, and does no
   const text = files[path(4, 'fix-it')] ?? ''
   expect(text).toContain('title: Fix it\n')
   expect(text).not.toContain('Not now')
+  await ui.unmount()
+})
+
+// Types a filter into the filter field; Enter shuts the field and the filter stays.
+async function filterBy(
+  ui: BoardUi & Pick<Mounted<'terminal'>, 'input'>,
+  text: string,
+) {
+  await ui.press({ key: 'filter' })
+  await ui.input({ key: 'filter:text', text })
+}
+
+async function openFiltered($: Engine, on: On, files = cards()) {
+  const world = boot(on, files)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  return { ...world, files, ui }
+}
+
+test('a card the filter hides is added with a toast that says so, and the filter stays', async ($, on) => {
+  const { clock, toasts, ui } = await openFiltered($, on)
+  await filterBy(ui, 'docs')
+
+  await ui.press({ key: 'add' })
+  await ui.input({ key: TITLE, text: 'Fix the README' })
+  await clock.settle()
+
+  expect(toasts).toEqual(['Added #4 · hidden by the filter'])
+  expect(await under(ui, 'hdr:backlog')).toEqual(['card:md:0003-docs'])
+  expect(await header(ui, 'backlog')).toBe('Backlog 1/2')
+
+  // The filter was left as it was: clearing it shows the card.
+  await ui.press({ key: 'filter:clear' })
+  expect(await under(ui, 'hdr:backlog')).toContain(
+    'card:md:0004-fix-the-readme',
+  )
+  await ui.unmount()
+})
+
+test('a card the filter lets through is added without a toast', async ($, on) => {
+  const { clock, toasts, ui } = await openFiltered($, on)
+  await filterBy(ui, 'docs')
+
+  await ui.press({ key: 'add' })
+  await ui.input({ key: TITLE, text: 'Write more docs' })
+  await clock.settle()
+
+  expect(toasts).toEqual([])
+  expect(await under(ui, 'hdr:backlog')).toEqual([
+    'card:md:0003-docs',
+    'card:md:0004-write-more-docs',
+  ])
+  await ui.unmount()
+})
+
+test('a card is added without a toast when no filter is on', async ($, on) => {
+  const { clock, toasts, ui } = await openFiltered($, on)
+
+  await ui.press({ key: 'add' })
+  await ui.input({ key: TITLE, text: 'Fix the README' })
+  await clock.settle()
+
+  expect(toasts).toEqual([])
+  await ui.unmount()
+})
+
+test('a filter that folds Active says so in the same toast', async ($, on) => {
+  const files = {
+    ...cards(),
+    [path(20, 'old')]: card(20, { status: 'done', title: 'Old thing' }),
+  }
+  const { clock, toasts, ui } = await openFiltered($, on, files)
+  // Only Inactive has a match, so it is the group drawn open.
+  await filterBy(ui, '@done')
+  expect(await header(ui, 'backlog')).toBeUndefined()
+
+  await ui.press({ key: 'add' })
+  await ui.input({ key: TITLE, text: 'Fix the README' })
+  await clock.settle()
+
+  expect(toasts).toEqual([
+    'Added #21 · hidden by the filter · Active is folded',
+  ])
+  expect(await header(ui, 'done')).toBe('Done 1/1')
+  expect(await header(ui, 'backlog')).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a card that matches but whose group was folded meanwhile says its group is folded', async ($, on) => {
+  const { clock, calls, toasts, ui } = await openFiltered($, on)
+  await filterBy(ui, 'docs')
+  let release = () => {}
+  calls.hold = new Promise<void>(resolve => {
+    release = resolve
+  })
+  await ui.press({ key: 'add' })
+  const adding = ui.input({ key: TITLE, text: 'Write more docs' })
+  await clock.settle()
+
+  // The person turns to Inactive while the file is being written.
+  await group(ui, 'inactive')
+  expect(await header(ui, 'backlog')).toBeUndefined()
+  release()
+  await adding
+  await clock.settle()
+
+  expect(toasts).toEqual(['Added #4 · Active is folded'])
+  await ui.unmount()
+})
+
+test('quick add under a filter turns the group the person chose back to Active', async ($, on) => {
+  const { clock, toasts, ui } = await openFiltered($, on)
+  await filterBy(ui, 'docs')
+  await group(ui, 'inactive')
+  expect(await header(ui, 'backlog')).toBeUndefined()
+
+  await ui.press({ key: 'add' })
+  await ui.input({ key: TITLE, text: 'Write more docs' })
+  await clock.settle()
+
+  expect(toasts).toEqual([])
+  expect(await under(ui, 'hdr:backlog')).toContain(
+    'card:md:0004-write-more-docs',
+  )
+  await ui.unmount()
+})
+
+test('on GitHub a new issue with the triage label shows under label:triage without a toast', async ($, on) => {
+  const { clock, toasts, ui } = await openGithub($, on)
+  await filterBy(ui, 'label:triage')
+
+  await ui.press({ key: 'add' })
+  await ui.input({ key: TITLE, text: 'Fix the login loop' })
+  await clock.settle()
+
+  expect(toasts).toEqual([])
+  expect(await under(ui, 'hdr:backlog')).toContain('card:gh:30')
+  await ui.unmount()
+})
+
+test('on GitHub a new issue under another label filter is hidden, and the toast names its number', async ($, on) => {
+  const { clock, toasts, ui } = await openGithub($, on)
+  await filterBy(ui, 'label:ai')
+
+  await ui.press({ key: 'add' })
+  await ui.input({ key: TITLE, text: 'Fix the login loop' })
+  await clock.settle()
+
+  expect(toasts).toEqual(['Added #30 · hidden by the filter'])
+  expect(await under(ui, 'hdr:backlog')).not.toContain('card:gh:30')
   await ui.unmount()
 })

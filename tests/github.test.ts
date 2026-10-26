@@ -1863,7 +1863,9 @@ test('detect without a CLAUDE.md that names a project looks for a board itself, 
 })
 
 test('detect uses the ids in CLAUDE.md as they stand, after gh auth and the git remote', async () => {
-  const { $, calls } = fakeEngine([AUTH, REMOTE], { 'CLAUDE.md': KANBAN })
+  const { $, calls } = fakeEngine([GH_VERSION, AUTH, REMOTE], {
+    'CLAUDE.md': KANBAN,
+  })
 
   expect(await detectBackend($)).toEqual({
     kind: 'github',
@@ -1881,13 +1883,14 @@ test('detect uses the ids in CLAUDE.md as they stand, after gh auth and the git 
     },
   })
   expect(calls.map(call => call.argv)).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
   ])
 })
 
 test('detect falls back to .claude/CLAUDE.md when the root file names no project', async () => {
-  const { $ } = fakeEngine([AUTH, REMOTE], {
+  const { $ } = fakeEngine([GH_VERSION, AUTH, REMOTE], {
     'CLAUDE.md': '# Notes\n',
     '.claude/CLAUDE.md': KANBAN,
   })
@@ -1920,6 +1923,7 @@ const FIELDS = JSON.stringify({
 test('detect asks gh for the ids a CLAUDE.md leaves out', async () => {
   const { $, calls } = fakeEngine(
     [
+      GH_VERSION,
       AUTH,
       REMOTE,
       { match: ['gh', 'project', 'field-list'], reply: { stdout: FIELDS } },
@@ -1943,7 +1947,7 @@ test('detect asks gh for the ids a CLAUDE.md leaves out', async () => {
       done: 'f-done',
     },
   })
-  expect(calls.slice(2).map(call => call.argv)).toEqual([
+  expect(calls.slice(3).map(call => call.argv)).toEqual([
     [
       'gh',
       'project',
@@ -1972,6 +1976,7 @@ test('detect asks gh for the ids a CLAUDE.md leaves out', async () => {
 test('detect keeps the ids CLAUDE.md gives and looks up only the options it lacks', async () => {
   const { $ } = fakeEngine(
     [
+      GH_VERSION,
       AUTH,
       REMOTE,
       { match: ['gh', 'project', 'field-list'], reply: { stdout: FIELDS } },
@@ -2009,6 +2014,7 @@ test('detect leaves a board with no Ready option without one', async () => {
   })
   const { $ } = fakeEngine(
     [
+      GH_VERSION,
       AUTH,
       REMOTE,
       { match: ['gh', 'project', 'field-list'], reply: { stdout: noReady } },
@@ -2030,6 +2036,7 @@ test('detect leaves a board with no Ready option without one', async () => {
 test('detect goes local, and says why, when gh is not signed in', async () => {
   const { $, logs } = fakeEngine(
     [
+      GH_VERSION,
       {
         match: ['gh', 'auth', 'status'],
         reply: {
@@ -2051,6 +2058,7 @@ test('detect goes local, and says why, when gh is not signed in', async () => {
 test('detect goes local when the directory has no origin remote', async () => {
   const { $, logs } = fakeEngine(
     [
+      GH_VERSION,
       AUTH,
       {
         match: ['git', 'remote'],
@@ -2067,6 +2075,7 @@ test('detect goes local when the directory has no origin remote', async () => {
 test('detect goes local when the project has no Status option it needs', async () => {
   const { $, logs } = fakeEngine(
     [
+      GH_VERSION,
       AUTH,
       REMOTE,
       {
@@ -2095,6 +2104,7 @@ test('detect goes local when the project has no Status option it needs', async (
 test('through the board: a CLAUDE.md names the project, cards load from gh, a move runs its plan', async ($, on) => {
   const { clock } = boot(on, { 'CLAUDE.md': KANBAN })
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     ...LOAD_ROUTES,
@@ -2122,7 +2132,8 @@ test('through the board: a CLAUDE.md names the project, cards load from gh, a mo
 
   expect(moved).toMatchObject({ result: 'Moved #4 to Claude (syncing).' })
   await clock.advance(SYNC_PAUSE)
-  expect(calls.slice(0, 2).map(call => call.argv)).toEqual([
+  expect(calls.slice(0, 3).map(call => call.argv)).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
   ])
@@ -2158,6 +2169,7 @@ test('through the board: a CLAUDE.md names the project, cards load from gh, a mo
 test('through the board: the Status options a load reports are kept with the board, and a card the person suspends goes to the Suspended option', async ($, on) => {
   const { clock, saved } = boot(on, { 'CLAUDE.md': KANBAN })
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     boardRoute(MIXED, undefined, [
@@ -2207,6 +2219,7 @@ test('through the board: the Status options a load reports are kept with the boa
 test('a card that leaves Human on a GitHub board loses its tag without a reload', async ($, on) => {
   const { clock } = boot(on, { 'CLAUDE.md': KANBAN })
   fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     ...LOAD_ROUTES,
@@ -2240,6 +2253,7 @@ test('a card labelled Human moves to Claude with that label removed, and the nex
   const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
   // GitHub drops the label only when the edit names it as it is spelled.
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     {
@@ -2288,6 +2302,7 @@ type Budget = { isExceeded: boolean; remaining: number; resetAt: number }
 
 function budgetRoutes(budget: Budget): Route[] {
   return [
+    GH_VERSION,
     AUTH,
     REMOTE,
     {
@@ -2421,6 +2436,7 @@ test('a refresh the person asks for while polling is paused still runs, and warn
 test('a limit with no reset time pauses polling for five minutes', async ($, on) => {
   const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     {
@@ -2450,6 +2466,7 @@ test('a limit with no reset time pauses polling for five minutes', async ($, on)
 test('an error that is not a rate limit does not pause polling', async ($, on) => {
   const { clock, world } = boot(on, { 'CLAUDE.md': KANBAN })
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     { match: GRAPHQL, reply: { exitCode: 1, stderr: 'HTTP 502: Bad Gateway' } },
@@ -2468,6 +2485,7 @@ test("a handoff comment from another user does not let a card move to Human, and
   const { clock } = boot(on, { 'CLAUDE.md': KANBAN })
   let comments = [comment(HANDOFF(), '2026-10-25T12:00:00Z', 'stranger')]
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     ...LOAD_ROUTES,
@@ -2654,6 +2672,7 @@ test('on a GitHub board kanban_ask comments the question, moves the card to In r
   })
   let nodes = [issueNode({ number: 1, status: 'In progress', labels: ['ai'] })]
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     { match: GRAPHQL, reply: argv => boardReply(nodes)(argv) },
@@ -2725,6 +2744,7 @@ test('on a GitHub board kanban_ask comments the question, moves the card to In r
 test('on a GitHub board an answer is commented as an Answer and resumes Claude', async ($, on) => {
   const { clock, prompts } = boot(on, { 'CLAUDE.md': KANBAN })
   const calls = fakeProcess(on, [
+    GH_VERSION,
     AUTH,
     REMOTE,
     boardRoute([
