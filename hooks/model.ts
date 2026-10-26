@@ -8,6 +8,7 @@ import type {
   KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
+  KanbanReconcile,
   KanbanUi,
 } from '../types'
 
@@ -115,6 +116,19 @@ export const EMPTY_SETTINGS: KanbanSettings = {
 }
 
 export const EMPTY_DISMISSED: KanbanDismissed = { items: [], isShown: false }
+
+export const EMPTY_TURN: KanbanReconcile['turn'] = {
+  isReconcile: false,
+  hasEdits: false,
+  cards: {},
+}
+
+export const EMPTY_RECONCILE: KanbanReconcile = {
+  turn: EMPTY_TURN,
+  sent: {},
+  waiting: [],
+  isNudged: false,
+}
 
 // A card shown before its backend has made it carries this prefix in its id.
 export const PENDING_PREFIX = 'new:'

@@ -11,6 +11,7 @@ import type {
   KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
+  KanbanReconcile,
   KanbanSuggestion,
   KanbanSync,
   KanbanUi,
@@ -22,6 +23,7 @@ import {
   EMPTY_QUEUE,
   EMPTY_QUICK_ADD,
   EMPTY_SETTINGS,
+  EMPTY_RECONCILE,
   INITIAL_UI,
 } from './model'
 
@@ -95,6 +97,13 @@ const dismissed = atom(
   { plugin: 'kanban', key: 'dismissed' } as const,
   EMPTY_DISMISSED,
   { shape: 'dismissed-1' },
+)
+
+// What the turn-end check has seen of the running turn, and what it has said.
+const reconcile = atom(
+  { plugin: 'kanban', key: 'reconcile' } as const,
+  EMPTY_RECONCILE,
+  { shape: 'reconcile-1' },
 )
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
@@ -270,4 +279,11 @@ export function updateDismissed(
   change: (value: KanbanDismissed) => KanbanDismissed,
 ): Promise<KanbanDismissed> {
   return update($, dismissed, change)
+}
+
+export function updateReconcile(
+  $: EngineInterface,
+  change: (value: KanbanReconcile) => KanbanReconcile,
+): Promise<KanbanReconcile> {
+  return update($, reconcile, change)
 }
