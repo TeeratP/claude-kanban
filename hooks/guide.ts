@@ -4,19 +4,26 @@ import type {
   PromptComposeTrait,
 } from 'claude-code'
 
-import type { KanbanBackendInfo } from '../types'
+import type { KanbanBackendInfo, KanbanBackendMode } from '../types'
 import { readBoard } from './atoms'
+import { rememberedBackend } from './board'
 import { S } from './strings'
 
 const SECTION_ID = 'kanban:backlog'
 
-// What the backlog is: the backend the board resolved, or just a board while it is still being found.
-const backlogOf = (info: KanbanBackendInfo | null): string => {
-  if (info === null) return S.backlogIs.unknown
+// What the backlog is, by the backend known so far. A `backend` setting of local
+// or github says that much before any board is found; with neither, a board.
+const backlogOf = (
+  info: KanbanBackendInfo | undefined,
+  mode: KanbanBackendMode,
+): string => {
+  if (mode === 'local') return S.backlogIs.local
+  if (info?.kind === 'github')
+    return S.backlogIs.github(info.owner, info.projectNumber)
+  if (mode === 'github') return S.backlogIs.githubAny
+  if (info?.kind === 'local') return S.backlogIs.local
 
-  return info.kind === 'github'
-    ? S.backlogIs.github(info.owner, info.projectNumber)
-    : S.backlogIs.local
+  return S.backlogIs.unknown
 }
 
 /**
@@ -27,7 +34,8 @@ const backlogOf = (info: KanbanBackendInfo | null): string => {
 export function withBacklogSection(
   sections: readonly PromptComposeSection[],
   traits: readonly PromptComposeTrait[],
-  info: KanbanBackendInfo | null,
+  info: KanbanBackendInfo | undefined,
+  mode: KanbanBackendMode,
 ): readonly PromptComposeSection[] {
   if (traits.includes('bare')) return sections
   if (sections.some(section => section.id === SECTION_ID)) return sections
@@ -36,19 +44,24 @@ export function withBacklogSection(
     ...sections,
     {
       id: SECTION_ID,
-      text: `${backlogOf(info)} ${S.backlogRules}`,
+      text: `${backlogOf(info, mode)} ${S.backlogRules}`,
       scope: 'session',
     },
   ]
 }
 
-/** The sections with the backlog one added, worded for the backend known at this render. */
+/**
+ * The sections with the backlog one added, worded for the backend known at this
+ * render: the board's, else the one saved from an earlier session (no call to gh).
+ */
 export async function backlogSection(
   $: EngineInterface,
   sections: readonly PromptComposeSection[],
   traits: readonly PromptComposeTrait[],
 ): Promise<readonly PromptComposeSection[]> {
-  const { backend } = await readBoard($)
+  const { backend, mode } = await readBoard($)
+  const info =
+    backend ?? (mode === 'local' ? undefined : await rememberedBackend($, mode))
 
-  return withBacklogSection(sections, traits, backend)
+  return withBacklogSection(sections, traits, info, mode)
 }

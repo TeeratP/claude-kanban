@@ -544,6 +544,8 @@ export const S = {
   backlogIs: {
     github: (owner: string, project: number) =>
       `This project's backlog is GitHub Issues on board ${owner}/#${project}.`,
+    // The `github` setting, before any board is known.
+    githubAny: "This project's backlog is GitHub Issues.",
     local: "This project's backlog is the .kanban/*.md cards.",
     unknown: "This project's backlog is a kanban board.",
   },

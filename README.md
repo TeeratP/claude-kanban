@@ -106,7 +106,9 @@ A session with the plugin knows the board is the project's backlog without a lin
 
 - On a GitHub board: `This project's backlog is GitHub Issues on board <owner>/#<n>.`
 - On local cards: `This project's backlog is the .kanban/*.md cards.`
-- While the backend is not known yet: `This project's backlog is a kanban board.` The backend is found when the pane first opens or a kanban tool first runs, so a request before that says only this.
+- While the backend is not known yet: `This project's backlog is a kanban board.`
+
+The backend is named from the `backend` setting and what is already known, with no call to `gh`. `local` says the `.kanban` cards at once; `github` says `GitHub Issues.` (and the board, once it is known). Under `auto` it is the backend the board has, else the one the last load saved for the directory, else the board an earlier detection found (see [How GitHub is detected](#how-github-is-detected)). When none of those exists, the first session in a directory detects it in the background at its start, as the pane would on opening, without opening the pane; an error there, a rate limit among them, only goes to the debug log, and the only toast is the one-time note that a board has no In review status. The section names the backend from the next request, and later sessions read what was saved.
 
 The rules are the same for all three. Asked to work the backlog, or given no task, Claude takes the top Backlog card (`kanban_list`) and moves it to Claude before writing code. When the work a card tracks is done it records `kanban_handoff` and moves the card to Human; it never moves a card to Done, which you approve. Blocked on a decision only you can make, it calls `kanban_ask`. For follow-ups it calls `kanban_suggest`, and it creates a card with `kanban_create` only when asked. It never moves a card into or out of Suspended or Cancelled, and it uses the kanban tools, not `gh issue` or `gh project` edits or hand edits of `.kanban` files, so the board stays in sync.
 

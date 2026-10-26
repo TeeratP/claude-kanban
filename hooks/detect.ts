@@ -317,19 +317,32 @@ function isSaved(value: unknown): value is Saved {
   )
 }
 
-async function readSaved(
-  $: EngineInterface,
-  origin: string,
-): Promise<KanbanGithub | undefined> {
+async function loadSaved($: EngineInterface): Promise<Saved | undefined> {
   try {
     const saved = await $.store.get(await savedKey($))
 
-    return isSaved(saved) && saved.origin === origin ? saved.info : undefined
+    return isSaved(saved) ? saved : undefined
   } catch (error) {
     $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
 
     return undefined
   }
+}
+
+async function readSaved(
+  $: EngineInterface,
+  origin: string,
+): Promise<KanbanGithub | undefined> {
+  const saved = await loadSaved($)
+
+  return saved?.origin === origin ? saved.info : undefined
+}
+
+/** The board remembered for this directory whatever its origin was, with no call to git or gh. */
+export async function savedDetected(
+  $: EngineInterface,
+): Promise<KanbanGithub | undefined> {
+  return (await loadSaved($))?.info
 }
 
 /** Remembers the board found for this directory and origin, so later sessions skip the search. */
