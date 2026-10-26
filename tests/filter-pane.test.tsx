@@ -21,6 +21,7 @@ import type { Route } from './fake-gh'
 import { KANBAN } from './github-board'
 import { PANE, RUN, SCROLL, SYNC_PAUSE, boot, card, path } from './fakes'
 import type { Files } from './fakes'
+import { GH_VERSION } from './zero'
 
 const SURFACES = ['terminal', 'desktop', 'vscode'] as const
 const WITH_CLIENT = ['terminal', 'desktop'] as const
@@ -659,6 +660,7 @@ const NODES = [
 const POSITION = 'updateProjectV2ItemPosition'
 
 const github = (): Route[] => [
+  GH_VERSION,
   { match: ['gh', 'auth', 'status'], reply: {} },
   {
     match: ['git', 'remote', 'get-url', 'origin'],

@@ -10,6 +10,7 @@ import { click, group, under } from './board-ui'
 import { boardRoute, fakeProcess, issueNode } from './fake-gh'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 import { overflow, renderPane } from './render'
+import { GH_VERSION } from './zero'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -775,6 +776,7 @@ test('on GitHub the line under the title names the tag and links to the issue', 
     ].join('\n'),
   })
   fakeProcess(on, [
+    GH_VERSION,
     { match: ['gh', 'auth', 'status'], reply: {} },
     {
       match: ['git', 'remote', 'get-url', 'origin'],

@@ -383,7 +383,7 @@ export const S = {
   detectSaveFailed: (reason: string) =>
     `kanban: could not save the detected board: ${reason}`,
   githubNoGh: (reason: string) =>
-    `gh is not installed: install it from https://cli.github.com (${reason})`,
+    `gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (${reason})`,
   originNotGithub: (url: string) => `origin ${url} is not a github.com URL`,
   githubLookupFailed: (repo: string, reason: string) =>
     `could not list the GitHub Projects of ${repo}: ${reason}; run gh auth refresh -s read:project`,
@@ -538,6 +538,26 @@ export const S = {
     long: '↑↓ walk · ⏎ open · m+key move',
     short: '↑↓ ⏎ open · m move',
   },
+
+  // #29
+  // A card just added that the filter keeps off the screen: `notes` say why.
+  added: (number: number, notes: readonly string[]) =>
+    [`Added #${number}`, ...notes].join(' · '),
+  hiddenByFilter: 'hidden by the filter',
+  groupFolded: (group: string) => `${group} is folded`,
+
+  // #27
+  dismissedShow: (n: number) => `Show dismissed (${n})`,
+  dismissedHide: (n: number) => `Hide dismissed (${n})`,
+  dismissedRestore: 'Restore',
+  suggestDismissed: (title: string) =>
+    `"${title}" was suggested before and the person dismissed it; nothing was added. Do not suggest it again.`,
+  // #43
+  githubNeedsGh:
+    'GitHub needs the gh CLI. Install it (https://cli.github.com, or `brew install gh`), run `gh auth login`, then choose GitHub again.',
+  githubNeedsSignIn:
+    'Sign in first: run `gh auth login`, then choose GitHub again.',
+  githubUnavailable: 'GitHub is unavailable here: gh is not installed.',
 
   // #44
   // The toolbar button and the view's title.

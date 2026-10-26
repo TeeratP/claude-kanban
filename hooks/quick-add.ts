@@ -4,11 +4,13 @@ import type { KanbanCard, KanbanQuickAdd } from '../types'
 import { updateQuickAdd, updateSync, updateUi } from './atoms'
 import { createCard } from './backend'
 import { ensureBackend, inBackground, refresh, setBoard } from './board'
-import { sectionList } from './layout'
+import { isFiltering, matchesFilter } from './filter'
+import { applyFilter, sectionList } from './layout'
 import {
   EMPTY_QUICK_ADD,
   PENDING_PREFIX,
   errorMessage,
+  groupOf,
   isPendingId,
   oneLine,
   withCard,
@@ -164,7 +166,7 @@ export async function addCard(
   }
 
   const settledAt = await $.clock.now()
-  await setBoard($, current => ({
+  const made = await setBoard($, current => ({
     ...current,
     cards: withCard(current.cards, created, id),
   }))
@@ -186,6 +188,28 @@ export async function addCard(
   expireLater($, created.id, settledAt, settledAt)
   // A load in flight may have read before the card existed.
   inBackground($, refresh($))
+  await tellIfHidden($, created, made.cards)
+}
+
+// A filter can keep the new card off the screen, or leave its group folded:
+// say so, as nothing else will. Silent without a filter or when the card shows.
+async function tellIfHidden(
+  $: EngineInterface,
+  card: KanbanCard,
+  cards: readonly KanbanCard[],
+): Promise<void> {
+  // Read now, not when the add began: the person may have changed the filter or the group since.
+  const ui = await updateUi($, current => current)
+  if (!isFiltering(ui.filter)) return
+
+  const group = groupOf(card.column)
+  const notes = [
+    ...(matchesFilter(card, ui.filter) ? [] : [S.hiddenByFilter]),
+    ...(applyFilter(cards, ui).ui.openGroup === group
+      ? []
+      : [S.groupFolded(S.group[group])]),
+  ]
+  if (notes.length > 0) $.ui.toast(S.added(card.number, notes))
 }
 
 // The backend refused: the card goes and the reason is told.

@@ -3,6 +3,7 @@ import type {
   KanbanBoard,
   KanbanCard,
   KanbanColumn,
+  KanbanDismissed,
   KanbanGroup,
   KanbanQueue,
   KanbanQuickAdd,
@@ -109,6 +110,8 @@ export const EMPTY_SETTINGS: KanbanSettings = {
   rows: [],
   denied: {},
 }
+
+export const EMPTY_DISMISSED: KanbanDismissed = { items: [], isShown: false }
 
 // A card shown before its backend has made it carries this prefix in its id.
 export const PENDING_PREFIX = 'new:'

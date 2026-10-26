@@ -144,3 +144,8 @@ Spec: `docs/design-groups-polish.md`.
 130. **A GitHub board with no issues says `No issues on this board yet.`**, and the legend is left off a board with no cards. (#37)
 131. **The `Set aside` row lists Done, Cancel, Suspend, the same order as the Inactive group.** (#38)
 132. **The pane retitle checks `ui.panes()` again right before `ui.open`.** That narrows the close race without removing it; #41 adds a close counter driven by `ui.close`. (#40)
+133. **Dismissed suggestions are remembered** (supersedes the last clause of 84): the newest 200, normalised like the dedupe, in the `suggestions-2` store value (a `suggestions-1` value is still read). A repeat is folded with a result telling Claude not to suggest it again, and no toast. A dim `Show dismissed (N)` row restores one to the front of the strip. (#27)
+134. **A card added while a filter hides it toasts why**: `Added #N · hidden by the filter`, plus `· Active is folded` when its group is folded. The filter is left alone. (#29)
+135. **A GitHub card created straight into Claude or Human goes after that section's last card.** The position is best effort: a refused position is logged and the card is kept. (#30)
+136. **A close counter driven by `ui.close` stops a retitle from reopening a pane** that closed during either `ui.panes()` wait. (#41)
+137. **Issue titles have no `[PRJ-AREA]` prefix** from now on: repo and board name the project, and an optional `area:` label carries the area. (orchestrator, user request)

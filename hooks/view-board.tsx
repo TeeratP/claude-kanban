@@ -14,7 +14,6 @@ import {
   readQueue,
   readPausedUntil,
   readQuickAdd,
-  readSuggestions,
   readSync,
   readTick,
   readUi,
@@ -47,7 +46,7 @@ import { changeBoard } from './pick'
 import { dropCard, shiftCard } from './reorder'
 import { openSettings } from './settings'
 import { S } from './strings'
-import { stripRows } from './suggest'
+import { readStripRows } from './suggest'
 import { retryAll } from './sync'
 import { planActions } from './toolbar'
 import type { PlacedAction } from './toolbar'
@@ -200,7 +199,7 @@ export async function handleBoardScroll(
   const board = await readBoard($)
   const { cards } = board
   // The picker and the suggestions sit between the toolbar and the list; the layout is told of them.
-  const strip = stripRows((await readSuggestions($)).length) + pickRows(board)
+  const strip = (await readStripRows($)) + pickRows(board)
   const rows = layoutBoard({
     cards,
     ui,
@@ -287,7 +286,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   // The rows above the list, which the equal-height sections give way to.
   const extraRows =
     pickRows(board) +
-    stripRows((await readSuggestions($)).length) +
+    (await readStripRows($)) +
     (filterField === null ? 0 : 1) +
     (quickAdd === null ? 0 : quickAddRows(await readQuickAdd($)))
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows, extraRows }

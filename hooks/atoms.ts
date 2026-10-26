@@ -6,6 +6,8 @@ import type {
   KanbanBoard,
   KanbanCheckRun,
   KanbanDetail,
+  KanbanDismissed,
+  KanbanGhState,
   KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
@@ -16,6 +18,7 @@ import type {
 import {
   EMPTY_ACTIVITY,
   EMPTY_BOARD,
+  EMPTY_DISMISSED,
   EMPTY_QUEUE,
   EMPTY_QUICK_ADD,
   EMPTY_SETTINGS,
@@ -57,6 +60,11 @@ const queue = atom({ plugin: 'kanban', key: 'queue' } as const, EMPTY_QUEUE, {
 const pausedUntil = atom({ plugin: 'kanban', key: 'pausedUntil' } as const, 0)
 // The signed-in GitHub login, asked for once ('' until then).
 const viewer = atom({ plugin: 'kanban', key: 'viewer' } as const, '')
+// Whether `gh` is installed, as the /config checks last found it.
+const ghInstalled = atom(
+  { plugin: 'kanban', key: 'ghInstalled' } as const,
+  'unknown' as KanbanGhState,
+)
 const activity = atom(
   { plugin: 'kanban', key: 'activity' } as const,
   EMPTY_ACTIVITY,
@@ -81,6 +89,12 @@ const suggestions = atom(
   {
     shape: 'suggestions-1',
   },
+)
+// The suggestions the person dismissed, kept so Claude is not let repeat them.
+const dismissed = atom(
+  { plugin: 'kanban', key: 'dismissed' } as const,
+  EMPTY_DISMISSED,
+  { shape: 'dismissed-1' },
 )
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
@@ -190,6 +204,17 @@ export function updateViewer(
   return update($, viewer, change)
 }
 
+export function readGhInstalled($: EngineInterface): Promise<KanbanGhState> {
+  return read($, ghInstalled)
+}
+
+export function updateGhInstalled(
+  $: EngineInterface,
+  change: (value: KanbanGhState) => KanbanGhState,
+): Promise<KanbanGhState> {
+  return update($, ghInstalled, change)
+}
+
 export function readActivity($: EngineInterface): Promise<KanbanActivity> {
   return read($, activity)
 }
@@ -234,4 +259,15 @@ export function updateSettings(
   change: (value: KanbanSettings) => KanbanSettings,
 ): Promise<KanbanSettings> {
   return update($, settings, change)
+}
+
+export function readDismissed($: EngineInterface): Promise<KanbanDismissed> {
+  return read($, dismissed)
+}
+
+export function updateDismissed(
+  $: EngineInterface,
+  change: (value: KanbanDismissed) => KanbanDismissed,
+): Promise<KanbanDismissed> {
+  return update($, dismissed, change)
 }

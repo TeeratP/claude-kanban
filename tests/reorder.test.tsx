@@ -18,6 +18,7 @@ import { boardReply, fakeProcess, issueNode, queryOf } from './fake-gh'
 import type { FakeIssue, Route } from './fake-gh'
 import { HANDED_OFF, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 import type { Files } from './fakes'
+import { GH_VERSION } from './zero'
 
 const WITH_CLIENT = ['terminal', 'desktop'] as const
 const WITHOUT_CLIENT = ['vscode', 'mobile'] as const
@@ -835,6 +836,7 @@ const POSITION = 'updateProjectV2ItemPosition'
 
 // `gh api graphql` serves the board query and takes the position mutation.
 const github = (): Route[] => [
+  GH_VERSION,
   { match: ['gh', 'auth', 'status'], reply: {} },
   {
     match: ['git', 'remote', 'get-url', 'origin'],
@@ -1094,6 +1096,7 @@ function liveGithub(issues: FakeIssue[]): Route[] {
     argv.find(part => part.startsWith(`${name}=`))?.slice(name.length + 1)
 
   return [
+    GH_VERSION,
     { match: ['gh', 'auth', 'status'], reply: {} },
     {
       match: ['git', 'remote', 'get-url', 'origin'],

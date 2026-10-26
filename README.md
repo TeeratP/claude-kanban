@@ -98,7 +98,9 @@ The filter only changes what is drawn. Everything you do acts on the cards you c
 
 ### Suggestions from Claude
 
-When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts.
+
+A dismissed suggestion is remembered (the last 200 per directory, also across restarts): if Claude suggests the same title again, nothing is added, no toast is shown, and Claude is told you dismissed it. A dim `Show dismissed (N)` row under the strip lists the newest three (`Hide dismissed (N)` shuts them again, then `+N more`); `Restore` puts one back at the top of the strip. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
 
 ### Settings
 
@@ -123,7 +125,7 @@ A project uses one backend. They do not sync with each other.
 | GitHub | Issues of one repo, laid out by one Projects-v2 board's Status field. |
 | Local | Markdown files in `.kanban/` in the working directory. |
 
-The `backend` setting picks which. You choose it on the settings screen at install, and can change it later in the plugin's settings in the config menu; changing it reloads the plugin with the new value. A stored value that is not one of the three counts as unset (`auto`).
+The `backend` setting picks which. You choose it on the settings screen at install, and can change it later in the plugin's settings in the config menu; changing it reloads the plugin with the new value. A stored value that is not one of the three counts as unset (`auto`). Choosing `github` there is refused while `gh` is not installed or not signed in, and the row says so when `gh` is missing.
 
 | `backend` | Behaviour |
 |---|---|
@@ -159,7 +161,7 @@ The board reads `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md` in the working 
 
 The repo and the project number are required; without both, `auto` uses local. Missing IDs are looked up with `gh project field-list` and `gh project view`, so the minimal CLAUDE.md is just those two lines. The matching is tolerant of wording and formatting, not of missing pieces; the repo line stays strict (a backticked `owner/name` after a `Repo:` label), because a move writes to that repo.
 
-Besides the config, `auto` needs `gh auth status` to succeed and `git remote get-url origin` to succeed. Any failure means local.
+Besides the config, `auto` needs `gh --version`, `gh auth status` and `git remote get-url origin` to succeed. Any failure means local.
 
 #### No config needed
 

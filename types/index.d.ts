@@ -60,6 +60,8 @@ export type KanbanChoice = {
   owner: string
 }
 export type KanbanBackendMode = 'auto' | 'github' | 'local'
+/** What the /config checks last learned of `gh`: installed, missing, or not known yet. */
+export type KanbanGhState = 'unknown' | 'found' | 'missing'
 export type KanbanBoard = {
   mode: KanbanBackendMode
   backend: KanbanBackendInfo | null
@@ -139,6 +141,12 @@ export type KanbanSuggestion = {
   spec: string
   why?: string
 }
+export type KanbanDismissed = {
+  /** The suggestions the person dismissed, oldest first. */
+  items: KanbanSuggestion[]
+  /** Whether the strip lists them (this session only). */
+  isShown: boolean
+}
 export type KanbanSection = {
   kind: 'handoff' | 'feedback' | 'question' | 'answer' | 'check'
   date: string
@@ -213,10 +221,12 @@ declare module 'claude-code' {
       queue: Shaped<KanbanQueue>
       pausedUntil: number
       viewer: string
+      ghInstalled: KanbanGhState
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
       settings: Shaped<KanbanSettings>
       suggestions: Shaped<KanbanSuggestion[]>
+      dismissed: Shaped<KanbanDismissed>
     }
   }
 }
