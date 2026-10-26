@@ -140,14 +140,14 @@ What is wrong, in short:
 
 | Group | Sections, top to bottom | Section ids | Labels |
 |---|---|---|---|
-| Active | Human, Claude, Backlog | `human`, `claude`, `backlog` | `Human`, `Claude`, `Backlog` |
-| Inactive | Done, Suspended, Cancelled | `done`, `suspended`, `cancelled` | `Done`, `Suspended`, `Cancelled` |
+| Active | Backlog, Human, Claude | `backlog`, `human`, `claude` | `Backlog`, `Human`, `Claude` |
+| Inactive | Done, Cancelled, Suspended | `done`, `cancelled`, `suspended` | `Done`, `Cancelled`, `Suspended` |
 
 - New column ids: `suspended`, `cancelled` (British spelling in ids and labels, matching `Cancelled` in GitHub's own UI copy; `canceled` is read as an alias everywhere input is parsed).
 - `KanbanColumn = 'human' | 'claude' | 'backlog' | 'done' | 'suspended' | 'cancelled'`.
-- `COLUMNS` (top to bottom, also the `1`–`6` move keys): `human, claude, backlog, done, suspended, cancelled`.
-- Active keeps today's order, Human first (decision 1). The request lists "backlog, human, ai" as membership, not order. It isn't flow order either, which would be backlog, ai, human. The section that needs the person stays on top, where it never scrolls off. The order is one constant (`GROUPS`), so this is cheap to flip if the user really meant it.
-- Inactive is ordered by how likely you are to go back to it: Done (recent wins, the review trail), Suspended (paused, will be resumed), Cancelled (the graveyard, last). The request lists "done, cancel, suspend"; putting Suspended before Cancelled is deliberate (decision 101).
+- `COLUMNS` (top to bottom, also the `1`–`6` move keys): `backlog, human, claude, done, cancelled, suspended`.
+- Active follows the request's order, Backlog, Human, Claude (orchestrator override, decision 100). With equal fixed heights every section of the open group is always visible, so Human never scrolls off. Snapshots and tests in this spec that show Human first must use this order.
+- Inactive follows the request's order too: Done, Cancelled, Suspended (orchestrator override, decision 101).
 - The "ai" section keeps the label **Claude**. It matches the brand color, the prompts ("Work on kanban card"), the tool values (`claude`) and the README. "AI" would be a second name for the same thing.
 
 `hooks/model.ts`:
@@ -155,8 +155,8 @@ What is wrong, in short:
 ```ts
 export type KanbanGroup = 'active' | 'inactive'          // also in types/index.d.ts
 export const GROUPS: Record<KanbanGroup, readonly KanbanColumn[]> = {
-  active: ['human', 'claude', 'backlog'],
-  inactive: ['done', 'suspended', 'cancelled'],
+  active: ['backlog', 'human', 'claude'],
+  inactive: ['done', 'cancelled', 'suspended'],
 }
 export const GROUP_ORDER: readonly KanbanGroup[] = ['active', 'inactive']
 export const COLUMNS: readonly KanbanColumn[] = [...GROUPS.active, ...GROUPS.inactive]
@@ -877,9 +877,9 @@ Each chunk ends with the three gates, plus a text render of the board at 30/44/8
 
 Numbered to continue `docs/decisions.md` (which ends at 98); append under a `## 2026-10-26 (groups and polish)` heading.
 
-99. **Two groups replace four folds: Active (Human, Claude, Backlog) and Inactive (Done, Suspended, Cancelled).** Requested by the user. One group is open at a time, and pressing the open one folds both. Section folds are gone. (#35)
-100. **Active keeps Human, Claude, Backlog top to bottom.** The request's "backlog, human, ai" names members, not order (it is not flow order either). What needs the person stays on top (decision 1). Flipping it is one constant. (#35)
-101. **Inactive is Done, Suspended, Cancelled**, ordered by how likely you are to go back: recent wins, then paused work, then the graveyard. (#35)
+99. **Two groups replace four folds: Active (Backlog, Human, Claude) and Inactive (Done, Cancelled, Suspended).** Requested by the user. One group is open at a time, and pressing the open one folds both. Section folds are gone. (#35)
+100. **Active is Backlog, Human, Claude top to bottom, the order the user listed.** The design pass proposed keeping Human on top; the orchestrator overrode it to follow the request literally. With equal fixed heights every section of the open group is always visible, so Human can no longer scroll off, which removes the reason for keeping it first. One constant (`GROUPS`) flips it. (#35)
+101. **Inactive is Done, Cancelled, Suspended, the order the user listed** (the design pass proposed Suspended before Cancelled; overridden for the same reason as 100). (#35)
 102. **The "ai" section stays labelled Claude.** It is the brand, the prompts, the tool value and the README word; "AI" would be a second name for one thing. (#35)
 103. **Equal height:** each section of the open group gets `B = max(2, floor(avail / 3))` body rows. It is filled with cards, `↑`/`↓ N more`, the empty-state line and blank filler. The 0–2 leftover rows go below everything, never to one section. There is no maximum: the height follows the pane, never the cards, so nothing jumps when a card moves. The rows the picker, filter and quick add take come off first. A pane too short for 2 rows each scrolls as a whole. (#35)
 104. **The ui atom's shape goes to `ui-4` with `openGroup: 'active'` as the default; no other shape changes.** The ui atom is never stored, so the engine's reset on a shape change is the whole migration. Other atoms and store values only gain union members and optional fields. (#35)
