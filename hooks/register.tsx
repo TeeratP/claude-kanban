@@ -14,6 +14,7 @@ import {
   applyMode,
   bootstrap,
   inBackground,
+  noteClosed,
   openBoard,
   refreshAfter,
 } from './board'
@@ -78,6 +79,13 @@ export const register: Register = (on, options) => {
     const { view } = await readUi($)
 
     return view.mode === 'board' ? renderBoard($, e) : renderDetail($, e, view)
+  })
+
+  // A close is counted before it passes on, so a retitle under way sees it.
+  on('ui.close', { id: 'kanban' }, ($, e, next) => {
+    noteClosed()
+
+    return next(e)
   })
 
   on('ui.scroll', { requestId: 'kanban' }, async ($, e, next) =>

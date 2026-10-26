@@ -221,6 +221,11 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
 
     return { value: { isPlaced: true } }
   })
+  on('ui.close', (_, e) => {
+    world.panes = world.panes.filter(id => id !== e.id)
+
+    return { value: undefined }
+  })
   on('ui.panes', async () => {
     const listed = world.panes.map(id => ({
       id,

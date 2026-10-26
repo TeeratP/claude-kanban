@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, Plugin } from 'claude-code/testing'
 
 import { row } from './board-ui'
 import { HANDED_OFF, NOW, PANE, RUN, boot, card, path } from './fakes'
@@ -212,3 +212,51 @@ test('a pane that closes while the retitle waits for the panes is not opened aga
 
   expect(titles(world.opens)).toEqual(['Kanban · 1'])
 })
+
+// The test kit's `$.ui` cannot close a pane, so a plugin of the test does, as a person's
+// close or an unload would reach the kanban hooks.
+const CLOSER: Plugin = {
+  name: 'closer',
+  register(on) {
+    on('command.run', { command: 'close-kanban' }, async $ => {
+      await $.ui.close({ id: 'kanban' })
+
+      return { text: 'closed' }
+    })
+  },
+}
+
+test(
+  'a pane that closes after the retitle asked for the panes again is not opened again',
+  { plugins: [CLOSER] },
+  async ($, on) => {
+    const { clock, world } = boot(on, cards())
+    world.panes = ['kanban']
+    await $.session.start({
+      cwd: '/',
+      surface: 'terminal',
+      isInteractive: true,
+    })
+    await clock.settle()
+    let releaseFirst = () => {}
+    world.holdPanes = new Promise<void>(resolve => {
+      releaseFirst = resolve
+    })
+
+    // The retitle for Human 2 is told the pane is open twice. The pane closes after the
+    // second list is taken, so the retitle's last look at the panes is out of date.
+    await $.tool.call({ ...MOVE, card: 3, to: 'human' })
+    let releaseSecond = () => {}
+    releaseFirst()
+    world.holdPanes = new Promise<void>(resolve => {
+      releaseSecond = resolve
+    })
+    await clock.settle()
+    await $.command.run({ ...RUN, command: 'close-kanban' })
+    releaseSecond()
+    await clock.settle()
+
+    expect(world.panes).toEqual([])
+    expect(titles(world.opens)).toEqual(['Kanban · 1'])
+  },
+)
