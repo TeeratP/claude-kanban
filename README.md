@@ -147,7 +147,7 @@ The board reads `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md` in the working 
 
 The repo and the project number are required; without both, `auto` uses local. Missing IDs are looked up with `gh project field-list` and `gh project view`, so the minimal CLAUDE.md is just those two lines. The matching is tolerant of wording and formatting, not of missing pieces; the repo line stays strict (a backticked `owner/name` after a `Repo:` label), because a move writes to that repo.
 
-Besides the config, `auto` needs `gh auth status` to succeed and `git remote get-url origin` to succeed. Any failure means local.
+Besides the config, `auto` needs `gh --version`, `gh auth status` and `git remote get-url origin` to succeed. Any failure means local.
 
 #### No config needed
 
