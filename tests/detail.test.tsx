@@ -535,7 +535,7 @@ test('a Human card at 44 columns: nav, title, actions, the handoff to review, th
     '  Need     Approve',
     '',
     'Move to    Backlog · Claude',
-    'Set aside  Done · Suspend · Cancel',
+    'Set aside  Done · Cancel · Suspend',
     '',
     'Spec text.',
     '',
@@ -798,22 +798,22 @@ for (const [status, move, aside] of [
   [
     'backlog',
     'Move to    Human · Claude',
-    'Set aside  Done · Suspend · Cancel',
+    'Set aside  Done · Cancel · Suspend',
   ],
   [
     'human',
     'Move to    Backlog · Claude',
-    'Set aside  Done · Suspend · Cancel',
+    'Set aside  Done · Cancel · Suspend',
   ],
   [
     'claude',
     'Move to    Backlog · Human',
-    'Set aside  Done · Suspend · Cancel',
+    'Set aside  Done · Cancel · Suspend',
   ],
   [
     'done',
     'Move to    Backlog · Human · Claude',
-    'Set aside  Suspend · Cancel',
+    'Set aside  Cancel · Suspend',
   ],
   [
     'suspended',
@@ -851,8 +851,8 @@ test('on a narrow pane the second row is labelled Aside', async ($, on) => {
 
   expect(await moveRows(ui, 30)).toEqual([
     'Move to Backlog · Claude',
-    'Aside   Done · Suspend',
-    '        Cancel',
+    'Aside   Done · Cancel',
+    '        Suspend',
   ])
   await ui.unmount()
 })

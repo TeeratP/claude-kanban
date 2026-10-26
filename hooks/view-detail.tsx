@@ -303,7 +303,7 @@ const SECTION_LOOK: Partial<
 }
 
 // The sections that set a card aside, in the order the row lists them.
-const SET_ASIDE = ['done', 'suspended', 'cancelled'] as const
+const SET_ASIDE = ['done', 'cancelled', 'suspended'] as const
 
 const SYNC_COLOR = {
   pending: 'warning',
