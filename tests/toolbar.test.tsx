@@ -81,9 +81,23 @@ async function failTwoMoves(
 }
 
 const HINT = ' · ↑↓ ⏎ open · m move'
-// " (auto)" gives way to the backend's name below 40 columns.
-const status = (name: string, width: number, hint: boolean) =>
-  ` ${name}${width < 40 ? '' : ' (auto)'} · updated just now${hint ? HINT : ''}`
+const SETTINGS = 's: Settings'
+
+// Row 1: the status, then `s: Settings` flush right. The button takes 12 cells,
+// so the status gives way: " (auto)" first (to the backend's name below 40
+// columns, and at 44 where the name is longer), then the age.
+const status = (name: string, width: number, hint: boolean) => {
+  const age = ' · updated just now'
+  const auto = name === 'Local' ? ' (auto)' : ''
+  const text =
+    width < 40
+      ? ` ${name}`
+      : width < 80
+        ? ` ${name}${auto}${age}`
+        : ` ${name} (auto)${age}${hint ? HINT : ''}`
+
+  return `${text.padEnd(width - SETTINGS.length)}${SETTINGS}`
+}
 
 // The key hint shows where the pane has a Client and 80 columns hold it.
 const hasHint = (surface: RenderSurface, width: number) =>
@@ -290,7 +304,11 @@ for (const surface of ['terminal', 'vscode'] as const) {
     const ui = await mount($, surface, 44)
     const list = surface === 'terminal' ? 'board' : 'grp:active'
 
-    expect((await treeKinds(ui)).slice(0, 3)).toEqual(['Text', 'refresh', list])
+    expect((await treeKinds(ui)).slice(0, 3)).toEqual([
+      'settings',
+      'refresh',
+      list,
+    ])
 
     await ui.press({ key: 'add' })
     await ui.press({ key: 'filter' })
@@ -302,7 +320,7 @@ for (const surface of ['terminal', 'vscode'] as const) {
     const kinds = await treeKinds(ui)
 
     expect(kinds.slice(0, 4)).toEqual([
-      'Text',
+      'settings',
       'refresh',
       'filter:text',
       'add:title',

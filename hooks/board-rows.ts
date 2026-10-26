@@ -48,6 +48,8 @@ export type BoardMessage =
   | { type: 'shift'; cardId: string; dir: 'up' | 'down' }
   | { type: 'toggleGroup'; group: KanbanGroup }
   | { type: 'page'; column: KanbanColumn; dir: 'up' | 'down' }
+  | { type: 'settings' }
+  | { type: 'carry'; isOn: boolean }
 
 const seg = (text: string, style: Partial<Omit<Seg, 'text'>> = {}): Seg => ({
   text,
@@ -569,7 +571,7 @@ function placeOf(value: unknown): Place | undefined {
 export function parseBoardMessage(data: unknown): BoardMessage | undefined {
   if (typeof data !== 'object' || data === null) return undefined
 
-  const { type, cardId, column, group, dir, place } = data as Record<
+  const { type, cardId, column, group, dir, place, isOn } = data as Record<
     string,
     unknown
   >
@@ -597,6 +599,10 @@ export function parseBoardMessage(data: unknown): BoardMessage | undefined {
       return isColumn(column) && (dir === 'up' || dir === 'down')
         ? { type, column, dir }
         : undefined
+    case 'settings':
+      return { type }
+    case 'carry':
+      return typeof isOn === 'boolean' ? { type, isOn } : undefined
     default:
       return undefined
   }

@@ -586,4 +586,32 @@ export const S = {
     'This turn changed files with no card in Claude. If it is backlog work, move or create its card.',
   reconcileFailed: (reason: string) =>
     `kanban: could not check the turn's cards: ${reason}`,
+
+  // #44
+  // The toolbar button and the view's title.
+  settings: 'Settings',
+  settingsShort: 'Set…',
+  settingsLoading: 'Loading…',
+  settingsNone: 'No kanban settings found. Try /config.',
+  settingsFailed: (reason: string) => `Could not read the settings: ${reason}`,
+  settingsFooter: 'Also in /config',
+  // One line under each setting, by its `userConfig` field.
+  settingHelp: {
+    backend: 'auto uses GitHub when it finds a board.',
+    claudeLimit: 'Cards Claude works at once; 0 is no limit.',
+    reconcile: 'Remind Claude to hand off at turn end.',
+  },
+  settingOn: 'on',
+  settingOff: 'off',
+  // Marks the option a setting starts with: `auto (default)`, `− 1 + (default 1)`.
+  settingDefault: ' (default)',
+  settingDefaultIs: (value: string) => ` (default ${value})`,
+  settingCurrent: '✓',
+  settingLess: '−',
+  settingMore: '+',
+  settingLocked: 'Set by your organization.',
+  settingDenied: (reason: string) => `Not changed: ${reason}`,
+  boardHeading: 'Board',
+  changeBoardLink: 'Change board',
+  boardFromConfig: 'Named in CLAUDE.md or AGENTS.md',
 }

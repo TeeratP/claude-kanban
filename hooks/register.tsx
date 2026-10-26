@@ -16,6 +16,7 @@ import { guardEdit, guardWrite } from './guard'
 import { backlogSection } from './guide'
 import { applyQueue, claudeLimit } from './queue'
 import { dropUnfinishedAdds } from './quick-add'
+import { followSettings, resumeSettings } from './settings'
 import {
   reconcileOn,
   reconcileToolCall,
@@ -32,11 +33,16 @@ import {
   renderBoard,
 } from './view-board'
 import { renderDetail } from './view-detail'
+import { renderSettings } from './view-settings'
 
 export const register: Register = (on, options) => {
   const mode = backendMode(options.backend)
   const limit = claudeLimit(options.claudeLimit)
-  const isReconciling = reconcileOn(options.reconcile)
+  let isReconciling = reconcileOn(options.reconcile)
+  // The Settings view's change counts at once; the reload it causes carries the same value.
+  followSettings((field, value) => {
+    if (field === 'reconcile') isReconciling = reconcileOn(value)
+  })
 
   // Watching Claude work on a card never alters what it watches. These stand
   // first, so they wrap the tools below and see their results.
@@ -67,6 +73,7 @@ export const register: Register = (on, options) => {
     inBackground($, resumePendingSyncs($))
     inBackground($, restoreActivity($))
     inBackground($, restoreSuggestions($))
+    inBackground($, resumeSettings($))
 
     return next(e)
   })
@@ -86,7 +93,11 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: 'kanban' }, async ($, e) => {
     const { view } = await readUi($)
 
-    return view.mode === 'board' ? renderBoard($, e) : renderDetail($, e, view)
+    if (view.mode === 'board') return renderBoard($, e)
+
+    return view.mode === 'settings'
+      ? renderSettings($, e)
+      : renderDetail($, e, view)
   })
 
   // A close is counted before it passes on, so a retitle under way sees it.
