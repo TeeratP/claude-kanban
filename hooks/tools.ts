@@ -21,6 +21,7 @@ import {
   COLUMNS,
   errorMessage,
   isColumn,
+  isOrdered,
   isPendingId,
   parseColumn,
   withCard,
@@ -46,6 +47,12 @@ const CREATE_IN: readonly KanbanColumn[] = ['claude', 'backlog', 'done']
 const SET_ASIDE: readonly KanbanColumn[] = ['suspended', 'cancelled']
 
 const isSetAside = (card: KanbanCard) => SET_ASIDE.includes(card.column)
+
+// The card a new one goes after in a section: its last, or null when it has none.
+const lastIn = (cards: readonly KanbanCard[], column: KanbanColumn) =>
+  sectionList(cards, column)
+    .filter(one => !isPendingId(one.id))
+    .at(-1) ?? null
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -369,7 +376,14 @@ async function create(
   if ('deny' in loaded) return loaded
 
   try {
-    const card = await createCard($, loaded.info, title, spec, column)
+    const card = await createCard(
+      $,
+      loaded.info,
+      title,
+      spec,
+      column,
+      isOrdered(column) ? lastIn(loaded.board.cards, column) : undefined,
+    )
     // Shown at once; the reload behind it settles what a load in flight missed.
     await setBoard($, board => ({
       ...board,
