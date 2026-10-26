@@ -60,6 +60,8 @@ export type KanbanChoice = {
   owner: string
 }
 export type KanbanBackendMode = 'auto' | 'github' | 'local'
+/** What the /config checks last learned of `gh`: installed, missing, or not known yet. */
+export type KanbanGhState = 'unknown' | 'found' | 'missing'
 export type KanbanBoard = {
   mode: KanbanBackendMode
   backend: KanbanBackendInfo | null
@@ -191,6 +193,7 @@ declare module 'claude-code' {
       queue: Shaped<KanbanQueue>
       pausedUntil: number
       viewer: string
+      ghInstalled: KanbanGhState
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
       suggestions: Shaped<KanbanSuggestion[]>

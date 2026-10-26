@@ -109,7 +109,7 @@ A project uses one backend. They do not sync with each other.
 | GitHub | Issues of one repo, laid out by one Projects-v2 board's Status field. |
 | Local | Markdown files in `.kanban/` in the working directory. |
 
-The `backend` setting picks which. You choose it on the settings screen at install, and can change it later in the plugin's settings in the config menu; changing it reloads the plugin with the new value. A stored value that is not one of the three counts as unset (`auto`).
+The `backend` setting picks which. You choose it on the settings screen at install, and can change it later in the plugin's settings in the config menu; changing it reloads the plugin with the new value. A stored value that is not one of the three counts as unset (`auto`). Choosing `github` there is refused while `gh` is not installed or not signed in, and the row says so when `gh` is missing.
 
 | `backend` | Behaviour |
 |---|---|
