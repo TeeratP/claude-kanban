@@ -5,7 +5,8 @@ import { S } from './strings'
 
 // Every Row is exactly one terminal row, so a Row's index is its tree row.
 export type Row =
-  | { kind: 'toolbar' }
+  // The status text, then the buttons.
+  | { kind: 'toolbar'; line: 'status' | 'actions' }
   | { kind: 'header'; column: KanbanColumn; shown: number; total: number }
   | { kind: 'more'; column: KanbanColumn; dir: 'up' | 'down'; n: number }
   | { kind: 'card'; column: KanbanColumn; card: KanbanCard }
@@ -15,6 +16,9 @@ export type Row =
   | { kind: 'note' }
   // A line under the note on how to use GitHub.
   | { kind: 'hint'; line: number }
+
+/** Rows the toolbar takes: the status, then the actions. */
+export const TOOLBAR_ROWS = 2
 
 export type LayoutInput = {
   cards: readonly KanbanCard[]
@@ -144,7 +148,9 @@ export function capFor(
 ): number {
   const sections = Math.max(1, openSections)
   const cap =
-    Math.floor((bodyRows - 1 - COLUMNS.length - reserve) / sections) - 2
+    Math.floor(
+      (bodyRows - TOOLBAR_ROWS - COLUMNS.length - reserve) / sections,
+    ) - 2
 
   return Math.min(5, Math.max(1, cap))
 }
@@ -166,7 +172,10 @@ export function layoutBoard({
     openCount(ui),
     detailReserve(matched, ui, details),
   )
-  const rows: Row[] = [{ kind: 'toolbar' }]
+  const rows: Row[] = [
+    { kind: 'toolbar', line: 'status' },
+    { kind: 'toolbar', line: 'actions' },
+  ]
 
   for (const column of COLUMNS) {
     const list = sectionList(matched, column)
@@ -201,7 +210,7 @@ export function layoutBoard({
   return rows
 }
 
-/** The column a tree row belongs to; undefined for the toolbar or past the end. */
+/** The column a tree row belongs to; undefined for the toolbar rows or past the end. */
 export function hitTest(
   rows: readonly Row[],
   treeRow: number,

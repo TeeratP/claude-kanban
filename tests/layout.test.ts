@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { KanbanCard, KanbanColumn, KanbanUi } from '../types'
 import {
+  TOOLBAR_ROWS,
   capFor,
   cardLine,
   clampOffset,
@@ -57,6 +58,7 @@ test('columns run Human, Claude, Backlog, Done under the toolbar', () => {
 
   expect(kinds(rows)).toEqual([
     'toolbar',
+    'toolbar',
     'header:human',
     'card:human',
     'header:claude',
@@ -66,6 +68,20 @@ test('columns run Human, Claude, Backlog, Done under the toolbar', () => {
     'header:done',
     'card:done',
   ])
+})
+
+test('the toolbar is two rows, the status then the actions, so a row index is its tree row', () => {
+  const rows = layoutBoard({
+    cards: many('human', 1),
+    ui: open(),
+    bodyRows: 30,
+  })
+
+  expect(rows.slice(0, 2)).toEqual([
+    { kind: 'toolbar', line: 'status' },
+    { kind: 'toolbar', line: 'actions' },
+  ])
+  expect(rows[TOOLBAR_ROWS]).toMatchObject({ kind: 'header', column: 'human' })
 })
 
 test('a collapsed section is its header alone, with the count', () => {
@@ -137,7 +153,8 @@ test('an empty section says so', () => {
     bodyRows: 30,
   })
 
-  expect(kinds(rows).slice(0, 3)).toEqual([
+  expect(kinds(rows).slice(0, 4)).toEqual([
+    'toolbar',
     'toolbar',
     'header:human',
     'empty:human',
@@ -202,6 +219,8 @@ test('Done lists its ten newest and counts all of them', () => {
 
 test('capFor shrinks with the body and the tree always fits it', () => {
   expect(capFor(30, 3)).toBe(5)
+  // The toolbar's two rows are kept back: one more and the tree would be 27 rows.
+  expect(capFor(26, 3)).toBe(4)
   expect(capFor(14, 3)).toBe(1)
   expect(capFor(8, 3)).toBe(1)
 
@@ -211,7 +230,7 @@ test('capFor shrinks with the body and the tree always fits it', () => {
     ...many('backlog', 20, 200),
     ...many('done', 20, 300),
   ]
-  for (const bodyRows of [20, 24, 30, 40]) {
+  for (const bodyRows of [20, 24, 26, 30, 40]) {
     for (const collapsed of [{}, { done: true }, { human: true, done: true }]) {
       const rows = layoutBoard({ cards, ui: open(collapsed), bodyRows })
 
@@ -258,18 +277,19 @@ test('a card row drops the age when the title would have no room', () => {
   expect(line.age).toBe('')
 })
 
-test('hitTest maps a tree row to its column, and the toolbar to none', () => {
+test('hitTest maps a tree row to its column, and the toolbar rows to none', () => {
   const rows = layoutBoard({
     cards: [...many('human', 1), ...many('backlog', 8, 10)],
     ui: open({ done: true }),
     bodyRows: 30,
   })
-  // 0 toolbar, 1 Human header, 2 its card, 3 Claude header, 4 (empty), 5 Backlog header
+  // 0-1 toolbar, 2 Human header, 3 its card, 4 Claude header, 5 (empty), 6 Backlog header
   expect(hitTest(rows, 0)).toBeUndefined()
-  expect(hitTest(rows, 1)).toBe('human')
+  expect(hitTest(rows, 1)).toBeUndefined()
   expect(hitTest(rows, 2)).toBe('human')
-  expect(hitTest(rows, 4)).toBe('claude')
-  expect(hitTest(rows, 6)).toBe('backlog')
+  expect(hitTest(rows, 3)).toBe('human')
+  expect(hitTest(rows, 5)).toBe('claude')
+  expect(hitTest(rows, 7)).toBe('backlog')
   expect(hitTest(rows, rows.length - 1)).toBe('done')
   expect(hitTest(rows, rows.length)).toBeUndefined()
   expect(hitTest(rows, -1)).toBeUndefined()

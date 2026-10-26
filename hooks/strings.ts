@@ -50,7 +50,7 @@ export const S = {
   more: (dir: 'up' | 'down', n: number) =>
     `  ${dir === 'up' ? '↑' : '↓'} ${n} more`,
 
-  refresh: '↻',
+  refresh: 'Refresh',
   loading: 'loading…',
   updated: (age: string) => `updated ${age}`,
   expand: '▸',
@@ -342,7 +342,7 @@ export const S = {
   reorderLabel: 'Move in section:',
 
   // #23
-  add: '+',
+  add: 'New',
   addTitleLabel: 'New card',
   addTitlePlaceholder: 'New card title',
   addDetailsLabel: 'Details',
@@ -379,7 +379,7 @@ export const S = {
     `kanban: could not save the suggestions: ${reason}`,
 
   // #25
-  filter: '🔍',
+  filter: 'Find',
   filterLabel: 'Filter',
   filterPlaceholder: 'words, #12, label:ai, @claude',
   filterSubmit: 'done',
@@ -426,4 +426,7 @@ export const S = {
     `no GitHub Project is linked to ${repo}: link one on GitHub, or add Repo and Project board lines to CLAUDE.md or AGENTS.md`,
   githubPick: (repo: string) =>
     `Several GitHub boards fit ${repo}: the person must pick one in the kanban pane`,
+
+  // #34
+  filterQuery: (query: string) => `Find "${query}"`,
 }

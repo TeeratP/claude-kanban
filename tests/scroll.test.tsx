@@ -18,11 +18,11 @@ const board = () => {
 }
 
 // Tree rows with 7 Human and 8 Backlog cards, Done collapsed, 30 body rows:
-// 0 toolbar, 1 Human header, 2-6 its cards, 7 its more row, 8 Claude header,
-// 9 (empty), 10 Backlog header, 11-15 its cards, 16 its more row, 17 Done header.
-const HUMAN_HEADER = 1
-const BACKLOG_CARD = 11
-const DONE_HEADER = 17
+// 0-1 toolbar, 2 Human header, 3-7 its cards, 8 its more row, 9 Claude header,
+// 10 (empty), 11 Backlog header, 12-16 its cards, 17 its more row, 18 Done header.
+const HUMAN_HEADER = 2
+const BACKLOG_CARD = 12
+const DONE_HEADER = 18
 
 async function start($: Engine, on: On) {
   const world = boot(on, board())
@@ -56,6 +56,26 @@ test('the wheel over a section scrolls that section and nothing else', async ($,
   await ui.unmount()
 })
 
+test("the wheel finds a section by its tree row, under the toolbar's two rows", async ($, on) => {
+  const { ui, scrolls } = await start($, on)
+
+  // Row 9 is Claude's header and Claude is empty: the engine's. One row up is
+  // Human's more row, and 17 is Backlog's.
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 9 } })
+  expect(scrolls).toHaveLength(1)
+  expect(await row(ui, 'more:human:up')).toBeUndefined()
+
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 8 } })
+  expect(scrolls).toHaveLength(1)
+  expect((await row(ui, 'more:human:up'))?.text).toBe('  ↑ 1 more')
+  expect(await row(ui, 'more:backlog:up')).toBeUndefined()
+
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 17 } })
+  expect(scrolls).toHaveLength(1)
+  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+  await ui.unmount()
+})
+
 test('the wheel stops at the ends of the list', async ($, on) => {
   const { ui } = await start($, on)
   const pointer = { column: 3, row: BACKLOG_CARD }
@@ -84,9 +104,10 @@ test('the wheel over a header scrolls its section too', async ($, on) => {
   await ui.unmount()
 })
 
-test("the wheel over the toolbar, a collapsed section or nothing is the engine's", async ($, on) => {
+test("the wheel over the toolbar's two rows, a collapsed section or nothing is the engine's", async ($, on) => {
   const { ui, scrolls } = await start($, on)
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 0 } })
+  await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 1 } })
   await $.ui.scroll({
     ...SCROLL,
     by: 1,
@@ -94,7 +115,7 @@ test("the wheel over the toolbar, a collapsed section or nothing is the engine's
   })
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 29 } })
 
-  expect(scrolls).toHaveLength(3)
+  expect(scrolls).toHaveLength(4)
   expect(await row(ui, 'more:human:up')).toBeUndefined()
   await ui.unmount()
 })
@@ -164,8 +185,8 @@ test("at the end of a section the wheel is the engine's, so a short pane can scr
     'card:md:0001-h',
     'card:md:0011-b',
   ])
-  // 0 toolbar, 1 Human, 2 its card, 3 its more row, 4 Claude, 5 (empty), 6 Backlog.
-  const pointer = { column: 3, row: 6 }
+  // 0-1 toolbar, 2 Human, 3 its card, 4 its more row, 5 Claude, 6 (empty), 7 Backlog.
+  const pointer = { column: 3, row: 7 }
   const wheel = (by: number) =>
     $.ui.scroll({ ...SCROLL, bodyRows: 16, by, pointer })
 

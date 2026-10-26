@@ -332,7 +332,7 @@ Register each with `isDeferred: false`. Results `{ result: string }` (d.ts:13566
 ## 6. Layout and scroll hit-testing (`layout.ts`, pure)
 ```ts
 export type Row =
-  | { kind: 'toolbar' }
+  | { kind: 'toolbar'; line: 'status' | 'actions' }
   | { kind: 'header'; column: KanbanColumn; shown: number; total: number }
   | { kind: 'more'; column: KanbanColumn; dir: 'up' | 'down'; n: number }
   | { kind: 'card'; column: KanbanColumn; card: KanbanCard }
@@ -344,16 +344,16 @@ export function clampOffset(offset: number, len: number, cap: number): number
 export function layoutBoard(input: LayoutInput): Row[]
 export function hitTest(rows: Row[], treeRow: number): KanbanColumn | undefined
 ```
-- `capFor`: `clamp(floor((bodyRows - 1 - 4) / k) - 2, 1, 5)`, k = expanded sections, so the tree fits `bodyRows` and the engine window never moves in board view.
+- `capFor`: `clamp(floor((bodyRows - 2 - 4) / k) - 2, 1, 5)` (2 = the toolbar's rows), k = expanded sections, so the tree fits `bodyRows` and the engine window never moves in board view.
 - `sectionList`: sorted list for a column; Done sort+slice(10) here.
 - `clampOffset`: `[0, max(0, len - cap)]`.
-- `layoutBoard`: `toolbar`, then per column a `header`; if expanded: `empty`, or `more↑` (offset>0), up to `cap` `card`s, `more↓` (rows remain). No blank rows; every Row = exactly one terminal row.
-- `hitTest`: `rows[treeRow]?.column` for header/card/more/empty; `undefined` for toolbar / out of range.
+- `layoutBoard`: two `toolbar` rows (status, actions), then per column a `header`; if expanded: `empty`, or `more↑` (offset>0), up to `cap` `card`s, `more↓` (rows remain). No blank rows; every Row = exactly one terminal row.
+- `hitTest`: `rows[treeRow]?.column` for header/card/more/empty; `undefined` for the toolbar rows / out of range.
 
 One-row guarantee: each row is a single `Button plain`, or a row `Box` with a Button and Text. Pre-truncate strings to `bodyColumns` via `truncate(str, width)` + `cellWidth()` (CJK/emoji = 2). Every Text `wrap="truncate-end"`. Card row: `left = '  #' + n + ' ' + (tag ? tagShort + ' ' : '')`, `right = ' ' + glyph + ' ' + age`, `title = truncate(title, bodyColumns - w(left) - w(right))`, padded so age aligns right; if title width < 4, drop age.
 
 `renderBoard` reads boardAtom, uiAtom, syncAtom, tickAtom, plus `e.props.bodyColumns` and `e.props.scroll` (Pane props d.ts:10877, SiteScroll d.ts:12562). Records `lastBody = { rows, offset, columns }` in a module variable (hit-test cache only, default `{rows: 24, offset: 0}`). Rows map 1:1 to elements:
-- toolbar: `<Box flexDirection="row"><Button key="refresh" plain onPress={() => refresh($)}>↻</Button><Text dimColor wrap="truncate-end"> {backendLabel} · {ago}{error ? ' · ' + error : ''}</Text>{failed > 0 && <Button key="retry-all" plain …><Text color="error">✕{failed} retry</Text></Button>}</Box>`
+- toolbar, row 1 (status): `<Text dimColor wrap="truncate-end"> {backendLabel} · {ago}{error ? ' · ' + error : ''}</Text>` (a `Button key="source"` around it when the board was detected, #33). Row 2 (actions, `hooks/toolbar.ts`): `<Box flexDirection="row">` of plain Buttons `r: Refresh`, `n: New`, `f: Find` (the engine draws a plain Button's hotkey as `key: label`), 3 spaces of Text apart; a filter makes it `f: Find "query…"` + `✕`; failed moves add `✕N retry` last. Too narrow: the query is cut, then the spacing tightens, then Refresh and New are dropped. On mobile only `r: Refresh` (and the retry).
 - header: `<Button key={'hdr:' + col} plain onPress={toggleCollapse}>{collapsed ? '▸' : '▾'} <Text bold>{S.col[col]}</Text> <Text dimColor>{countLabel}</Text></Button>`
 - more: `<Button key={'more:' + col + ':' + dir} plain onPress={() => shift(col, ±cap)}><Text dimColor>  {dir === 'up' ? '↑' : '↓'} {n} more</Text></Button>`
 - card: `<Button key={'card:' + card.id} plain onPress={() => openDetail($, card.id)}>{left}{title}<Text color={glyphColor} dimColor={dim}>{glyph}</Text><Text dimColor> {age}</Text></Button>` (Buttons hold strings and Text only; unique `key` each).
