@@ -1,6 +1,11 @@
 import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
 
-import type { KanbanCard, KanbanColumn, KanbanSync } from '../types'
+import type {
+  KanbanBackendInfo,
+  KanbanCard,
+  KanbanColumn,
+  KanbanSync,
+} from '../types'
 import { detailIds, detailSegs, segProps } from './activity-view'
 import {
   readActivity,
@@ -34,12 +39,14 @@ import { TICK_BRIGHT_MS, ageLabel, cellWidth, oneLine, truncate } from './model'
 import { headerCount, queuePlace, queueView } from './queue'
 import { toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
+import { changeBoard } from './pick'
 import { dropCard, shiftCard } from './reorder'
 import { S } from './strings'
 import { stripRows } from './suggest'
 import { retryAll } from './sync'
 import { openDetail } from './view-detail'
 import { clearFilter, renderFilter, toggleFilter } from './view-filter'
+import { pickRows, renderPicker } from './view-pick'
 import { renderQuickAdd } from './view-quick-add'
 import { renderSuggestions } from './view-suggest'
 
@@ -61,6 +68,16 @@ function glyphOf(entry: KanbanSync, tick: number, now: number) {
     case 'failed':
       return { text: S.failedGlyph, color: 'error', dim: false }
   }
+}
+
+// Why a local board has no GitHub behind it, when the backend knows.
+function localNote(info: KanbanBackendInfo | null): string | undefined {
+  if (info?.kind !== 'local') return undefined
+  if (info.isConfigUnclear === true) return S.configUnclear
+
+  return info.noBoardFor === undefined
+    ? undefined
+    : S.noGithubBoard(info.noBoardFor)
 }
 
 // Under a filter the press turns the section as drawn, which the filter may have
@@ -157,15 +174,16 @@ export async function handleBoardScroll(
   // An open form or filter field pushes the list down by rows the layout does not know.
   if ((await readQuickAdd($)).isOpen || ui.isFilterOpen) return false
 
-  const { cards } = await readBoard($)
+  const board = await readBoard($)
+  const { cards } = board
   const rows = layoutBoard({
     cards,
     ui,
     bodyRows: e.bodyRows,
     details: detailIds(cards, await readActivity($), (await readQueue($)).held),
   })
-  // The suggestions sit between the toolbar and the list, outside the layout.
-  const strip = stripRows((await readSuggestions($)).length)
+  // The picker and the suggestions sit between the toolbar and the list, outside the layout.
+  const strip = stripRows((await readSuggestions($)).length) + pickRows(board)
   const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
   if (column === undefined || applyFilter(cards, ui).ui.collapsed[column]) {
     return false
@@ -242,6 +260,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const filterField = await renderFilter($, e)
   const quickAdd = await renderQuickAdd($, e)
   const suggested = await renderSuggestions($, e)
+  const picker = renderPicker($, e, board)
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
 
   const rows = layoutBoard({
@@ -261,12 +280,16 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     switch (row.kind) {
       case 'toolbar': {
         const backendName = S.backendLabel(board.mode, board.backend?.kind)
-        const isUnclear =
-          board.backend?.kind === 'local' &&
-          board.backend.isConfigUnclear === true
-        const label = isUnclear
-          ? `${backendName} · ${S.configUnclear}`
-          : backendName
+        const note = localNote(board.backend)
+        const isNoted = note !== undefined
+        const detected =
+          board.backend?.kind === 'github' && board.backend.isDetected === true
+            ? board.backend
+            : undefined
+        const boardName =
+          detected?.title === undefined
+            ? ''
+            : S.boardName(detected.projectNumber, detected.title)
         const status =
           board.error ??
           (board.isLoading
@@ -291,17 +314,31 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         const room = spare - cellWidth(query)
         const join = (parts: string[]) =>
           ` ${parts.filter(part => part !== '').join(' · ')}`
+        // A detected board's name takes what the backend's name and the status leave,
+        // cut to fit; with too little room left it is left out.
+        const nameRoom =
+          room - (cellWidth(join([`${backendName} · X`, status])) - 1)
+        const shownName =
+          boardName === '' || nameRoom < cellWidth('#00 …')
+            ? ''
+            : truncate(boardName, nameRoom)
+        const label =
+          note !== undefined
+            ? `${backendName} · ${note}`
+            : shownName === ''
+              ? backendName
+              : `${backendName} · ${shownName}`
         // The key hint shows whole or not at all: a cut hint is noise.
         const withHint = join([label, status, S.keyHint])
         // A status that fits only without the backend's name is shown whole, not cut;
-        // the note that the board config was not understood is never dropped for it.
+        // a note on why the board is local is never dropped for it.
         const whole = join([label, status])
         const bare = join([status])
         const text =
           hasClient && board.error === undefined && cellWidth(withHint) <= room
             ? withHint
             : cellWidth(whole) > room &&
-                !isUnclear &&
+                !isNoted &&
                 status !== '' &&
                 cellWidth(bare) <= room
               ? bare
@@ -341,12 +378,23 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
                 {S.filterClear}
               </Button>
             )}
-            {board.error === undefined ? (
-              <Text dimColor wrap="truncate-end">
+            {board.error !== undefined ? (
+              <Text color="error" wrap="truncate-end">
                 {text}
               </Text>
+            ) : detected !== undefined ? (
+              <Button
+                key="source"
+                plain
+                dimColor
+                onPress={() => changeBoard($)}
+              >
+                <Text dimColor wrap="truncate-end">
+                  {text}
+                </Text>
+              </Button>
             ) : (
-              <Text color="error" wrap="truncate-end">
+              <Text dimColor wrap="truncate-end">
                 {text}
               </Text>
             )}
@@ -467,6 +515,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box flexDirection="column">
         {rows.slice(0, 1).map(draw)}
+        {picker}
         {filterField}
         {quickAdd}
         {suggested}
@@ -497,6 +546,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   return (
     <Box flexDirection="column">
       {draw({ kind: 'toolbar' })}
+      {picker}
       {filterField}
       {quickAdd}
       {suggested}

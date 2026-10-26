@@ -9,6 +9,8 @@ import type {
 } from '../types'
 import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
+import { choicesOf, forgetDetected } from './detect'
+import { isRateLimited } from './github'
 import {
   EMPTY_BOARD,
   PANE,
@@ -18,11 +20,13 @@ import {
 } from './model'
 import { placeIn } from './order'
 import { releaseQueued } from './queue'
-import { pauseLeft } from './rate-limit'
+import { limitHit, pauseLeft } from './rate-limit'
 import { S } from './strings'
 
 const POLL_MS = 45_000
 const CACHE_SHAPE = 'cache-2'
+// A load that says the project is gone: a detected board was deleted or moved.
+const BOARD_GONE = /not found|could not resolve/i
 
 // What the pane opens with before the first load of a session answers.
 type BoardCache = {
@@ -254,9 +258,13 @@ async function showCached($: EngineInterface) {
         ? {
             ...board,
             // A saved local backend is not kept: the config may name a board by now.
+            // Nor is a detected board: detection checks it against the origin.
             backend:
               board.backend ??
-              (cached.backend.kind === 'github' ? cached.backend : null),
+              (cached.backend.kind === 'github' &&
+              cached.backend.isDetected !== true
+                ? cached.backend
+                : null),
             cards: cached.cards,
             isLoading: true,
           }
@@ -298,12 +306,55 @@ export async function ensureBackend(
   $: EngineInterface,
 ): Promise<KanbanBackendInfo> {
   const { backend, mode } = await readBoard($)
-  if (backend !== null) return backend
 
-  const info = await detectBackend($, mode)
-  await setBoard($, board => ({ ...board, backend: info }))
+  return backend === null ? detectInto($, mode) : backend
+}
 
-  return info
+// Detects the backend and puts it on the board, or the boards to pick from when detection asks.
+async function detectInto(
+  $: EngineInterface,
+  mode: KanbanBackendMode,
+): Promise<KanbanBackendInfo> {
+  try {
+    const info = await detectBackend($, mode)
+    await setBoard($, ({ pick: _done, ...board }) => ({
+      ...board,
+      backend: info,
+    }))
+
+    return info
+  } catch (error) {
+    // Boards that tie wait for the person's pick, shown in the pane.
+    const choices = choicesOf(error)
+    await setBoard($, ({ pick: _old, ...board }) =>
+      choices === undefined ? board : { ...board, pick: choices },
+    )
+    if (isRateLimited(error)) throw await limitHit($, error)
+
+    throw error
+  }
+}
+
+// Loads the cards. A board found by detection that is gone is looked for again, once.
+async function loadOrRedetect(
+  $: EngineInterface,
+  info: KanbanBackendInfo,
+): Promise<KanbanCard[]> {
+  try {
+    return await loadCards($, info)
+  } catch (error) {
+    const isGone =
+      info.kind === 'github' &&
+      info.isDetected === true &&
+      BOARD_GONE.test(errorMessage(error))
+    if (!isGone) throw error
+
+    await forgetDetected($)
+    // The board just written, not the read this dispatch began with.
+    const { mode } = await setBoard($, board => ({ ...board, backend: null }))
+
+    return loadCards($, await detectInto($, mode))
+  }
 }
 
 /**
@@ -324,7 +375,7 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     const info = await ensureBackend($)
     const confirmed = new Set<string>()
     confirmedDuringLoad = confirmed
-    const remote = await loadCards($, info)
+    const remote = await loadOrRedetect($, info)
     const sync = await readSync($)
     const fetchedAt = await $.clock.now()
 
@@ -386,11 +437,13 @@ export function startPolling($: EngineInterface): void {
 
 // A tick reloads while the pane is open and ends the polling once it is not;
 // opening the pane again starts it. While the GitHub rate limit pauses polling,
-// ticks pass without a load.
+// or boards wait for the person's pick, ticks pass without a load.
 async function pollOnce($: EngineInterface): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) {
-    if ((await pauseLeft($)) === 0) await refresh($)
+    const { backend, pick } = await readBoard($)
+    const isPicking = backend === null && pick !== undefined
+    if (!isPicking && (await pauseLeft($)) === 0) await refresh($)
 
     return
   }

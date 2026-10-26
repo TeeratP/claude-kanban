@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type { KanbanCard, KanbanGithub } from '../types'
 import { readPausedUntil, updatePausedUntil } from './atoms'
 import { isRateLimited, loadGithub } from './github'
+import type { RateLimitedError } from './github'
 import { errorMessage } from './model'
 import { S } from './strings'
 
@@ -53,11 +54,19 @@ export async function loadGithubPaced(
   } catch (error) {
     if (!isRateLimited(error)) throw error
 
-    const now = await $.clock.now()
-    const until = pauseUntil(now, error.resetAt)
-    await updatePausedUntil($, () => until)
-    $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
-
-    throw new Error(S.rateLimitHit(minutesLeft(until - now)))
+    throw await limitHit($, error)
   }
+}
+
+/** Pauses polling until the rate limit lifts; resolves the error to show for it. */
+export async function limitHit(
+  $: EngineInterface,
+  error: RateLimitedError,
+): Promise<Error> {
+  const now = await $.clock.now()
+  const until = pauseUntil(now, error.resetAt)
+  await updatePausedUntil($, () => until)
+  $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+
+  return new Error(S.rateLimitHit(minutesLeft(until - now)))
 }

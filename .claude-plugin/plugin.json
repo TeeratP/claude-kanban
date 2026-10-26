@@ -10,7 +10,7 @@
     "backend": {
       "type": "string",
       "title": "Card backend",
-      "description": "Where cards live. auto: GitHub when CLAUDE.md or AGENTS.md names a repo and project board and gh is signed in, otherwise local .kanban/ files. github: GitHub only, a failing check is shown instead of falling back. local: always .kanban/ files.",
+      "description": "Where cards live. auto: GitHub when CLAUDE.md or AGENTS.md names a repo and project board, or else when git and gh find a GitHub Project linked to the origin remote's repo (no config needed; press the board name in the toolbar to change it), and gh is signed in; otherwise local .kanban/ files. github: GitHub only, a failing check is shown instead of falling back. local: always .kanban/ files.",
       "options": ["auto", "github", "local"],
       "default": "auto"
     },

@@ -27,6 +27,13 @@ export type ParsedClaudeMd = {
 }
 
 const REQUIRED_OPTIONS = ['backlog', 'inProgress', 'inReview', 'done'] as const
+const OPTION_KEYS = [
+  'backlog',
+  'ready',
+  'inProgress',
+  'inReview',
+  'done',
+] as const
 
 // Status option names as the board spells them, by lower-case name.
 const OPTION_KEY: Record<string, OptionKey> = {
@@ -35,6 +42,30 @@ const OPTION_KEY: Record<string, OptionKey> = {
   'in progress': 'inProgress',
   'in review': 'inReview',
   done: 'done',
+}
+
+// The names a board may give a Status option, best first (lower case). Ready
+// stands in for Backlog on a board that has neither Backlog nor Todo.
+const OPTION_NAMES: Record<OptionKey, readonly string[]> = {
+  backlog: ['backlog', 'todo', 'to do', 'ready'],
+  ready: ['ready'],
+  inProgress: ['in progress', 'doing'],
+  inReview: ['in review', 'review'],
+  done: ['done', 'closed'],
+}
+
+// The option a Status name stands for, by lower-case name.
+const KEY_OF_NAME: Record<string, OptionKey> = {
+  backlog: 'backlog',
+  todo: 'backlog',
+  'to do': 'backlog',
+  ready: 'ready',
+  'in progress': 'inProgress',
+  doing: 'inProgress',
+  'in review': 'inReview',
+  review: 'inReview',
+  done: 'done',
+  closed: 'done',
 }
 
 const STATUS_NAME: Record<OptionKey, string> = {
@@ -113,7 +144,9 @@ export function parseClaudeMd(text: string): ParsedClaudeMd | null {
 
 const AI_LABEL = 'ai'
 
-const isHumanLabel = (label: string) => label.toLowerCase() === 'human'
+const HUMAN_LABEL = 'human'
+
+const isHumanLabel = (label: string) => label.toLowerCase() === HUMAN_LABEL
 const isAiLabel = (label: string) => label.toLowerCase() === AI_LABEL
 
 /** The column a GitHub card sits in: who holds the ball, not who owns the issue. */
@@ -123,14 +156,15 @@ export function columnOf(
   isClosed: boolean,
 ): { column: KanbanColumn; tag?: KanbanTag } {
   const name = (status ?? '').trim().toLowerCase()
-  if (name === 'done' || isClosed) return { column: 'done' }
-  if (name === '' || name === 'backlog' || name === 'ready') {
+  const key = KEY_OF_NAME[name]
+  if (key === 'done' || isClosed) return { column: 'done' }
+  if (name === '' || key === 'backlog' || key === 'ready') {
     return { column: 'backlog' }
   }
-  if (name === 'in review') return { column: 'human', tag: 'review' }
+  if (key === 'inReview') return { column: 'human', tag: 'review' }
   if (labels.some(isHumanLabel)) return { column: 'human', tag: 'human' }
 
-  return { column: name === 'in progress' ? 'claude' : 'backlog' }
+  return { column: key === 'inProgress' ? 'claude' : 'backlog' }
 }
 
 const STATUS_OF: Record<KanbanColumn, string> = {
@@ -142,9 +176,13 @@ const STATUS_OF: Record<KanbanColumn, string> = {
 
 function isParked(card: KanbanCard): boolean {
   const name = (card.status ?? '').trim().toLowerCase()
+  const key = KEY_OF_NAME[name]
 
-  return name === '' || name === 'backlog' || name === 'ready'
+  return name === '' || key === 'backlog' || key === 'ready'
 }
+
+const isInProgress = (card: KanbanCard) =>
+  KEY_OF_NAME[(card.status ?? '').trim().toLowerCase()] === 'inProgress'
 
 // Read back after `gh issue close`, which can fail without an error.
 const verifyClosed = (issue: string, repo: string) => [
@@ -197,9 +235,19 @@ export function planMove(
       ...(isParked(card) ? [] : [itemEdit(cfg.options.backlog)]),
     ]
   }
-  if (to === 'human') return [...reopen, itemEdit(cfg.options.inReview)]
+  const edit = ['gh', 'issue', 'edit', issue, '--repo', cfg.repo]
+  if (to === 'human') {
+    const review = cfg.options.inReview
+    if (review !== undefined) return [...reopen, itemEdit(review)]
+
+    // A board without In review: Human is the label on a card in progress.
+    return [
+      ...reopen,
+      [...edit, '--add-label', HUMAN_LABEL],
+      ...(isInProgress(card) ? [] : [itemEdit(cfg.options.inProgress)]),
+    ]
+  }
   if (to === 'claude') {
-    const edit = ['gh', 'issue', 'edit', issue, '--repo', cfg.repo]
     const human = card.labels?.find(isHumanLabel)
 
     // The label first: a failure there leaves the Status as it was.
@@ -275,7 +323,8 @@ export async function runCommand(
   return run.stdout
 }
 
-function parseJson(text: string, what: string): unknown {
+/** Parses a `gh` reply; a text that is not JSON throws, naming `what` was asked for. */
+export function parseJson(text: string, what: string): unknown {
   try {
     return JSON.parse(text)
   } catch (error) {
@@ -283,13 +332,15 @@ function parseJson(text: string, what: string): unknown {
   }
 }
 
-type Rec = Record<string, unknown>
+export type Rec = Record<string, unknown>
 
-function isRec(value: unknown): value is Rec {
+/** Whether a parsed JSON value is an object (not an array, not null). */
+export function isRec(value: unknown): value is Rec {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const str = (value: unknown) => (typeof value === 'string' ? value : '')
+/** A string field of parsed JSON; '' when it is anything else. */
+export const str = (value: unknown) => (typeof value === 'string' ? value : '')
 
 function listOf(value: unknown, what: string): Rec[] {
   if (!Array.isArray(value)) throw new Error(S.ghBadJson(what, ''))
@@ -303,7 +354,11 @@ export type RateLimit = { cost: number; remaining: number; resetAt: number }
 /** What a load found: the cards, and the rate limit as the last page reported it. */
 export type GithubLoad = { cards: KanbanCard[]; rateLimit?: RateLimit }
 
-type RateLimitedError = Error & { isRateLimited: true; resetAt?: number }
+/** A failure from GitHub's rate limit; `resetAt` is epoch milliseconds when known. */
+export type RateLimitedError = Error & {
+  isRateLimited: true
+  resetAt?: number
+}
 
 function rateLimited(
   cause: unknown,
@@ -380,10 +435,12 @@ type Entry = {
 
 type Page = { entries: Entry[]; next?: string; rateLimit?: RateLimit }
 
-const isRepo = (ref: unknown, repo: string) =>
+/** Whether a GraphQL `repository { nameWithOwner }` reference is this repo (any case). */
+export const isRepo = (ref: unknown, repo: string) =>
   isRec(ref) && str(ref.nameWithOwner).toLowerCase() === repo.toLowerCase()
 
-const nodesOf = (connection: unknown) =>
+/** The records of a GraphQL connection's `nodes`; none when it is not one. */
+export const nodesOf = (connection: unknown) =>
   isRec(connection) && Array.isArray(connection.nodes)
     ? connection.nodes.filter(isRec)
     : []
@@ -490,10 +547,14 @@ async function resetOf($: EngineInterface): Promise<number | undefined> {
   }
 }
 
-async function runPage(
+/**
+ * Runs a GraphQL query with `gh api graphql` and returns its output. A failure
+ * from the rate limit throws a rate-limited error (see `isRateLimited`).
+ */
+export async function graphql(
   $: EngineInterface,
-  info: KanbanGithub,
-  cursor: string | undefined,
+  query: string,
+  variables: readonly string[],
 ): Promise<string> {
   try {
     return await runCommand($, [
@@ -501,16 +562,26 @@ async function runPage(
       'api',
       'graphql',
       '-f',
-      `query=${BOARD_QUERY}`,
-      '-F',
-      `projectId=${info.projectId}`,
-      ...(cursor === undefined ? [] : ['-f', `cursor=${cursor}`]),
+      `query=${query}`,
+      ...variables,
     ])
   } catch (error) {
     if (!RATE_LIMITED.test(errorMessage(error))) throw error
 
     throw rateLimited(error, await resetOf($))
   }
+}
+
+function runPage(
+  $: EngineInterface,
+  info: KanbanGithub,
+  cursor: string | undefined,
+): Promise<string> {
+  return graphql($, BOARD_QUERY, [
+    '-F',
+    `projectId=${info.projectId}`,
+    ...(cursor === undefined ? [] : ['-f', `cursor=${cursor}`]),
+  ])
 }
 
 /**
@@ -571,6 +642,11 @@ const AI: LabelSpec = {
   name: AI_LABEL,
   color: '5319e7',
   description: S.aiLabelDescription,
+}
+const HUMAN: LabelSpec = {
+  name: HUMAN_LABEL,
+  color: 'b60205',
+  description: S.humanLabelDescription,
 }
 // The user's marker for an issue still to be groomed.
 const TRIAGE: LabelSpec = {
@@ -661,6 +737,11 @@ export async function moveGithub(
   if (!isReorder && to === 'claude' && !labels.some(isAiLabel)) {
     await ensureLabel($, info, AI)
   }
+  // Without an In review status, Human is the label.
+  const isLabelOnly = to === 'human' && info.options.inReview === undefined
+  if (!isReorder && isLabelOnly && !labels.some(isHumanLabel)) {
+    await ensureLabel($, info, HUMAN)
+  }
 
   for (const argv of isReorder ? [] : planMove(card, to, info)) {
     const out = await runCommand($, argv)
@@ -680,7 +761,9 @@ export async function moveGithub(
   if (isReorder) return {}
 
   return {
-    ...(to === 'backlog' && isParked(card) ? {} : { status: STATUS_OF[to] }),
+    ...(to === 'backlog' && isParked(card)
+      ? {}
+      : { status: isLabelOnly ? STATUS_NAME.inProgress : STATUS_OF[to] }),
     ...(to === 'claude'
       ? {
           labels: [
@@ -689,12 +772,22 @@ export async function moveGithub(
           ],
         }
       : {}),
+    ...(isLabelOnly
+      ? {
+          labels: [
+            ...labels.filter(label => !isHumanLabel(label)),
+            HUMAN_LABEL,
+          ],
+        }
+      : {}),
     ...(to === 'human'
       ? {
           tag:
             card.tag === 'question'
               ? ('question' as const)
-              : ('review' as const),
+              : isLabelOnly
+                ? ('human' as const)
+                : ('review' as const),
         }
       : {}),
     isClosed: to === 'done',
@@ -936,10 +1029,14 @@ const need = (id: string | undefined, name: string): string => {
   return id
 }
 
-/** Fills in what the CLAUDE.md left out from `gh project field-list` and `gh project view`. */
+/**
+ * Fills in what the CLAUDE.md left out from `gh project field-list` and `gh project view`.
+ * A detected board (`isDetected`) may lack In review: Human is then the `human` label.
+ */
 export async function resolveGithub(
   $: EngineInterface,
   found: ParsedClaudeMd,
+  isDetected = false,
 ): Promise<KanbanGithub> {
   const { owner, repo, projectNumber } = found
   const number = String(projectNumber)
@@ -966,9 +1063,13 @@ export async function resolveGithub(
     if (status === undefined) throw new Error(S.noStatusField(number))
 
     statusFieldId ??= status.id
-    for (const option of status.options) {
-      const key = OPTION_KEY[option.name.toLowerCase()]
-      if (key !== undefined) options[key] ??= option.id
+    for (const key of OPTION_KEYS) {
+      const named = OPTION_NAMES[key]
+        .map(name =>
+          status.options.find(option => option.name.toLowerCase() === name),
+        )
+        .find(option => option !== undefined)
+      if (named !== undefined) options[key] ??= named.id
     }
   }
   projectId ??= (
@@ -997,7 +1098,9 @@ export async function resolveGithub(
       backlog: need(options.backlog, STATUS_NAME.backlog),
       ...(options.ready === undefined ? {} : { ready: options.ready }),
       inProgress: need(options.inProgress, STATUS_NAME.inProgress),
-      inReview: need(options.inReview, STATUS_NAME.inReview),
+      ...(isDetected && options.inReview === undefined
+        ? {}
+        : { inReview: need(options.inReview, STATUS_NAME.inReview) }),
       done: need(options.done, STATUS_NAME.done),
     },
   }

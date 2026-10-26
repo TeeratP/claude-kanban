@@ -108,15 +108,19 @@ The `backend` setting picks which. You choose it on the settings screen at insta
 
 | `backend` | Behaviour |
 |---|---|
-| `auto` (default) | GitHub when [CLAUDE.md or AGENTS.md names a repo and a project board](#how-github-is-detected), `gh` is signed in and the repo has a git remote; otherwise local. |
-| `github` | GitHub only. If a check fails there is no silent fallback: the toolbar shows the failing check and how to fix it (for example `gh auth login`, or add the board IDs to CLAUDE.md or AGENTS.md). |
+| `auto` (default) | GitHub when [CLAUDE.md or AGENTS.md names a repo and a project board](#how-github-is-detected), or, with no such config, when `git` and `gh` find a GitHub Project linked to the origin remote's repo; and `gh` is signed in. Otherwise local. |
+| `github` | GitHub only. If a check fails there is no silent fallback: the toolbar shows the failing check and how to fix it (for example install `gh`, `gh auth login`, link a Project to the repo, or add the board to CLAUDE.md or AGENTS.md). |
 | `local` | Always `.kanban/*.md`, even when GitHub is available. |
 
-The toolbar names the active backend and, when `auto` chose it, says so: `GitHub (auto)`, `Local (auto)`, or just `GitHub` / `Local` when you set it. When `auto` fell back to local because a CLAUDE.md or AGENTS.md mentions a project board that could not be read, it says `Local (auto) · board config not understood`; an empty local board under `auto` also says how to point the mod at GitHub. Setting `backend` to `github` shows the exact check that fails.
+The toolbar names the active backend and, when `auto` chose it, says so: `GitHub (auto)`, `Local (auto)`, or just `GitHub` / `Local` when you set it. A board found without config is named: `GitHub (auto) · #2 @TeeratP's Kanban` (cut to fit the pane; press it to [change the board](#no-config-needed)). When `auto` fell back to local because a CLAUDE.md or AGENTS.md mentions a project board that could not be read, it says `Local (auto) · board config not understood`; when it found no board for the repo, `Local (auto) · no GitHub board for owner/repo`. An empty local board under `auto` also says how to point the mod at GitHub. Setting `backend` to `github` shows the exact check that fails.
 
 **Switching backends does not migrate cards.** Cards created on GitHub stay on GitHub and `.kanban/` files stay on disk; the board shows only the active backend's cards. When the backend changes, the board and the saved copy of it from the old setting are set aside, so cards from the old one never show.
 
 ### How GitHub is detected
+
+`auto` and `github` look in this order: explicit config in CLAUDE.md or AGENTS.md first, and only without it the [zero-config search](#no-config-needed).
+
+#### Explicit config
 
 The board reads `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md` in the working directory, plus the files they import with Claude Code's `@path` syntax (so a `CLAUDE.md` that is only `@AGENTS.md` works). Imports are followed one level deep, each file is read once, and only project-relative paths count: an import of an absolute path, a home path or a file outside the project is ignored. The texts are joined (at most 1,000,000 characters) and read as one. This repo's own `CLAUDE.md` is an example:
 
@@ -138,14 +142,31 @@ The repo and the project number are required; without both, `auto` uses local. M
 
 Besides the config, `auto` needs `gh auth status` to succeed and `git remote get-url origin` to succeed. Any failure means local.
 
+#### No config needed
+
+With no repo and project number in the config files, the board is found from `git` and `gh` alone. Everything it runs only reads.
+
+1. `git remote get-url origin` must be a github.com URL (`https://github.com/o/r.git`, `git@github.com:o/r.git`, `ssh://git@github.com/o/r`, `git://…`); `owner/repo` is taken from it.
+2. `gh --version` and `gh auth status` must succeed.
+3. One GraphQL query (1 point) lists the open Projects linked to the repo with the repo of each of their first 100 items.
+   - **One board:** it is used.
+   - **Several:** the one with the most items from this repo wins (a board shared by several repos counts only this repo's items). On a tie, a one-row picker shows `Pick board: [#2 @TeeratP's Kanban] [#6 Car Cast]`; nothing loads until you press one (under `auto` and `github` alike, and Claude's tools say so).
+   - **None linked:** the signed-in user's and the repo owner's open projects (first 20 of each, one more query) are scanned the same way, using only those that hold issues of this repo.
+   - **No board anywhere:** `auto` uses local files (`Local (auto) · no GitHub board for owner/repo`); `github` shows an error.
+4. The Status field comes from `gh project field-list`. Option names are matched without regard to case: Backlog, Todo, To Do (Ready if there are none) for Backlog; Ready is kept as Ready; In progress or Doing; In review or Review; Done or Closed. A board without In review keeps working: Human is then the `human` label on a card in progress, and a toast says so once. A board with no Backlog, In progress or Done cannot be used, and `github` names which.
+
+Only the first 100 items of a board are counted, so a repo whose items on a large shared board all sit past the first page looks like it has none there.
+
+The result is kept per directory (`detect:<cwd>` in the plugin's store) with the origin URL, so later sessions only read the origin. It is searched for again when the origin changes, when a load says the project is not found, or when you press the board name in the toolbar: that looks at the repo's boards again and shows `Change board: [#2 …] [#6 …]` (or a toast, `No other GitHub board is linked to owner/repo.`). Your pick is local state only; nothing is written to GitHub. A result that is not a board (local, or a tie) is not kept, so it is looked for again next session. If GitHub's rate limit stops the search, `auto` does not settle for local: the toolbar shows the pause, as for a board load.
+
 ### GitHub mapping
 
-The board maps onto your existing Projects board without restructuring it. The Status field needs the options Backlog, In progress, In review and Done (Ready is optional). Section means who holds the ball now, not the ownership label.
+The board maps onto your existing Projects board without restructuring it. The Status field needs the options Backlog, In progress, In review and Done (Ready is optional); a few other names are understood (see [No config needed](#no-config-needed)), and a board found without config may lack In review. Section means who holds the ball now, not the ownership label.
 
 | Section | A card is there when |
 |---|---|
 | Done | Status is Done, or the issue is closed. |
-| Backlog | Status is Backlog, Ready or empty, even if the issue has the `human` label. Any other Status the board does not know goes here too, unless the issue has the `human` label. |
+| Backlog | Status is Backlog, Todo, Ready or empty, even if the issue has the `human` label. Any other Status the board does not know goes here too, unless the issue has the `human` label. |
 | Human | Status is In review (tagged `rev`), or Status is In progress (or one the board does not know) and the issue has the `human` label (tagged `hum`). |
 | Claude | Status is In progress and the issue has no `human` label. |
 
@@ -155,7 +176,7 @@ Moving a card on GitHub:
 |---|---|
 | Backlog | Status becomes Backlog. |
 | Claude | The label `ai` is added and `human` is removed if present (whatever its case), then Status becomes In progress. If the repo has no `ai` label, it is created first. |
-| Human | Status becomes In review. No label changes. |
+| Human | Status becomes In review. No label changes. (A board without In review: the label `human` is added, created in the repo if missing, and Status becomes In progress.) |
 | Done | Status becomes Done and the issue is closed. The close is re-read to make sure it took. |
 
 Moving a closed issue out of Done reopens it first. Handoffs and feedback are posted as issue comments; the Diff tab of a card with a linked pull request shows `gh pr diff`.

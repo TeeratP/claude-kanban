@@ -9,11 +9,14 @@ import type {
   KanbanGithub,
 } from '../types'
 import { readConfigText } from './config'
+import { NAMED, PLAIN, check, choicesOf, detectZero } from './detect'
+import type { Explain } from './detect'
 import {
   appendGithub,
   createGithub,
   detailGithub,
   diffGithub,
+  isRateLimited,
   mentionsBoard,
   moveGithub,
   parseClaudeMd,
@@ -129,35 +132,16 @@ async function readProjectConfig($: EngineInterface): Promise<Config> {
 
 // What a failed check says: `auto` logs the reason as it is, `github` adds
 // the check that failed and how to fix it.
-type Explain = {
-  auth: (reason: string) => string
-  remote: (reason: string) => string
-  project: (reason: string) => string
-}
+type Explainer = Explain & { project: (reason: string) => string }
 
 const AS_IS = (reason: string) => reason
-const AUTO: Explain = { auth: AS_IS, remote: AS_IS, project: AS_IS }
-const GITHUB: Explain = {
-  auth: S.githubSignedOut,
-  remote: S.githubNoRemote,
-  project: S.githubProjectFailed,
-}
-
-async function check<T>(
-  work: () => Promise<T>,
-  explain: (reason: string) => string,
-): Promise<T> {
-  try {
-    return await work()
-  } catch (error) {
-    throw new Error(explain(errorMessage(error)))
-  }
-}
+const AUTO: Explainer = { ...PLAIN, project: AS_IS }
+const GITHUB: Explainer = { ...NAMED, project: S.githubProjectFailed }
 
 async function checkGithub(
   $: EngineInterface,
   found: ParsedClaudeMd,
-  explain: Explain,
+  explain: Explainer,
 ): Promise<KanbanGithub> {
   await check(
     () => runCommand($, ['gh', 'auth', 'status'], { timeoutMs: 10000 }),
@@ -177,9 +161,13 @@ async function checkGithub(
 /**
  * Picks the backend for this directory. `local` is always local files. `auto`
  * is GitHub when CLAUDE.md, AGENTS.md or a file they import names a repo and
- * project and `gh` and `git` are usable there, local files otherwise (marked
- * when a board is mentioned that could not be read). `github` is GitHub or an
- * error that names the check that failed and how to fix it; it never falls back.
+ * project, or else when git and gh find a board for the origin's repo (see
+ * `detectZero`), and `gh` and `git` are usable there; local files otherwise
+ * (marked when a board is mentioned that could not be read, or none was found
+ * for the repo). `github` is GitHub or an error that names the check that
+ * failed and how to fix it; it never falls back. Both ask the person to pick
+ * when boards tie (`choicesOf`), and `auto` does not settle for local on a
+ * rate limit.
  */
 export async function detectBackend(
   $: EngineInterface,
@@ -189,25 +177,34 @@ export async function detectBackend(
 
   if (mode === 'github') {
     const { found } = await readProjectConfig($)
-    if (found === null) throw new Error(S.githubNoProject)
+    if (found !== null) return checkGithub($, found, GITHUB)
 
-    return checkGithub($, found, GITHUB)
-  }
-
-  try {
-    const config = await readProjectConfig($)
-    if (config.found === null) {
-      if (!config.mentionsBoard) return { kind: 'local' }
-
-      $.ui.log(S.githubDetectFailed(S.githubConfigUnclear), { to: 'debug' })
-
-      return { kind: 'local', isConfigUnclear: true }
+    const detected = await detectZero($, GITHUB)
+    if (detected.kind === 'local') {
+      throw new Error(S.githubNoBoard(detected.noBoardFor))
     }
 
-    return await checkGithub($, config.found, AUTO)
+    return detected
+  }
+
+  let config: Config | undefined
+  try {
+    config = await readProjectConfig($)
+    if (config.found !== null) return await checkGithub($, config.found, AUTO)
+
+    const detected = await detectZero($, AUTO)
+    if (detected.kind === 'github' || !config.mentionsBoard) return detected
+
+    $.ui.log(S.githubDetectFailed(S.githubConfigUnclear), { to: 'debug' })
+
+    return { kind: 'local', isConfigUnclear: true }
   } catch (error) {
+    if (choicesOf(error) !== undefined || isRateLimited(error)) throw error
+
     $.ui.log(S.githubDetectFailed(errorMessage(error)), { to: 'debug' })
 
-    return { kind: 'local' }
+    return config?.found === null && config.mentionsBoard
+      ? { kind: 'local', isConfigUnclear: true }
+      : { kind: 'local' }
   }
 }
