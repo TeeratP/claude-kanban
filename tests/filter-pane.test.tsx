@@ -179,10 +179,10 @@ for (const surface of SURFACES) {
       ALPHA,
       BETA,
       GAMMA,
-      'hdr:human',
-      LOGIN,
       'hdr:claude',
       ...(surface === 'vscode' ? [] : ['empty:claude']),
+      'hdr:human',
+      LOGIN,
       'grp:inactive',
     ])
     // Each header counts the cards shown out of all it holds, Claude's too.

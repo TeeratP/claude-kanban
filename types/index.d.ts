@@ -1,6 +1,6 @@
 export type KanbanColumn =
   'human' | 'claude' | 'backlog' | 'done' | 'suspended' | 'cancelled'
-/** Active: Backlog, Human, Claude. Inactive: Done, Cancelled, Suspended. */
+/** Active: Backlog, Claude, Human. Inactive: Done, Cancelled, Suspended. */
 export type KanbanGroup = 'active' | 'inactive'
 export type KanbanTag = 'review' | 'human' | 'question'
 export type KanbanCard = {

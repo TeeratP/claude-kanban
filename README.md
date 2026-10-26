@@ -2,7 +2,7 @@
 
 A Claude Code mod that puts a kanban board in a side pane: six sections in two groups that show, at a glance, who holds the ball on every task. Cards live in your GitHub Issues and Projects board, or in plain `.kanban/*.md` files when GitHub isn't set up.
 
-<!-- screenshot: the board pane (Active open: Backlog / Human / Claude, Inactive folded), with the two-row toolbar: the dim status row over `r: Refresh   n: New   f: Find` -->
+<!-- screenshot: the board pane (Active open: Backlog / Claude / Human, Inactive folded), with the two-row toolbar: the dim status row over `r: Refresh   n: New   f: Find` -->
 
 ## Sections
 
@@ -11,8 +11,8 @@ Six sections in two groups. **Active** is the work in hand, **Inactive** is what
 | Group | Section | Who holds the ball | What it means |
 |---|---|---|---|
 | Active | Backlog | Nobody yet | Parked or not started. |
-| Active | Human | You | Claude handed the card over and is waiting on your review or answer. |
 | Active | Claude | Claude | Claude is working on it. |
+| Active | Human | You | Claude handed the card over and is waiting on your review or answer. |
 | Inactive | Done | Nobody | Finished. Shows the 10 most recent. |
 | Inactive | Cancelled | Nobody | Dropped, not to be done. Shows the 10 most recent. |
 | Inactive | Suspended | Nobody | Put on hold, to come back to. Lists every card, in the order you put them. |
@@ -52,7 +52,7 @@ The toolbar is two rows. The first is dim status text: the active backend (`Loca
 ### Moving cards
 
 - **Terminal and desktop:** drag a card onto any row of a section of the open group: its header or the empty-state line puts it first, a card puts it before that card or after it, a blank row under the cards puts it last, and a `↑`/`↓ N more` row puts it at that edge of the cards shown. The closed group takes a drop too: while you drag, its header turns into three chips (` Done  Cancelled  Suspended `) and the one under the pointer lights; dropped there the card goes last in that section. The open group's own header takes nothing. Which side of a card is the lower half of its row on a terminal that reports the pointer finer than a cell (kitty, Ghostty, iTerm2, WezTerm, foot); on any other, the way the pointer came: dragged down onto a card the card goes after it, dragged up it goes before it (so the end of a section is reachable by dragging down onto its last card). A line under a row shows where it will land, the card you drag is dim and slanted with a `›` in front of it, and the name of the section it would land in is lit. A pointer resting on a card, a `more` row or a group header (no button down) marks it with a `›` in the same place, and underlines a group's name. Dropped in its own section it is reordered; in Done and Cancelled, which list by update time, it simply moves there. Click a card (press and release without moving) to open it.
-- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, open or fold a group, page a section), and `m` followed by `1`-`6` or `b`/`h`/`c`/`d`/`x`/`s` moves the card under the cursor to Backlog, Human, Claude, Done, Cancelled or Suspended, a folded group's sections too: while `m` waits, the headers show the keys (`4/d 5/x 6/s`). Any other key cancels the move. The cursor rests on group headers, cards and `more` rows, not on the section headers. `Shift`+`K` and `Shift`+`J` move the card under the cursor one place up or down in its section.
+- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, open or fold a group, page a section), and `m` followed by `1`-`6` or `b`/`c`/`h`/`d`/`x`/`s` moves the card under the cursor to Backlog, Claude, Human, Done, Cancelled or Suspended, a folded group's sections too: while `m` waits, the headers show the keys (`4/d 5/x 6/s`). Any other key cancels the move. The cursor rests on group headers, cards and `more` rows, not on the section headers. `Shift`+`K` and `Shift`+`J` move the card under the cursor one place up or down in its section.
 - **VS Code and mobile:** there is no drag. Open the card and press a link on its `Move to` row (the other Active sections) or its `Set aside` row (`Done`, `Cancel`, `Suspend`, without the card's own section), or `↑`/`↓` to move it a place in its section (not in Done or Cancelled). The group headers are buttons here; the section headers are labels.
 
 A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure on the card's row; open the card for the reason and a Retry button, or press `✕N retry` in the toolbar to send every failed move again. Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.

@@ -821,7 +821,7 @@ const moveRows = async (ui: Parameters<typeof renderPane>[0], width: number) =>
 for (const [status, move, aside] of [
   [
     'backlog',
-    'Move to    Human · Claude',
+    'Move to    Claude · Human',
     'Set aside  Done · Cancel · Suspend',
   ],
   [
@@ -836,17 +836,17 @@ for (const [status, move, aside] of [
   ],
   [
     'done',
-    'Move to    Backlog · Human · Claude',
+    'Move to    Backlog · Claude · Human',
     'Set aside  Cancel · Suspend',
   ],
   [
     'suspended',
-    'Move to    Backlog · Human · Claude',
+    'Move to    Backlog · Claude · Human',
     'Set aside  Done · Cancel',
   ],
   [
     'cancelled',
-    'Move to    Backlog · Human · Claude',
+    'Move to    Backlog · Claude · Human',
     'Set aside  Done · Suspend',
   ],
 ] as const) {

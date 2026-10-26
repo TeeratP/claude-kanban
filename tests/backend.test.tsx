@@ -156,7 +156,7 @@ test(
 
     expect(shown.toolbar).toContain('Local · updated')
     expect(shown.toolbar).not.toContain('auto')
-    expect(shown.cards).toEqual([LOCAL_CARD, 'card:md:0002-api'])
+    expect(shown.cards).toEqual(['card:md:0002-api', LOCAL_CARD])
     expect(commands).toEqual([])
     expect(await listed($)).toMatchObject({
       result: expect.stringContaining('#1 [human] Local login'),
@@ -483,7 +483,7 @@ test(
 
     expect(whileLoading.cards).toEqual([])
     expect(whileLoading.toolbar).toContain('Local')
-    expect(loaded.cards).toEqual([LOCAL_CARD, 'card:md:0002-api'])
+    expect(loaded.cards).toEqual(['card:md:0002-api', LOCAL_CARD])
   },
 )
 
@@ -596,7 +596,7 @@ test(
 
     const shown = await board($)
 
-    expect(shown.cards).toEqual([LOCAL_CARD, 'card:md:0002-api'])
+    expect(shown.cards).toEqual(['card:md:0002-api', LOCAL_CARD])
     expect(shown.toolbar).toContain('Local · updated')
     expect(commands).toEqual([])
     expect(world.statuses.at(-1)).toBe('1 card waiting on you')

@@ -60,10 +60,10 @@ for (const surface of WITH_CLIENT) {
       'grp:active',
       'hdr:backlog',
       DOCS,
-      'hdr:human',
-      LOGIN,
       'hdr:claude',
       'card:md:0002-api',
+      'hdr:human',
+      LOGIN,
       'grp:inactive',
     ])
     await ui.unmount()
@@ -80,8 +80,10 @@ for (const surface of WITH_CLIENT) {
 
     // A header puts the card at the top of its section.
     const keys = await rowKeys(ui)
-    expect(between(keys, 'hdr:human', 'hdr:claude')).toEqual([DOCS, LOGIN])
-    expect(between(keys, 'hdr:backlog', 'hdr:human')).toEqual(['empty:backlog'])
+    expect(between(keys, 'hdr:human', 'grp:inactive')).toEqual([DOCS, LOGIN])
+    expect(between(keys, 'hdr:backlog', 'hdr:claude')).toEqual([
+      'empty:backlog',
+    ])
     expect(
       await ui.find({ type: 'Text', text: '#3 Write docs' }),
     ).toBeUndefined()
@@ -354,7 +356,7 @@ for (const surface of WITH_CLIENT) {
     expect(await lineRows(ui)).toEqual(['card:md:0005-more'])
     await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
 
-    expect(between(await rowKeys(ui), 'hdr:backlog', 'hdr:human')).toEqual([
+    expect(between(await rowKeys(ui), 'hdr:backlog', 'hdr:claude')).toEqual([
       DOCS,
       'card:md:0005-more',
       LOGIN,
@@ -376,7 +378,7 @@ for (const surface of WITH_CLIENT) {
     expect(await lineRows(ui)).toEqual(['hdr:human'])
     await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
 
-    expect(between(await rowKeys(ui), 'hdr:human', 'hdr:claude')).toEqual([
+    expect(between(await rowKeys(ui), 'hdr:human', 'grp:inactive')).toEqual([
       DOCS,
     ])
     await ui.unmount()
@@ -557,15 +559,15 @@ for (const surface of WITHOUT_CLIENT) {
       (await ui.findAll({ type: 'Button' })).flatMap(one =>
         one.key !== undefined && /^(grp|card):/.test(one.key) ? [one.key] : [],
       ),
-    ).toEqual(['grp:active', DOCS, LOGIN, 'card:md:0002-api', 'grp:inactive'])
+    ).toEqual(['grp:active', DOCS, 'card:md:0002-api', LOGIN, 'grp:inactive'])
     expect(await rowKeys(ui)).toEqual([
       'grp:active',
       'hdr:backlog',
       DOCS,
-      'hdr:human',
-      LOGIN,
       'hdr:claude',
       'card:md:0002-api',
+      'hdr:human',
+      LOGIN,
       'grp:inactive',
     ])
 

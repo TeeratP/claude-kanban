@@ -6,7 +6,7 @@
     {
       "name": "kanban",
       "source": "./",
-      "description": "A kanban side pane: Active (Backlog, Human, Claude) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards."
+      "description": "A kanban side pane: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards."
     }
   ]
 }

@@ -19,14 +19,14 @@ const board = () => {
 
 // Tree rows with 9 Human and 8 Backlog cards, 30 body rows (seven rows under
 // each section's header): 0-1 toolbar, 2 Active, 3 Backlog header, 4-9 its
-// cards, 10 its more row, 11 Human header, 12-17 its cards, 18 its more row,
-// 19 Claude header, 20 (empty), 21-26 filler, 27 Inactive, 28 the legend, 29 filler.
+// cards, 10 its more row, 11 Claude header, 12 (empty), 13-18 filler,
+// 19 Human header, 20-25 its cards, 26 its more row, 27 Inactive, 28 the legend, 29 filler.
 const BACKLOG_HEADER = 3
 const BACKLOG_CARD = 4
 const BACKLOG_MORE = 10
-const HUMAN_HEADER = 11
-const HUMAN_MORE = 18
-const CLAUDE_HEADER = 19
+const CLAUDE_HEADER = 11
+const HUMAN_HEADER = 19
+const HUMAN_MORE = 26
 const INACTIVE = 27
 const SLACK = 29
 
