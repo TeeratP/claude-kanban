@@ -538,4 +538,11 @@ export const S = {
     long: '↑↓ walk · ⏎ open · m+key move',
     short: '↑↓ ⏎ open · m move',
   },
+
+  // #29
+  // A card just added that the filter keeps off the screen: `notes` say why.
+  added: (number: number, notes: readonly string[]) =>
+    [`Added #${number}`, ...notes].join(' · '),
+  hiddenByFilter: 'hidden by the filter',
+  groupFolded: (group: string) => `${group} is folded`,
 }
