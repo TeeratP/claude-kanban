@@ -394,9 +394,13 @@ async function suggest(
   if (spec === undefined) return { deny: S.badText('spec') }
   if (why === undefined) return { deny: S.badText('why') }
 
-  const isAdded = await suggestCard($, { title, spec, why })
+  const outcome = await suggestCard($, { title, spec, why })
+  if (outcome === 'dismissed') return { result: S.suggestDismissed(title) }
 
-  return { result: isAdded ? S.suggestedResult(title) : S.suggestFolded(title) }
+  return {
+    result:
+      outcome === 'added' ? S.suggestedResult(title) : S.suggestFolded(title),
+  }
 }
 
 /** Serves one of this plugin's tools. */

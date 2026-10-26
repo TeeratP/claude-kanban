@@ -538,4 +538,11 @@ export const S = {
     long: '↑↓ walk · ⏎ open · m+key move',
     short: '↑↓ ⏎ open · m move',
   },
+
+  // #27
+  dismissedShow: (n: number) => `Show dismissed (${n})`,
+  dismissedHide: (n: number) => `Hide dismissed (${n})`,
+  dismissedRestore: 'Restore',
+  suggestDismissed: (title: string) =>
+    `"${title}" was suggested before and the person dismissed it; nothing was added. Do not suggest it again.`,
 }
