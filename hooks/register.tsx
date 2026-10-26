@@ -165,13 +165,11 @@ export const register: Register = (on, options) => {
     return { sections: await backlogSection($, sections, e.traits) }
   }).catch(($, e, next) => next(e))
 
-  // The GitHub backend cannot be chosen in /config while gh is missing or signed out.
-  on('config.set', { key: 'kanban.backend' }, guardBackend).catch(
-    ($, e, next) => next(e),
-  )
-  on('config.describe', { key: 'kanban.backend' }, describeBackend).catch(
-    ($, e, next) => next(e),
-  )
+  // The GitHub backend cannot be chosen in /config while gh is missing or signed
+  // out. No key is matched: a marketplace install spells the row
+  // `kanban@<marketplace>.backend`, so these tell it from the rest themselves.
+  on('config.set', guardBackend).catch(($, e, next) => next(e))
+  on('config.describe', describeBackend).catch(($, e, next) => next(e))
 
   // A card file Claude wrote or edited shows on the board at once, unless the
   // edit would put a card in Human without a handoff; a guard that breaks lets

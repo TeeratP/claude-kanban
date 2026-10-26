@@ -17,9 +17,13 @@ const FORMS: SettingsForm[] = ['long', 'short']
 export const settingsLabel = (form: SettingsForm) =>
   form === 'long' ? S.settings : S.settingsShort
 
-/** Cells the button takes drawn as the engine does: the hotkey, a colon, the label. */
+/** The button's text as the engine draws it with a hotkey: the key, a colon, the label. */
+export const settingsText = (form: SettingsForm) =>
+  `${SETTINGS_KEY}: ${settingsLabel(form)}`
+
+/** Cells the button takes. */
 export const settingsWidth = (form: SettingsForm) =>
-  cellWidth(`${SETTINGS_KEY}: ${settingsLabel(form)}`)
+  cellWidth(settingsText(form))
 
 export type StatusInput = {
   columns: number

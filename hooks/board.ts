@@ -593,7 +593,9 @@ async function findBackend($: EngineInterface): Promise<void> {
 
   try {
     await ensureBackend($)
-    await saveCache($, await readBoard($))
+    // The board as it stands now: a plain read is the moment the dispatch
+    // began, before the backend was found.
+    await saveCache($, await updateBoard($, board => board))
   } catch (error) {
     $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
   }

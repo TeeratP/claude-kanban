@@ -108,8 +108,6 @@ export type KanbanUi = {
   isFilterOpen: boolean
   /** The group a header press chose while filtering; dropped when the filter changes. */
   filterGroup?: KanbanGroup | 'none'
-  /** When `m` began carrying a card (0 for none), so the board's `s` is not Settings'. */
-  carrySince: number
 }
 /** One of the mod's `/config` rows as `$.config.list()` returns it. */
 export type KanbanSettingRow = {

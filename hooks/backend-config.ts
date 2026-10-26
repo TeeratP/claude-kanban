@@ -4,6 +4,7 @@ import type { KanbanGhState } from '../types'
 import { readGhInstalled, updateGhInstalled } from './atoms'
 import { PLAIN, checkGh, checkSignedIn } from './detect'
 import { errorMessage } from './model'
+import { ownField } from './settings'
 import { S } from './strings'
 
 // The /config menu waits on these checks, so they get a short timeout; a check
@@ -57,26 +58,27 @@ export async function githubDenial(
   return undefined
 }
 
-/** Refuses choosing the GitHub backend while `gh` is not installed or not signed in. */
+/** Refuses choosing the GitHub backend while `gh` is not installed or not signed in; other rows pass. */
 export async function guardBackend(
   $: EngineInterface,
   e: Frozen<Args<'config.set'>>,
   next: Next<'config.set'>,
 ) {
-  if (e.value !== 'github') return next(e)
+  if (ownField(e.key) !== 'backend' || e.value !== 'github') return next(e)
 
   const deny = await githubDenial($)
 
   return deny === undefined ? next(e) : { deny }
 }
 
-/** Adds a note to the backend row when `gh` is not installed. */
+/** Adds a note to the backend row when `gh` is not installed; other rows pass. */
 export async function describeBackend(
   $: EngineInterface,
   e: Frozen<Args<'config.describe'>>,
   next: Next<'config.describe'>,
 ) {
   const described = await next(e)
+  if (ownField(e.key) !== 'backend') return described
   if ((await ghState($, false)) !== 'missing') return described
 
   return {

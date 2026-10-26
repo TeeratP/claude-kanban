@@ -38,7 +38,7 @@ import {
   titleColumn,
 } from './layout'
 import type { Row } from './layout'
-import { CARRY_MS, TICK_BRIGHT_MS, ageLabel } from './model'
+import { TICK_BRIGHT_MS, ageLabel } from './model'
 import { queuePlace, queueView } from './queue'
 import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
@@ -51,6 +51,7 @@ import {
   SETTINGS_KEY,
   planStatus,
   settingsLabel,
+  settingsText,
   settingsWidth,
 } from './status'
 import { retryAll } from './sync'
@@ -231,7 +232,6 @@ export async function handleBoardMessage(
       await openDetail($, message.cardId)
       break
     case 'drop':
-      await updateUi($, ui => ({ ...ui, carrySince: 0 }))
       await dropCard(
         $,
         message.cardId,
@@ -256,11 +256,6 @@ export async function handleBoardMessage(
     case 'settings':
       await openSettings($)
       break
-    case 'carry': {
-      const since = message.isOn ? await $.clock.now() : 0
-      await updateUi($, ui => ({ ...ui, carrySince: since }))
-      break
-    }
     case 'page':
       await scrollSection(
         $,
@@ -284,8 +279,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const pausedUntil = await readPausedUntil($)
   const activity = await readActivity($)
   const now = await $.clock.now()
-  // While `m` carries a card, `s` names a section for it; the button's hotkey waits.
-  const isCarrying = ui.carrySince > 0 && now - ui.carrySince < CARRY_MS
   const failed = Object.values(sync).filter(entry => entry.phase === 'failed')
   const { bodyColumns: columns, scroll } = e.props
   // Terminal and desktop draw the list through a Client, which takes the keys.
@@ -395,8 +388,12 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           key="settings"
           plain
           dimColor
-          hotkey={isCarrying ? undefined : SETTINGS_KEY}
-          label={settingsLabel(plan.settings)}
+          hotkey={hasClient ? undefined : SETTINGS_KEY}
+          label={
+            hasClient
+              ? settingsText(plan.settings)
+              : settingsLabel(plan.settings)
+          }
           onPress={() => openSettings($)}
         />
       </Box>
