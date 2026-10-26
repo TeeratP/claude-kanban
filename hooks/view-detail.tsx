@@ -36,7 +36,13 @@ import {
 import { appendSection, readDetail, readDiff } from './backend'
 import { ensureBackend } from './board'
 import { formatAnswer, formatFeedback, questionOf } from './handoff'
-import { queueAfter, queueAt, queueStep, sectionList } from './layout'
+import {
+  numberLabel,
+  queueAfter,
+  queueAt,
+  queueStep,
+  sectionList,
+} from './layout'
 import {
   GROUPS,
   MAX_ATTEMPTS,
@@ -462,19 +468,27 @@ export async function renderDetail(
     }
   }
 
-  // A dim label, then what it is about, in two columns.
-  const listed = (key: string, rows: readonly [string, string][]) => (
-    <Box key={key} flexDirection="column">
-      {rows.map(([label, text], index) => (
-        <Box key={`${key}:${index}`} flexDirection="row">
-          <Box width={fieldWidth}>
-            <Text dimColor>{label}</Text>
+  // A dim label, then what it is about, in two columns. The label box is as wide
+  // as the widest label and a space, and no narrower than `fieldWidth`.
+  const listed = (key: string, rows: readonly [string, string][]) => {
+    const width = Math.max(
+      fieldWidth,
+      ...rows.map(([label]) => cellWidth(label) + 1),
+    )
+
+    return (
+      <Box key={key} flexDirection="column">
+        {rows.map(([label, text], index) => (
+          <Box key={`${key}:${index}`} flexDirection="row">
+            <Box width={width}>
+              <Text dimColor>{label}</Text>
+            </Box>
+            <Text wrap="wrap">{text}</Text>
           </Box>
-          <Text wrap="wrap">{text}</Text>
-        </Box>
-      ))}
-    </Box>
-  )
+        ))}
+      </Box>
+    )
+  }
 
   // A section's content: a handoff's fields in two columns, any other text as Markdown.
   const contentOf = (section: KanbanSection) => {
@@ -612,7 +626,7 @@ export async function renderDetail(
   blocks.push(
     <Box key="head" flexDirection="column">
       <Text wrap="wrap">
-        <Text dimColor>{`#${card.number}`}</Text>
+        <Text dimColor>{numberLabel(card)}</Text>
         <Text weight="bold">{` ${card.title}`}</Text>
       </Text>
       <Text>

@@ -675,6 +675,28 @@ test('the line under the title names the section in its color, then how old the 
   await ui.unmount()
 })
 
+test('a question card is headed ?12 in its detail, as in its board row', async ($, on) => {
+  const files = {
+    [path(12, 'ask')]: card(
+      12,
+      { status: 'human', title: 'Which database' },
+      'Spec.\n\n## Question (2026-10-25)\nWhich database should the tests use?',
+    ),
+  }
+  const { ui } = await openAt($, on, files, 44, 'card:md:0012-ask')
+
+  const title = await ui.find({ type: 'Text', text: /^\?12 / })
+  expect(title?.children).toEqual([
+    { type: 'Text', props: { dimColor: true }, children: ['?12'] },
+    {
+      type: 'Text',
+      props: { weight: 'bold' },
+      children: [' Which database'],
+    },
+  ])
+  await ui.unmount()
+})
+
 test('S.shortDate reads a date as month and day, and leaves anything else alone', () => {
   expect(S.shortDate('2026-10-25')).toBe('Oct 25')
   expect(S.shortDate('2026-01-05')).toBe('Jan 5')

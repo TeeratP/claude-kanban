@@ -29,6 +29,7 @@ import {
   card,
   path,
 } from './fakes'
+import { overflow, renderPane } from './render'
 
 const EVERY_SURFACE = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 const WITH_CLIENT = ['terminal', 'desktop'] as const
@@ -103,13 +104,18 @@ async function start<S extends RenderSurface>(
   surface: S,
   files: Record<string, string> = cards(),
   store?: Record<string, unknown>,
+  bodyColumns: number = PANE.props.bodyColumns,
 ) {
   const world = boot(on, files, store)
   const agents = fakeAgents(on)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
-  const ui = await $.ui.mount({ ...PANE, surface })
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, bodyColumns },
+  })
 
   const turn = (n = 1) => ({ text: 'go', turnId: `t${n}` })
   const step = async (spent: Usage, agentId?: string) => {
@@ -431,6 +437,20 @@ test('the detail view lists the agents by name and breaks the totals into rounds
   await ui.unmount()
 })
 
+test('the detail view marks a total and a round with nothing counted yet with a dash', async ($, on) => {
+  const { ui, turn } = await start($, on, 'terminal')
+  await $.turn.start(turn())
+  await showCard($, 2)
+
+  await click(ui, API)
+  const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+  expect(texts).toContain('Total')
+  expect(texts).toContain('Round 1')
+  expect(texts.filter(text => text === '-')).toHaveLength(1)
+  expect(texts).toContain('- · Claude')
+  await ui.unmount()
+})
+
 test('time adds up across rounds, one for each time the card goes to Claude', async ($, on) => {
   const { clock, ui, turn, finish } = await start($, on, 'terminal')
 
@@ -738,6 +758,48 @@ test('a card waiting in the queue has no second row and no round, until it start
   expect(await detail(ui)).toBe('     ●● Explore · idle 2h · 12m · 48k')
   await ui.unmount()
 })
+
+// Twelve finished rounds, the tenth on, whose labels fill the narrow label box.
+const manyRounds = () =>
+  Array.from({ length: 12 }, (_, index) => ({
+    startedAt: NOW - (13 - index) * 60 * MINUTE,
+    ms: (index + 1) * MINUTE,
+    input: 1_000,
+    output: 100,
+    cacheRead: 0,
+    agents: ['Claude'],
+    isOpen: false,
+  }))
+
+for (const columns of [30, 44]) {
+  test(`a round label as wide as the label box keeps a space before its figures at ${columns} columns`, async ($, on) => {
+    const { ui } = await start(
+      $,
+      on,
+      'terminal',
+      cards(),
+      {
+        [SAVED_KEY]: {
+          shape: 'activity-1',
+          cwd: '/work',
+          card: savedCard({ rounds: manyRounds() }),
+        },
+      },
+      columns,
+    )
+    await click(ui, API)
+
+    const lines = await renderPane(ui, columns)
+    const rounds = lines.filter(line => /^ {2}Round \d+/.test(line))
+    expect(rounds).toHaveLength(12)
+    // The figures start in one column, a space after the widest label, `Round 10`.
+    const starts = rounds.map(line => /^ {2}Round \d+ +/.exec(line)?.[0].length)
+    expect(starts).toEqual(Array(12).fill(2 + 'Round 10'.length + 1))
+    expect(rounds[9]).toMatch(/^ {2}Round 10 \S/)
+    expect(overflow(lines, columns)).toEqual([])
+    await ui.unmount()
+  })
+}
 
 test('a card that comes back after a reload starts a round of its own', async ($, on) => {
   const { clock, ui, turn, finish } = await start($, on, 'terminal', cards(), {
