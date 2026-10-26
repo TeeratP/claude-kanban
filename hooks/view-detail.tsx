@@ -38,7 +38,7 @@ import { ensureBackend } from './board'
 import { formatAnswer, formatFeedback, questionOf } from './handoff'
 import { queueAfter, queueAt, queueStep, sectionList } from './layout'
 import {
-  COLUMNS,
+  GROUPS,
   MAX_ATTEMPTS,
   PANE,
   SETTLE_MS,
@@ -46,6 +46,7 @@ import {
   capDiff,
   cellWidth,
   errorMessage,
+  isOrdered,
   isPendingId,
 } from './model'
 import { shiftCard } from './reorder'
@@ -297,7 +298,12 @@ const SECTION_LOOK: Partial<
   human: { color: 'permission' },
   claude: { color: 'claude' },
   done: { dimColor: true },
+  cancelled: { dimColor: true },
+  suspended: { dimColor: true },
 }
+
+// The sections that set a card aside, in the order the row lists them.
+const SET_ASIDE = ['done', 'suspended', 'cancelled'] as const
 
 const SYNC_COLOR = {
   pending: 'warning',
@@ -432,8 +438,8 @@ export async function renderDetail(
   const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
   const siblings = sectionList(board.cards, card.column)
   const place = siblings.findIndex(one => one.id === card.id)
-  const canReorder = !hasClient && card.column !== 'done' && place >= 0
-  const labelWidth = isNarrow ? 8 : 10
+  const canReorder = !hasClient && isOrdered(card.column) && place >= 0
+  const labelWidth = isNarrow ? 8 : 11
   const fieldWidth = isNarrow ? 8 : 9
 
   const drawDiff = (shown: KanbanDetail) => {
@@ -483,10 +489,11 @@ export async function renderDetail(
 
   // A dim label, then the Buttons it is for in rows that fit the width.
   const labelled = (
+    key: string,
     label: string,
     buttons: readonly { key: string; width: number; button: RenderElement }[],
   ) => (
-    <Box key={`row:${label}`} flexDirection="row">
+    <Box key={`row:${key}`} flexDirection="row">
       <Box width={labelWidth}>
         <Text dimColor>{label}</Text>
       </Box>
@@ -510,22 +517,27 @@ export async function renderDetail(
   )
 
   // The sections a card can move to, as one row of links under a label.
-  const moveRow = (label: string, targets: readonly KanbanColumn[]) =>
+  const moveRow = (
+    key: string,
+    label: string,
+    targets: readonly { column: KanbanColumn; name: string }[],
+  ) =>
     labelled(
+      key,
       label,
-      targets.map(column => ({
+      targets.map(({ column, name }) => ({
         key: column,
-        width: cellWidth(S.col[column]),
+        width: cellWidth(name),
         button: (
           <Button
             key={`move:${column}`}
             plain
-            label={S.col[column]}
+            label={name}
             onPress={() =>
               moveCard($, card.id, column, moveOptions(card.column, column))
             }
           >
-            <Text color="suggestion">{S.col[column]}</Text>
+            <Text color="suggestion">{name}</Text>
           </Button>
         ),
       })),
@@ -734,10 +746,23 @@ export async function renderDetail(
   }
 
   blocks.push(
-    moveRow(
-      S.moveRowLabel,
-      COLUMNS.filter(column => column !== card.column),
-    ),
+    <Box key="moves" flexDirection="column">
+      {moveRow(
+        'move',
+        S.moveRowLabel,
+        GROUPS.active
+          .filter(column => column !== card.column)
+          .map(column => ({ column, name: S.col[column] })),
+      )}
+      {moveRow(
+        'aside',
+        isNarrow ? S.setAsideRow.short : S.setAsideRow.long,
+        SET_ASIDE.filter(column => column !== card.column).map(column => ({
+          column,
+          name: S.setAsideTo[column],
+        })),
+      )}
+    </Box>,
   )
 
   if (canReorder && siblings.length > 1) {
@@ -763,7 +788,7 @@ export async function renderDetail(
       ...(place > 0 ? [arrow('up')] : []),
       ...(place < siblings.length - 1 ? [arrow('down')] : []),
     ]
-    blocks.push(labelled(S.reorderRowLabel, arrows))
+    blocks.push(labelled('reorder', S.reorderRowLabel, arrows))
   }
 
   if (hasDiff) {

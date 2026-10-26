@@ -2,13 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { KanbanCard, KanbanColumn, KanbanUi } from '../types'
 import { filterCards, isFiltering, matchesFilter } from '../hooks/filter'
-import {
-  applyFilter,
-  capFor,
-  layoutBoard,
-  openCount,
-  sectionList,
-} from '../hooks/layout'
+import { applyFilter, layoutBoard, sectionList } from '../hooks/layout'
 import type { Row } from '../hooks/layout'
 import { INITIAL_UI } from '../hooks/model'
 
@@ -40,6 +34,15 @@ const CARDS = [
   cardOf(15, 'backlog', 'Plain card with no prefix'),
   cardOf(16, 'done', '[kanb-uix] Old filter work', ['good first issue']),
 ]
+
+// The same, and a card in each of the other two sections of the Inactive group.
+const ALL = [
+  ...CARDS,
+  cardOf(17, 'suspended', 'Parked filter idea'),
+  cardOf(18, 'cancelled', 'Dropped filter idea'),
+]
+const numbersAll = (query: string) =>
+  ALL.filter(one => matchesFilter(one, query)).map(one => one.number)
 
 const numbers = (query: string) =>
   CARDS.filter(one => matchesFilter(one, query)).map(one => one.number)
@@ -144,11 +147,26 @@ test('@claude limits the sections, and several are alternatives', () => {
   expect(numbers('@backlog')).toEqual([12, 15])
   expect(numbers('@done')).toEqual([16])
   expect(numbers('@claude @human')).toEqual([13, 14])
+  expect(numbersAll('@suspended')).toEqual([17])
+  expect(numbersAll('@cancelled')).toEqual([18])
+  // Either spelling of cancelled, in any case.
+  expect(numbersAll('@canceled')).toEqual([18])
+  expect(numbersAll('@Cancelled')).toEqual([18])
+  expect(numbersAll('@done @suspended')).toEqual([16, 17])
   expect(numbers('@backlog filter')).toEqual([12])
   expect(numbers('@backlog label:ai #12')).toEqual([12])
   // Not a section: a word like any other.
   expect(numbers('@everyone')).toEqual([])
   expect(numbers('@')).toEqual([])
+})
+
+test('@active and @inactive name the three sections of a group, as alternatives', () => {
+  expect(numbersAll('@active')).toEqual([12, 13, 14, 15])
+  expect(numbersAll('@inactive')).toEqual([16, 17, 18])
+  expect(numbersAll('@ACTIVE @cancelled')).toEqual([12, 13, 14, 15, 18])
+  expect(numbersAll('@inactive filter')).toEqual([16, 17, 18])
+  expect(numbersAll('@inactive label:human')).toEqual([])
+  expect(numbersAll('@active label:human')).toEqual([14])
 })
 
 test('filterCards keeps the cards the query asks for, in their order', () => {
@@ -161,9 +179,12 @@ test('filterCards keeps the cards the query asks for, in their order', () => {
 const kinds = (rows: Row[]) =>
   rows.map(row => ('column' in row ? `${row.kind}:${row.column}` : row.kind))
 
+// The rows that are not filler or the slack at the bottom.
+const content = (rows: Row[]) =>
+  kinds(rows).filter(kind => !kind.startsWith('blank'))
+
 const open = (extra: Partial<KanbanUi> = {}): KanbanUi => ({
   ...INITIAL_UI,
-  collapsed: { human: false, claude: false, backlog: false, done: false },
   ...extra,
 })
 
@@ -195,10 +216,9 @@ test('headers count what the filter lets through out of all the section holds', 
   })
 
   expect(rows.filter(row => row.kind === 'header')).toEqual([
+    { kind: 'header', column: 'backlog', shown: 1, total: 8 },
     { kind: 'header', column: 'human', shown: 0, total: 2 },
     { kind: 'header', column: 'claude', shown: 0, total: 0 },
-    { kind: 'header', column: 'backlog', shown: 1, total: 8 },
-    { kind: 'header', column: 'done', shown: 0, total: 0 },
   ])
 })
 
@@ -209,105 +229,120 @@ test('a section with no match is an empty row, and the empty-board note stays aw
     bodyRows: 30,
   })
 
-  expect(kinds(rows)).toEqual([
+  expect(content(rows)).toEqual([
     'toolbar',
     'toolbar',
+    'group',
+    'header:backlog',
+    'empty:backlog',
     'header:human',
     'empty:human',
     'header:claude',
     'empty:claude',
-    'header:backlog',
-    'empty:backlog',
-    'header:done',
-    'empty:done',
+    'group',
   ])
 })
 
-test('a collapsed section with a match is open, and the stored flag stays', () => {
+test('a folded group with a match is drawn open, and the stored group stays', () => {
   const cards = [
     ...many('backlog', 2, 'Backlog'),
     ...many('done', 3, 'Done', 20),
   ]
   const ui = { ...INITIAL_UI, filter: 'done' }
-  expect(ui.collapsed.done).toBe(true)
+  expect(ui.openGroup).toBe('active')
 
   const rows = layoutBoard({ cards, ui, bodyRows: 30 })
-  expect(kinds(rows).slice(-4)).toEqual([
+  expect(content(rows).slice(0, 7)).toEqual([
+    'toolbar',
+    'toolbar',
+    'group',
+    'group',
     'header:done',
     'card:done',
     'card:done',
-    'card:done',
   ])
-  expect(rows.at(-4)).toEqual({
-    kind: 'header',
-    column: 'done',
-    shown: 3,
-    total: 3,
-  })
-  expect(applyFilter(cards, ui).ui.collapsed.done).toBe(false)
-  expect(ui.collapsed.done).toBe(true)
+  expect(rows[2]).toMatchObject({ group: 'active', isOpen: false })
+  expect(rows[3]).toMatchObject({ group: 'inactive', isOpen: true })
+  expect(
+    rows.find(row => row.kind === 'header' && row.column === 'done'),
+  ).toEqual({ kind: 'header', column: 'done', shown: 3, total: 3 })
+  expect(applyFilter(cards, ui).ui.openGroup).toBe('inactive')
+  expect(ui.openGroup).toBe('active')
 
-  // A collapsed section with no match stays as it is, and so does an open one.
-  const none = layoutBoard({
-    cards,
-    ui: { ...ui, filter: 'backlog' },
-    bodyRows: 30,
-  })
-  expect(kinds(none).slice(-1)).toEqual(['header:done'])
-  const hidden = applyFilter(cards, { ...ui, filter: 'backlog' }).ui
-  expect(hidden.collapsed).toEqual({
-    human: false,
-    claude: false,
-    backlog: false,
-    done: true,
-  })
+  // A match in the open group leaves it open; with no match anywhere the stored group stays.
+  expect(applyFilter(cards, { ...ui, filter: 'backlog' }).ui.openGroup).toBe(
+    'active',
+  )
+  expect(
+    applyFilter(cards, { ...ui, filter: 'zzz', openGroup: 'inactive' }).ui
+      .openGroup,
+  ).toBe('inactive')
 })
 
-// #31: a header pressed under a filter keeps its own answer, apart from the stored flag.
-test('a header press under a filter overrides what the board shows, never the stored flag', () => {
+// A group pressed under a filter keeps its own answer, apart from the stored group.
+test('a group press under a filter overrides what the board shows, never the stored group', () => {
   const cards = [
     ...many('backlog', 2, 'Backlog'),
     ...many('done', 3, 'Done', 20),
   ]
-  // The filter opens Done; the person collapsed it.
-  const ui = { ...INITIAL_UI, filter: 'done', filterCollapsed: { done: true } }
+  // The filter opens Inactive; the person chose Active.
+  const ui = { ...INITIAL_UI, filter: 'done', filterGroup: 'active' as const }
 
   const shown = applyFilter(cards, ui).ui
-  expect(shown.collapsed.done).toBe(true)
-  expect(ui.collapsed.done).toBe(true)
-  expect(kinds(layoutBoard({ cards, ui, bodyRows: 30 })).slice(-2)).toEqual([
-    'empty:backlog',
-    'header:done',
-  ])
-  expect(openCount(shown)).toBe(3)
+  expect(shown.openGroup).toBe('active')
+  expect(ui.openGroup).toBe('active')
+  expect(content(layoutBoard({ cards, ui, bodyRows: 30 })).slice(2, 5)).toEqual(
+    ['group', 'header:backlog', 'empty:backlog'],
+  )
 
-  // An open section collapses, and a collapsed one with no match opens.
-  const other = applyFilter(cards, {
-    ...open({ filter: 'backlog' }),
-    filterCollapsed: { backlog: true },
-  }).ui
-  expect(other.collapsed.backlog).toBe(true)
+  // A press that folded both under the filter.
+  expect(applyFilter(cards, { ...ui, filterGroup: 'none' }).ui.openGroup).toBe(
+    'none',
+  )
   expect(
-    applyFilter(cards, {
-      ...INITIAL_UI,
-      filter: 'backlog',
-      filterCollapsed: { done: false },
-    }).ui.collapsed.done,
-  ).toBe(false)
+    kinds(
+      layoutBoard({
+        cards,
+        ui: { ...ui, filterGroup: 'none' },
+        bodyRows: 30,
+      }),
+    ),
+  ).toEqual(['toolbar', 'toolbar', 'group', 'group', 'folded'])
 
   // With no filter the override means nothing.
-  const plain = { ...INITIAL_UI, filterCollapsed: { backlog: true } }
+  const plain = { ...INITIAL_UI, filterGroup: 'inactive' as const }
   expect(applyFilter(cards, plain)).toEqual({ cards, ui: plain })
 })
 
-test('an opened section takes its share of the rows', () => {
+test('the closed group says how many cards match', () => {
+  const cards = [
+    ...many('backlog', 2, 'Backlog'),
+    ...many('done', 3, 'Done', 20),
+  ]
+  const rows = layoutBoard({
+    cards,
+    ui: { ...INITIAL_UI, filter: 'done' },
+    bodyRows: 30,
+  })
+
+  expect(rows[2]).toMatchObject({
+    kind: 'group',
+    group: 'active',
+    counts: [
+      { column: 'backlog', shown: 0, total: 2 },
+      { column: 'human', shown: 0, total: 0 },
+      { column: 'claude', shown: 0, total: 0 },
+    ],
+  })
+})
+
+test('an opened group gives each section the same share of the rows', () => {
   const cards = many('done', 7, 'Done')
   const ui = { ...INITIAL_UI, filter: 'done' }
 
-  expect(openCount(ui)).toBe(3)
-  expect(openCount(applyFilter(cards, ui).ui)).toBe(4)
   const rows = layoutBoard({ cards, ui, bodyRows: 30 })
-  expect(rows.filter(row => row.kind === 'card')).toHaveLength(capFor(30, 4))
+  expect(rows.filter(row => row.kind === 'card')).toHaveLength(7)
+  expect(rows).toHaveLength(30)
 })
 
 test('Done lists its ten newest of the cards that match, not of all of them', () => {
@@ -321,7 +356,7 @@ test('Done lists its ten newest of the cards that match, not of all of them', ()
     layoutBoard({ cards, ui, bodyRows: 30 }).find(
       row => row.kind === 'header' && row.column === 'done',
     ),
-  ).toEqual({ kind: 'header', column: 'done', shown: 10, total: 40 })
+  ).toEqual({ kind: 'header', column: 'done', shown: 12, total: 40 })
 })
 
 test('the window clamps to the cards that match', () => {
@@ -333,6 +368,9 @@ test('the window clamps to the cards that match', () => {
 
   const rows = layoutBoard({ cards, ui, bodyRows: 30 })
   expect(
-    rows.filter(row => 'column' in row && row.column === 'backlog'),
+    rows.filter(
+      row =>
+        'column' in row && row.column === 'backlog' && row.kind !== 'blank',
+    ),
   ).toMatchObject([{ kind: 'header' }, { kind: 'card' }])
 })

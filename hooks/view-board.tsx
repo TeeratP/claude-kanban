@@ -4,6 +4,7 @@ import type {
   KanbanBackendInfo,
   KanbanCard,
   KanbanColumn,
+  KanbanGroup,
   KanbanSync,
 } from '../types'
 import { detailIds, detailSegs, segProps } from './activity-view'
@@ -17,6 +18,7 @@ import {
   readSync,
   readTick,
   readUi,
+  updateBoard,
   updateUi,
 } from './atoms'
 import { refresh } from './board'
@@ -26,19 +28,20 @@ import { isFiltering } from './filter'
 import {
   TOOLBAR_ROWS,
   applyFilter,
-  capFor,
+  blocksOf,
   cardLine,
-  clampOffset,
-  detailReserve,
+  footRows,
   hitTest,
   layoutBoard,
-  openCount,
+  maxOffset,
+  sectionBody,
   sectionList,
+  sectionWindow,
 } from './layout'
 import type { Row } from './layout'
-import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
-import { headerCount, queuePlace, queueView } from './queue'
-import { toggleQuickAdd } from './quick-add'
+import { TICK_BRIGHT_MS, ageLabel, cellWidth, groupOf, truncate } from './model'
+import { queuePlace, queueView } from './queue'
+import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { changeBoard } from './pick'
 import { dropCard, shiftCard } from './reorder'
@@ -53,8 +56,9 @@ import { pickRows, renderPicker } from './view-pick'
 import { renderQuickAdd } from './view-quick-add'
 import { renderSuggestions } from './view-suggest'
 
-// Where the pane's window sat at the last draw; a wheel row is relative to it.
-let lastBody = { offset: 0, bodyRows: 0 }
+// Where the pane's window sat at the last draw, and the rows above the list that
+// the layout was told of; a wheel row is relative to it.
+let lastBody = { offset: 0, bodyRows: 0, extraRows: 0 }
 
 // A terminal cell cannot spin or fade, so a pending mark pulses with the
 // ticker and a confirmed one dims after its first second.
@@ -83,34 +87,40 @@ function localNote(info: KanbanBackendInfo | null): string | undefined {
     : S.noGithubBoard(info.noBoardFor)
 }
 
-// Under a filter the press turns the section as drawn, which the filter may have
-// opened, and leaves the stored flag for when the filter is gone.
-async function toggleSection($: EngineInterface, column: KanbanColumn) {
+// A press on a group's header opens it, which folds the other, or folds it when
+// it is open. Under a filter it turns the group as drawn, which the filter may
+// have opened, and leaves the stored one for when the filter is gone.
+async function toggleGroup($: EngineInterface, group: KanbanGroup) {
   const { cards } = await readBoard($)
 
-  return updateUi($, ui =>
-    isFiltering(ui.filter)
-      ? {
-          ...ui,
-          filterCollapsed: {
-            ...ui.filterCollapsed,
-            [column]: !applyFilter(cards, ui).ui.collapsed[column],
-          },
-        }
-      : {
-          ...ui,
-          collapsed: { ...ui.collapsed, [column]: !ui.collapsed[column] },
-        },
-  )
+  return updateUi($, ui => {
+    if (isFiltering(ui.filter)) {
+      return {
+        ...ui,
+        filterGroup:
+          applyFilter(cards, ui).ui.openGroup === group ? 'none' : group,
+      }
+    }
+
+    return { ...ui, openGroup: ui.openGroup === group ? 'none' : group }
+  })
 }
 
-// Moves a section's window by `delta(cap)` cards, kept within its list; resolves
-// whether the window shown moved.
+// The rows under each section's header in the pane as it was last drawn.
+const bodyOf = (
+  cards: readonly KanbanCard[],
+  bodyRows: number,
+  extraRows: number,
+) => sectionBody({ bodyRows, extraRows, footRows: footRows(cards) }).body
+
+// Moves a section's window by `delta(taken)` cards, kept within its list;
+// resolves whether the window shown moved.
 async function scrollSection(
   $: EngineInterface,
   column: KanbanColumn,
   bodyRows: number,
-  delta: (cap: number) => number,
+  extraRows: number,
+  delta: (taken: number) => number,
 ): Promise<boolean> {
   const { cards } = await readBoard($)
   const details = detailIds(
@@ -122,16 +132,15 @@ async function scrollSection(
   const seen = { isMoved: false }
   await updateUi($, ui => {
     // The window moves over the cards the filter lets through.
-    const view = applyFilter(cards, ui)
-    const len = sectionList(view.cards, column).length
-    const cap = capFor(
-      bodyRows,
-      openCount(view.ui),
-      detailReserve(view.cards, view.ui, details),
+    const list = sectionList(applyFilter(cards, ui).cards, column)
+    const body = bodyOf(cards, bodyRows, extraRows)
+    const shown = sectionWindow(list, column, ui.offsets[column], body, details)
+    const last = maxOffset(blocksOf(list, column, details), body)
+    const offset = Math.min(
+      last,
+      Math.max(0, shown.offset + delta(shown.taken)),
     )
-    const shown = clampOffset(ui.offsets[column], len, cap)
-    const offset = clampOffset(shown + delta(cap), len, cap)
-    seen.isMoved = offset !== shown
+    seen.isMoved = offset !== shown.offset
 
     return offset === ui.offsets[column]
       ? ui
@@ -147,18 +156,25 @@ async function keepInView(
   column: KanbanColumn,
   at: { index: number; length: number },
 ): Promise<void> {
-  const { cards } = await readBoard($)
+  // The board as the move left it, not as this dispatch first read it.
+  const { cards } = await updateBoard($, board => board)
+  const details = detailIds(
+    cards,
+    await readActivity($),
+    (await readQueue($)).held,
+  )
   await updateUi($, ui => {
-    const cap = capFor(lastBody.bodyRows, openCount(applyFilter(cards, ui).ui))
-    const shown = clampOffset(ui.offsets[column], at.length, cap)
-    const offset =
-      at.index < shown
-        ? at.index
-        : at.index >= shown + cap
-          ? at.index - cap + 1
-          : shown
+    const list = sectionList(applyFilter(cards, ui).cards, column)
+    const body = bodyOf(cards, lastBody.bodyRows, lastBody.extraRows)
+    const taken = (from: number) =>
+      sectionWindow(list, column, from, body, details).taken
+    const shown = sectionWindow(list, column, ui.offsets[column], body, details)
+    const last = maxOffset(blocksOf(list, column, details), body)
+    let offset = shown.offset
+    if (at.index < offset) offset = at.index
+    while (offset < last && at.index >= offset + taken(offset)) offset += 1
 
-    return offset === shown
+    return offset === shown.offset
       ? ui
       : { ...ui, offsets: { ...ui.offsets, [column]: offset } }
   })
@@ -179,22 +195,21 @@ export async function handleBoardScroll(
 
   const board = await readBoard($)
   const { cards } = board
+  // The picker and the suggestions sit between the toolbar and the list; the layout is told of them.
+  const strip = stripRows((await readSuggestions($)).length) + pickRows(board)
   const rows = layoutBoard({
     cards,
     ui,
     bodyRows: e.bodyRows,
     details: detailIds(cards, await readActivity($), (await readQueue($)).held),
+    extraRows: strip,
   })
-  // The picker and the suggestions sit between the toolbar and the list, outside the layout.
-  const strip = stripRows((await readSuggestions($)).length) + pickRows(board)
   const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
-  if (column === undefined || applyFilter(cards, ui).ui.collapsed[column]) {
-    return false
-  }
+  if (column === undefined) return false
 
   const step = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by)))
 
-  return scrollSection($, column, e.bodyRows, () => step)
+  return scrollSection($, column, e.bodyRows, strip, () => step)
 }
 
 /** Acts on what the board's Client posted: a click on a row, a card dropped or a card moved a place. */
@@ -228,12 +243,16 @@ export async function handleBoardMessage(
       if (moved !== undefined) await keepInView($, moved.column, moved)
       break
     }
-    case 'toggle':
-      await toggleSection($, message.column)
+    case 'toggleGroup':
+      await toggleGroup($, message.group)
       break
     case 'page':
-      await scrollSection($, message.column, lastBody.bodyRows, cap =>
-        message.dir === 'up' ? -cap : cap,
+      await scrollSection(
+        $,
+        message.column,
+        lastBody.bodyRows,
+        lastBody.extraRows,
+        taken => (message.dir === 'up' ? -taken : taken),
       )
       break
   }
@@ -257,13 +276,17 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   // New and Find open text fields, which the mobile app has none of.
   const canType = e.surface !== 'mobile'
   const isFiltered = isFiltering(ui.filter)
-  // The sections as drawn: a collapsed one with a match is open while filtering.
-  const { ui: shown } = applyFilter(board.cards, ui)
   const filterField = await renderFilter($, e)
   const quickAdd = await renderQuickAdd($, e)
   const suggested = await renderSuggestions($, e)
   const picker = renderPicker($, e, board)
-  lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows }
+  // The rows above the list, which the equal-height sections give way to.
+  const extraRows =
+    pickRows(board) +
+    stripRows((await readSuggestions($)).length) +
+    (filterField === null ? 0 : 1) +
+    (quickAdd === null ? 0 : quickAddRows(await readQuickAdd($)))
+  lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows, extraRows }
 
   const rows = layoutBoard({
     cards: board.cards,
@@ -271,6 +294,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     bodyRows: scroll.bodyRows,
     details: detailIds(board.cards, activity, queued.held),
     hint: board.mode === 'auto' && board.backend?.kind === 'local',
+    extraRows,
+    legend: hasClient,
   })
   const detailOf = (card: KanbanCard) => {
     const one = activity.cards[card.id]
@@ -425,28 +450,59 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     )
   }
 
+  // What the Client draws for a row; the Buttons and Text of the other surfaces
+  // are made from the same pieces, so the two read alike.
+  const rowViewInput = {
+    columns,
+    isFiltered,
+    glyphOf: (card: KanbanCard) => {
+      const entry = sync[card.id]
+
+      return entry === undefined ? undefined : glyphOf(entry, tick, now)
+    },
+    ageOf: (card: KanbanCard) => ageLabel(card.updatedAt, now),
+    detailOf,
+    queue,
+  }
+  const textOf = (row: Row) => {
+    const [made] = toRowViews({ ...rowViewInput, rows: [row] })
+
+    return made === undefined
+      ? null
+      : made.segs.map(part => <Text {...segProps(part)}>{part.text}</Text>)
+  }
+
   const draw = (row: Row) => {
     switch (row.kind) {
       case 'toolbar':
         return row.line === 'status' ? statusRow() : actionsRow()
 
-      case 'header': {
-        const { column } = row
-
+      // The group's header folds and opens it; its sections' headers are labels.
+      case 'group':
         return (
           <Button
-            key={`hdr:${column}`}
+            key={`grp:${row.group}`}
             plain
-            onPress={() => toggleSection($, column)}
+            onPress={() => toggleGroup($, row.group)}
           >
-            {shown.collapsed[column] ? S.expand : S.collapse}{' '}
-            <Text weight="bold">{S.col[column]}</Text>{' '}
-            <Text dimColor>
-              {headerCount(row.column, row.shown, row.total, queue, isFiltered)}
-            </Text>
+            {textOf(row)}
           </Button>
         )
-      }
+
+      case 'header':
+        return (
+          <Text key={`hdr:${row.column}`} wrap="truncate-end">
+            {textOf(row)}
+          </Text>
+        )
+
+      case 'blank':
+      case 'folded':
+        return <Text wrap="truncate-end">{textOf(row)}</Text>
+
+      // The legend is the Client's: the other surfaces have no keys to list.
+      case 'legend':
+        return null
 
       case 'more': {
         const { column, dir } = row
@@ -456,8 +512,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             key={`more:${column}:${dir}`}
             plain
             onPress={() =>
-              scrollSection($, column, scroll.bodyRows, cap =>
-                dir === 'up' ? -cap : cap,
+              scrollSection($, column, scroll.bodyRows, extraRows, taken =>
+                dir === 'up' ? -taken : taken,
               )
             }
           >
@@ -487,7 +543,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           <Button
             key={`card:${card.id}`}
             plain
-            dimColor={card.column === 'done' || place !== undefined}
+            dimColor={
+              groupOf(card.column) === 'inactive' || place !== undefined
+            }
             onPress={() => openDetail($, card.id)}
           >
             {line.left}
@@ -548,20 +606,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
 
   const { Client } = $.ui.resolve(e)
   const props: BoardProps = {
-    rows: toRowViews({
-      rows,
-      columns,
-      collapsed: shown.collapsed,
-      isFiltered,
-      glyphOf: card => {
-        const entry = sync[card.id]
-
-        return entry === undefined ? undefined : glyphOf(entry, tick, now)
-      },
-      ageOf: card => ageLabel(card.updatedAt, now),
-      detailOf,
-      queue,
-    }),
+    rows: toRowViews({ ...rowViewInput, rows }),
     columns,
   }
 

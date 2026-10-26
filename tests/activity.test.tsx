@@ -655,6 +655,47 @@ test('the totals kept in the store come back after a reload', async ($, on) => {
   await ui.unmount()
 })
 
+test('setting aside the card Claude is working on, and only that one, toasts that its turn goes on', async ($, on) => {
+  const files = {
+    ...cards(),
+    [path(4, 'ui')]: card(4, { status: 'claude', title: 'Build UI' }),
+    [path(5, 'ops')]: card(5, { status: 'claude', title: 'Run ops' }),
+  }
+  const { clock, ui, turn, finish, toasts } = await start(
+    $,
+    on,
+    'terminal',
+    files,
+  )
+  await $.turn.start(turn())
+  await showCard($, 2)
+
+  // Card 4 is not the card the turn is on: setting it aside says nothing.
+  await click(ui, 'card:md:0004-ui')
+  await ui.press({ key: 'move:cancelled' })
+  await clock.advance(SYNC_PAUSE)
+  await ui.press({ key: 'back' })
+  expect(toasts).toEqual([])
+
+  await click(ui, API)
+  await ui.press({ key: 'move:suspended' })
+  await clock.advance(SYNC_PAUSE)
+  expect(toasts).toEqual([
+    'Claude is still working on #2. Press Esc in the prompt to stop it.',
+  ])
+  expect(files[path(2, 'api')]).toContain('status: suspended')
+
+  // Once the turn is over nothing is said, of this card or another.
+  await finish()
+  await showCard($, 5)
+  await ui.press({ key: 'back' })
+  await click(ui, 'card:md:0005-ops')
+  await ui.press({ key: 'move:suspended' })
+  await clock.advance(SYNC_PAUSE)
+  expect(toasts).toHaveLength(1)
+  await ui.unmount()
+})
+
 test('a card waiting in the queue has no second row and no round, until it starts', async ($, on) => {
   const files = {
     ...cards(),
@@ -771,9 +812,9 @@ for (const surface of WITH_CLIENT) {
     const { clock, ui, files, prompts, scrolls } = await crowd($, on, surface)
     const keysOf = async () => rowKeys(ui)
 
-    // Four of the six cards show, each with its row, and the tree fits the pane.
+    // Three of the six cards show, each with its row, and the tree fits the pane.
     expect((await keysOf()).filter(key => key.startsWith('act:'))).toHaveLength(
-      4,
+      3,
     )
     expect((await keysOf()).length + TOOLBAR_ROWS).toBeLessThanOrEqual(30)
     const index = (await keysOf()).indexOf('card:md:0011-c')
@@ -806,7 +847,7 @@ for (const surface of WITH_CLIENT) {
     expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
     expect(await row(ui, 'more:claude:up')).toBeDefined()
 
-    // A card dragged past second rows lands on the header it is dropped on.
+    // A card dragged to the header of the section below lands there.
     const from = await rowIndex(ui, 'card:md:0022-b')
     const human = await rowIndex(ui, 'hdr:human')
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
@@ -848,17 +889,16 @@ for (const surface of WITH_CLIENT) {
     const at = async (key: string) =>
       (await rowIndex(ui, key)) + TOOLBAR_ROWS + strip
 
-    // Over the last second row of Claude, three rows above Backlog's cards: the
-    // Claude section, which scrolls itself.
+    // Over the last second row of Claude shown: the Claude section, which scrolls itself.
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
-      pointer: { column: 3, row: await at('act:md:0014-c') },
+      pointer: { column: 3, row: await at('act:md:0012-c') },
     })
     expect(scrolls).toHaveLength(0)
     expect((await row(ui, 'more:claude:up'))?.text).toBe('  ↑ 1 more')
 
-    // Over a card of Backlog below the second rows: Backlog.
+    // Over a card of Backlog, above the second rows: Backlog.
     await $.ui.scroll({
       ...SCROLL,
       by: 1,

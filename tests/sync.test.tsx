@@ -1,8 +1,9 @@
-import type { Engine, Mounted } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 
 import { cellWidth } from '../hooks/model'
-import { click, marks, row, rowKeys } from './board-ui'
+import { moveOptions } from '../hooks/sync'
+import { click, group, marks, row, under } from './board-ui'
 import { HANDED_OFF, PANE, RUN, boot, card, path } from './fakes'
 
 const cards = () => ({
@@ -34,23 +35,13 @@ async function open(
   return { ...kit, ui }
 }
 
-const keysBetween = async (
-  ui: Mounted<'terminal', 'Pane'>,
-  header: string,
-  next: string,
-) => {
-  const keys = await rowKeys(ui)
-
-  return keys.slice(keys.indexOf(header) + 1, keys.indexOf(next))
-}
-
 test('a move is pending, then confirmed, then gone after two seconds', async ($, on) => {
   const files = cards()
   const { clock, ui } = await open($, on, files)
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   expect((await row(ui, DOCS))?.text).toContain('⟳')
-  expect(await keysBetween(ui, 'hdr:claude', 'hdr:backlog')).toContain(DOCS)
+  expect(await under(ui, 'hdr:claude')).toContain(DOCS)
   expect(files[path(3, 'docs')]).toContain('status: backlog')
 
   await clock.advance(300)
@@ -69,7 +60,7 @@ test('a move is pending, then confirmed, then gone after two seconds', async ($,
 
   await clock.advance(1000)
   expect((await row(ui, DOCS))?.text).not.toMatch(/[⟳✓✕]/)
-  expect(await keysBetween(ui, 'hdr:claude', 'hdr:backlog')).toContain(DOCS)
+  expect(await under(ui, 'hdr:claude')).toContain(DOCS)
   await ui.unmount()
 })
 
@@ -238,7 +229,7 @@ test('after the first try and three retries the card goes back, with the reason'
     await clock.settle()
   }
   expect(toasts).toEqual([])
-  expect(await keysBetween(ui, 'hdr:claude', 'hdr:backlog')).toContain(DOCS)
+  expect(await under(ui, 'hdr:claude')).toContain(DOCS)
 
   await ui.press({ key: 'retry-all' })
   await clock.settle()
@@ -247,8 +238,8 @@ test('after the first try and three retries the card goes back, with the reason'
   expect(toasts[0]).toMatch(
     /^Could not move #3 to Claude, so it is back in Backlog: .*EACCES: read-only$/,
   )
-  expect(await keysBetween(ui, 'hdr:claude', 'hdr:backlog')).not.toContain(DOCS)
-  expect(await keysBetween(ui, 'hdr:backlog', 'hdr:done')).toEqual([DOCS])
+  expect(await under(ui, 'hdr:claude')).not.toContain(DOCS)
+  expect(await under(ui, 'hdr:backlog')).toEqual([DOCS])
   expect(await ui.find({ key: 'retry-all' })).toBeUndefined()
   expect((await row(ui, DOCS))?.text).not.toMatch(/[⟳✓✕]/)
   await ui.unmount()
@@ -261,7 +252,7 @@ test('a card that went back returns to its old place, not the bottom', async ($,
     [path(5, 'two')]: card(5, { status: 'backlog', title: 'Two', order: 9 }),
   }
   const { clock, calls, ui } = await open($, on, files)
-  const backlog = () => keysBetween(ui, 'hdr:backlog', 'hdr:done')
+  const backlog = () => under(ui, 'hdr:backlog')
   const before = await backlog()
   calls.denyWrite = 'EACCES: read-only'
 
@@ -311,14 +302,14 @@ test('a move made while one is out is sent after it, once', async ($, on) => {
   await clock.advance(1000)
   expect(calls.writes).toEqual([])
   expect((await row(ui, DOCS))?.text).toContain('⟳')
-  expect(await keysBetween(ui, 'hdr:human', 'hdr:claude')).toContain(DOCS)
+  expect(await under(ui, 'hdr:human')).toContain(DOCS)
 
   release()
   await clock.settle()
 
   expect(calls.writes).toEqual([path(3, 'docs'), path(3, 'docs')])
   expect(files[path(3, 'docs')]).toContain('status: human')
-  expect(await keysBetween(ui, 'hdr:human', 'hdr:claude')).toContain(DOCS)
+  expect(await under(ui, 'hdr:human')).toContain(DOCS)
   await clock.advance(2000)
   await ui.unmount()
 })
@@ -357,7 +348,7 @@ test('a move undone before it is sent makes no call', async ($, on) => {
   expect(calls.writes).toEqual([])
   expect(files[path(3, 'docs')]).toContain('status: backlog')
   expect((await row(ui, DOCS))?.text).not.toMatch(/[⟳✓✕]/)
-  expect(await keysBetween(ui, 'hdr:backlog', 'hdr:done')).toEqual([DOCS])
+  expect(await under(ui, 'hdr:backlog')).toEqual([DOCS])
   await ui.unmount()
 })
 
@@ -414,6 +405,59 @@ test(
     await ui.unmount()
   },
 )
+
+test('moveOptions asks Claude to work on a card taken up from Backlog, Suspended, Cancelled or Done, not from Human or Claude', () => {
+  for (const from of ['backlog', 'suspended', 'cancelled', 'done'] as const) {
+    expect(moveOptions(from, 'claude')).toEqual({ onConfirm: 'work' })
+  }
+  // Human to Claude is Send back, which has its own prompt; Claude to Claude is a reorder.
+  expect(moveOptions('human', 'claude')).toEqual({})
+  expect(moveOptions('claude', 'claude')).toEqual({})
+  for (const to of [
+    'backlog',
+    'human',
+    'done',
+    'suspended',
+    'cancelled',
+  ] as const) {
+    expect(moveOptions('backlog', to)).toEqual({})
+    expect(moveOptions('claude', to)).toEqual({})
+  }
+})
+
+for (const status of ['suspended', 'cancelled', 'done'] as const) {
+  test(
+    `a card the person takes up from ${status} gets the work prompt once the backend confirms`,
+    { options: { claudeLimit: 0 } },
+    async ($, on) => {
+      const files = {
+        [path(1, 'a')]: card(1, { status, title: 'Old idea' }, HANDED_OFF),
+      }
+      const { clock, calls, prompts, ui } = await open($, on, files)
+      let release = () => {}
+      calls.hold = new Promise<void>(resolve => {
+        release = resolve
+      })
+
+      await group(ui, 'inactive')
+      await click(ui, 'card:md:0001-a')
+      await ui.press({ key: 'move:claude' })
+      await clock.advance(300)
+      expect(prompts).toEqual([])
+
+      release()
+      await clock.settle()
+
+      expect(files[path(1, 'a')]).toContain('status: claude')
+      expect(prompts).toEqual([
+        expect.stringMatching(/^Work on kanban card #1 "Old idea"/),
+      ])
+      await clock.advance(2000)
+      expect(prompts).toHaveLength(1)
+      await ui.unmount()
+    },
+  )
+}
 
 test('a refused move submits no prompt, and nor does a move by Claude', async ($, on) => {
   const files = cards()

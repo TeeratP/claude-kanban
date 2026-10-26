@@ -8,7 +8,8 @@ import { cellWidth, padEnd, truncate } from '../hooks/model'
 //
 // - Box: column or row, `flexWrap`, `gap`, `width`, `paddingLeft`/`paddingX`,
 //   `justifyContent: space-between`, `flexGrow`. Children of a row that do not
-//   fit shrink, last first, but only Text and Markdown can.
+//   fit shrink, last first, but only a Box, Markdown and a Text with a space
+//   in it can; a Button, a Link and a lone word cannot.
 // - Text wraps at spaces, or is cut with `…` for `wrap: 'truncate-end'`.
 // - Button is `[ key: label ]`, a plain one `key: label`; Input is
 //   `[label: value]` across the row, `rows` tall; Link is its text.

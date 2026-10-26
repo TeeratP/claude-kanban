@@ -6,7 +6,7 @@ import type { KanbanBoard, KanbanDetail } from '../types'
 import { formatFeedback } from '../hooks/handoff'
 import { SETTLE_MS, capDiff } from '../hooks/model'
 import { S } from '../hooks/strings'
-import { click, rowKeys } from './board-ui'
+import { click, group, under } from './board-ui'
 import { boardRoute, fakeProcess, issueNode } from './fake-gh'
 import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
 import { overflow, renderPane } from './render'
@@ -106,10 +106,7 @@ for (const surface of SURFACES) {
       '#2 Build API',
     )
     await ui.press({ key: 'back' })
-    const keys = await rowKeys(ui)
-    expect(
-      keys.slice(keys.indexOf('hdr:claude'), keys.indexOf('hdr:backlog')),
-    ).toEqual(['hdr:claude', 'card:md:0001-login'])
+    expect(await under(ui, 'hdr:claude')).toEqual(['card:md:0001-login'])
 
     await click(ui, 'card:md:0001-login')
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
@@ -226,6 +223,55 @@ for (const surface of SURFACES) {
     }
     expect(files[path(3, 'docs')]).toContain('status: claude')
     expect(prompts).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test(`the move buttons offer the five other sections, the three set aside as verbs, and Suspend moves a Claude card on the ${surface}`, async ($, on) => {
+    const { clock, ui, files, prompts } = await open($, on, surface)
+    const labels = async () =>
+      Promise.all(
+        ['human', 'claude', 'backlog', 'done', 'suspended', 'cancelled'].map(
+          async column =>
+            [column, (await ui.find({ key: `move:${column}` }))?.text] as const,
+        ),
+      )
+
+    await click(ui, 'card:md:0003-docs')
+    expect(await labels()).toEqual([
+      ['human', 'Human'],
+      ['claude', 'Claude'],
+      ['backlog', undefined],
+      ['done', 'Done'],
+      ['suspended', 'Suspend'],
+      ['cancelled', 'Cancel'],
+    ])
+    await ui.press({ key: 'move:claude' })
+    await clock.advance(SYNC_PAUSE)
+    expect(prompts).toHaveLength(1)
+    expect((await labels())[1]).toEqual(['claude', undefined])
+
+    // Setting a card aside asks Claude nothing; the way back is a move like any other.
+    await ui.press({ key: 'move:suspended' })
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    expect(await labels()).toEqual([
+      ['human', 'Human'],
+      ['claude', 'Claude'],
+      ['backlog', 'Backlog'],
+      ['done', 'Done'],
+      ['suspended', undefined],
+      ['cancelled', 'Cancel'],
+    ])
+    expect(prompts).toHaveLength(1)
+
+    await ui.press({ key: 'move:cancelled' })
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(3, 'docs')]).toContain('status: cancelled')
+    await ui.press({ key: 'move:claude' })
+    await clock.advance(SYNC_PAUSE)
+    expect(files[path(3, 'docs')]).toContain('status: claude')
+    expect(prompts).toHaveLength(2)
+    await clock.advance(2000)
     await ui.unmount()
   })
 }
@@ -440,6 +486,8 @@ async function openAt(
   columns: number,
   open = 'card:md:0001-login',
   surface: 'terminal' | 'desktop' | 'vscode' | 'mobile' = 'terminal',
+  // The card is in a section of the Inactive group, folded until it is pressed.
+  isInactive = false,
 ) {
   const world = boot(on, files)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
@@ -450,6 +498,7 @@ async function openAt(
     surface,
     props: { ...PANE.props, bodyColumns: columns },
   })
+  if (isInactive) await group(ui, 'inactive')
   await click(ui, open)
 
   return { ...world, files, ui }
@@ -485,7 +534,8 @@ test('a Human card at 44 columns: nav, title, actions, the handoff to review, th
     '  Changed  README.md',
     '  Need     Approve',
     '',
-    'Move to   Claude · Backlog · Done',
+    'Move to    Backlog · Claude',
+    'Set aside  Done · Suspend · Cancel',
     '',
     'Spec text.',
     '',
@@ -649,10 +699,10 @@ for (const surface of ['terminal', 'vscode'] as const) {
     expect(move?.children).toEqual([
       { type: 'Text', props: { color: 'suggestion' }, children: ['Claude'] },
     ])
-    // The dim dots between the three links, on the terminal only.
-    const row = await ui.find({ key: 'row:Move to' })
-    expect(JSON.stringify(row?.children).split('" · "').length - 1).toBe(
-      surface === 'terminal' ? 2 : 0,
+    // The dim dots between the links of both rows (one, then two), on the terminal only.
+    const rows = await ui.find({ key: 'moves' })
+    expect(JSON.stringify(rows?.children).split('" · "').length - 1).toBe(
+      surface === 'terminal' ? 3 : 0,
     )
     await ui.unmount()
   })
@@ -735,5 +785,74 @@ test('on GitHub the line under the title names the tag and links to the issue', 
     href: 'https://github.com/TeeratP/claude-kanban/issues/3',
     label: 'GitHub',
   })
+  await ui.unmount()
+})
+
+// The two move rows, as lines of text: Active sections the card can go to, then the ways to set it aside.
+const moveRows = async (ui: Parameters<typeof renderPane>[0], width: number) =>
+  (await renderPane(ui, width)).filter(
+    line => /^(Move to|Set aside|Aside) /.test(line) || /^ {8,}\S/.test(line),
+  )
+
+for (const [status, move, aside] of [
+  [
+    'backlog',
+    'Move to    Human · Claude',
+    'Set aside  Done · Suspend · Cancel',
+  ],
+  [
+    'human',
+    'Move to    Backlog · Claude',
+    'Set aside  Done · Suspend · Cancel',
+  ],
+  [
+    'claude',
+    'Move to    Backlog · Human',
+    'Set aside  Done · Suspend · Cancel',
+  ],
+  [
+    'done',
+    'Move to    Backlog · Human · Claude',
+    'Set aside  Suspend · Cancel',
+  ],
+  [
+    'suspended',
+    'Move to    Backlog · Human · Claude',
+    'Set aside  Done · Cancel',
+  ],
+  [
+    'cancelled',
+    'Move to    Backlog · Human · Claude',
+    'Set aside  Done · Suspend',
+  ],
+] as const) {
+  test(`a ${status} card moves to the other Active sections, and is set aside with Done, Suspend or Cancel`, async ($, on) => {
+    const files = {
+      [path(1, 'login')]: card(1, { status, title: 'Fix login' }),
+    }
+    const isInactive = ['done', 'suspended', 'cancelled'].includes(status)
+    const { ui } = await openAt(
+      $,
+      on,
+      files,
+      44,
+      'card:md:0001-login',
+      'terminal',
+      isInactive,
+    )
+
+    expect(await moveRows(ui, 44)).toEqual([move, aside])
+    await ui.unmount()
+  })
+}
+
+test('on a narrow pane the second row is labelled Aside', async ($, on) => {
+  const { ui } = await openAt($, on, reviewing(), 30)
+
+  expect(await moveRows(ui, 30)).toEqual([
+    'Move to Backlog · Claude',
+    'Aside   Done · Suspend',
+    '        Cancel',
+  ])
   await ui.unmount()
 })

@@ -2,7 +2,17 @@ import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
-import { click, keys, marks, row, rowIndex, rowKeys } from './board-ui'
+import {
+  click,
+  group,
+  header,
+  keys,
+  marks,
+  row,
+  rowIndex,
+  rowKeys,
+  under,
+} from './board-ui'
 import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
 import { overflow, renderPane } from './render'
 import type { Route } from './fake-gh'
@@ -55,15 +65,6 @@ for (const surface of SURFACES) {
 }
 
 const TITLE = 'add:title'
-
-// The keys of the rows under a header, up to the next one.
-async function under(ui: Parameters<typeof rowKeys>[0], header: string) {
-  const all = await rowKeys(ui)
-  const rest = all.slice(all.indexOf(header) + 1)
-  const next = rest.findIndex(key => key.startsWith('hdr:'))
-
-  return next < 0 ? rest : rest.slice(0, next)
-}
 
 for (const surface of SURFACES) {
   test(`Enter adds a card to Backlog at once, marked syncing until its file is written, on the ${surface}`, async ($, on) => {
@@ -293,7 +294,7 @@ for (const surface of SURFACES) {
   })
 }
 
-test('the new card is brought into view in a long or collapsed Backlog', async ($, on) => {
+test('the new card is brought into view in a long Backlog, or with Inactive open', async ($, on) => {
   const files: Record<string, string> = {}
   for (let n = 1; n <= 7; n += 1) {
     files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
@@ -310,8 +311,9 @@ test('the new card is brought into view in a long or collapsed Backlog', async (
   await world.clock.settle()
   expect(await under(ui, 'hdr:backlog')).toContain('card:md:0008-new')
 
-  await click(ui, 'hdr:backlog')
-  expect(await under(ui, 'hdr:backlog')).toEqual([])
+  // With Inactive open Backlog is folded away: adding a card opens Active again.
+  await group(ui, 'inactive')
+  expect(await header(ui, 'backlog')).toBeUndefined()
   await ui.press({ key: 'add' })
   await ui.input({ key: TITLE, text: 'Newer' })
   await world.clock.settle()
@@ -683,14 +685,14 @@ async function openAt(
   return { ...world, files, ui }
 }
 
-// The form's rows: from the title field down to the first section.
+// The form's rows: from the title field down to the first group.
 async function formRows(ui: Parameters<typeof renderPane>[0], columns: number) {
   const lines = await renderPane(ui, columns)
   const start = lines.findIndex(line => line.startsWith('[New card'))
 
   return lines.slice(
     start,
-    lines.findIndex(line => line.includes('Human')),
+    lines.findIndex(line => /^[▾▸] /.test(line)),
   )
 }
 

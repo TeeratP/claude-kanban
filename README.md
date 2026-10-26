@@ -1,19 +1,23 @@
 # claude-kanban
 
-A Claude Code mod that puts a kanban board in a side pane: four sections that show, at a glance, who holds the ball on every task. Cards live in your GitHub Issues and Projects board, or in plain `.kanban/*.md` files when GitHub isn't set up.
+A Claude Code mod that puts a kanban board in a side pane: six sections in two groups that show, at a glance, who holds the ball on every task. Cards live in your GitHub Issues and Projects board, or in plain `.kanban/*.md` files when GitHub isn't set up.
 
-<!-- screenshot: the board pane (Human / Claude / Backlog / Done), with the two-row toolbar: the dim status row over `r: Refresh   n: New   f: Find` -->
+<!-- screenshot: the board pane (Active open: Backlog / Human / Claude, Inactive folded), with the two-row toolbar: the dim status row over `r: Refresh   n: New   f: Find` -->
 
 ## Sections
 
-| Section | Who holds the ball | What it means |
-|---|---|---|
-| Human | You | Claude handed the card over and is waiting on your review or answer. Always the first section. |
-| Claude | Claude | Claude is working on it. |
-| Backlog | Nobody yet | Parked or not started. |
-| Done | Nobody | Finished. Collapsed by default; shows the 10 most recent (`Done 10 of 57`). |
+Six sections in two groups. **Active** is the work in hand, **Inactive** is what is over or on hold.
 
-Each section shows at most 5 cards (fewer in a short pane, so the board fits it) and scrolls on its own with the mouse wheel; clickable `↑ N more` / `↓ N more` rows page through the rest. When a section's list is already at the end the wheel points to, the wheel scrolls the pane instead. Click a section header to collapse or expand it. A card row shows `#number`, the title, a sync glyph and its age.
+| Group | Section | Who holds the ball | What it means |
+|---|---|---|---|
+| Active | Backlog | Nobody yet | Parked or not started. |
+| Active | Human | You | Claude handed the card over and is waiting on your review or answer. |
+| Active | Claude | Claude | Claude is working on it. |
+| Inactive | Done | Nobody | Finished. Shows the 10 most recent. |
+| Inactive | Cancelled | Nobody | Dropped, not to be done. Shows the 10 most recent. |
+| Inactive | Suspended | Nobody | Put on hold, to come back to. Lists every card, in the order you put them. |
+
+One group is open at a time: Active when the pane opens. Press a group's header (`▾ Active`, `▸ Inactive`) to open it, which folds the other; press the open one to fold both. A folded group's header says what it holds (`▸ Inactive   12 Done · 2 Cancelled · 1 Suspended`, shorter in a narrow pane). The three sections of the open group are always the same height, a third of the room each, so nothing jumps when a card moves: a section shows its cards, then `↓ N more` where there are more, and an empty one says `(empty)`. Each section scrolls on its own with the mouse wheel; the clickable `↑ N more` / `↓ N more` rows page through the rest. When a section's list is already at the end the wheel points to, the wheel scrolls the pane instead. A section header reads `Human 2` followed by a rule to the right edge, and on the right of Claude's the limit (see [How many cards Claude works on at once](#how-many-cards-claude-works-on-at-once)) and of Done's and Cancelled's `10 newest` once they hold more. A card row shows `#number`, the title, a sync glyph and its age.
 
 A card moves between sections when you move it in the pane, when Claude moves it with its tools, or (GitHub) when its board status changes elsewhere.
 
@@ -39,17 +43,17 @@ The GitHub backend also needs the [`gh` CLI](https://cli.github.com), signed in 
 
 ## Use
 
-Type `/kanban` to open the board in a side pane. Click a card to open its detail view: the spec, the handoffs and feedback, and the move buttons. Click `← Board` to go back.
+Type `/kanban` to open the board in a side pane. Click a card to open its detail view: its title and where it stands (the section, how long ago it changed, a link to the issue on GitHub), the spec, the handoffs and feedback, and two rows of links to move it. Click `b: ← Board` to go back.
 
 Claude can work the board without the pane open (see [Claude's tools](#claudes-tools-and-the-handoff)).
 
-The toolbar is two rows. The first is dim status text: the active backend, when the board was last updated, and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find` (on mobile, which has no text field, only `r: Refresh`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
+The toolbar is two rows. The first is dim status text: the active backend, when the board was last updated, and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find` (on mobile, which has no text field, only `r: Refresh`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds and its ages (the status row's, each card's) redraw every 30. While cards wait in Human the pane's title reads `Kanban · N`, which shows as its tab when several panes are open. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
 
 ### Moving cards
 
-- **Terminal and desktop:** drag a card onto any row of a section: its header or the `(empty)` row puts it first, a card puts it before that card or after it, and a `↑`/`↓ N more` row puts it at that edge of the cards shown. Which side of a card is the lower half of its row on a terminal that reports the pointer finer than a cell (kitty, Ghostty, iTerm2, WezTerm, foot); on any other, the way the pointer came: dragged down onto a card the card goes after it, dragged up it goes before it (so the end of a section is reachable by dragging down onto its last card). A line under a row shows where it will land. Dropped in its own section it is reordered; in Done, which lists by update time, it simply moves there. Click a card (press and release without moving) to open it.
-- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, fold a section, page a section), and `m` followed by `1`-`4` or `h`/`c`/`b`/`d` moves the card under the cursor to Human, Claude, Backlog or Done. Any other key cancels the move. `Shift`+`K` and `Shift`+`J` move the card under the cursor one place up or down in its section.
-- **VS Code and mobile:** there is no drag. Open the card and press a `Move to:` button, or `↑`/`↓` to move it a place in its section.
+- **Terminal and desktop:** drag a card onto any row of a section of the open group: its header or the `(empty)` row puts it first, a card puts it before that card or after it, a blank row under the cards puts it last, and a `↑`/`↓ N more` row puts it at that edge of the cards shown. The closed group takes a drop too: while you drag, its header turns into three chips (` Done  Cancelled  Suspended `) and the one under the pointer lights; dropped there the card goes last in that section. The open group's own header takes nothing. Which side of a card is the lower half of its row on a terminal that reports the pointer finer than a cell (kitty, Ghostty, iTerm2, WezTerm, foot); on any other, the way the pointer came: dragged down onto a card the card goes after it, dragged up it goes before it (so the end of a section is reachable by dragging down onto its last card). A line under a row shows where it will land. Dropped in its own section it is reordered; in Done and Cancelled, which list by update time, it simply moves there. Click a card (press and release without moving) to open it.
+- **Terminal and desktop, by keyboard:** the board takes keys once you have clicked it (Esc gives them back). The first key shows the cursor; then `↑`/`↓` (or `k`/`j`) move it, `Enter` does what a click does (open a card, open or fold a group, page a section), and `m` followed by `1`-`6` or `b`/`h`/`c`/`d`/`x`/`s` moves the card under the cursor to Backlog, Human, Claude, Done, Cancelled or Suspended, a folded group's sections too: while `m` waits, the headers show the keys (`4/d 5/x 6/s`). Any other key cancels the move. The cursor rests on group headers, cards and `more` rows, not on the section headers. `Shift`+`K` and `Shift`+`J` move the card under the cursor one place up or down in its section.
+- **VS Code and mobile:** there is no drag. Open the card and press a link on its `Move to` row (the other Active sections) or its `Set aside` row (`Done`, `Suspend`, `Cancel`, without the card's own section), or `↑`/`↓` to move it a place in its section (not in Done or Cancelled). The group headers are buttons here; the section headers are labels.
 
 A move shows at once, then syncs in the background: `⟳` pulses while it is sent, `✓` confirms (bright for a second, then dim, then gone), `✕` marks a failure on the card's row; open the card for the reason and a Retry button, or press `✕N retry` in the toolbar to send every failed move again. Several quick moves of one card are sent as one request. After the first try and three retries fail, the card snaps back to where it was and a toast gives the reason.
 
@@ -63,13 +67,13 @@ A turn belongs to the card whose work or resume prompt started it, or to the car
 
 The `claudeLimit` setting is a whole number, `1` by default; `0` means no limit. You set it on the settings screen at install and can change it later in the plugin's settings in the config menu (the plugin reloads with the new value). A decimal is rounded down; a negative value or anything but a number counts as unset (`1`).
 
-When Claude is at its limit and you move another card to Claude (the moves that prompt Claude: Backlog to Claude, Send back, and answering a question), the card goes into the Claude section marked `queued N` and dim, and no prompt is sent. The Claude header reads `Claude 1/1 · 2 queued`. When a card leaves Claude (to Human, Done or Backlog, or its move to Claude is given up), the backend confirms that, and the top queued card starts: its work or resume prompt is sent then, never two at once. Queue order is the order of the section. Moving a queued card out of Claude takes it out of the queue.
+When Claude is at its limit and you move another card to Claude (the moves that prompt Claude: taking a card up from Backlog, Suspended, Cancelled or Done, Send back, and answering a question), the card goes into the Claude section marked `queued N` and dim, and no prompt is sent. The Claude header reads `Claude 3 ── limit 1 · 2 queued`, and `limit 1 · 1 over` in a warning colour when more cards sit in Claude than the limit (Claude moved them in itself). When a card leaves Claude (to Human, Done, Backlog, Suspended or Cancelled, or its move to Claude is given up), the backend confirms that, and the top queued card starts: its work or resume prompt is sent then, never two at once. Queue order is the order of the section. Moving a queued card out of Claude takes it out of the queue. Suspending or cancelling the card Claude is working on does not stop its turn (the mod cannot interrupt one): a toast says `Claude is still working on #12. Press Esc in the prompt to stop it.`
 
 A queued card is in Status In progress on GitHub like any card in Claude: a column means who holds the ball. The queue itself is local, saved per working directory and `backend` setting, so it survives a restart; the waiting cards start at the first load of the board once a slot is free. Lowering the limit stops no card that is already working. Cards Claude moves itself with `kanban_move` are never queued (they carry no prompt), though they use up a slot; `kanban_list` marks a waiting card `(queued)` so Claude leaves it alone.
 
 ### Adding a card
 
-Press `n: New` in the toolbar (or the `n` key while the pane has the keys) to open a title field at the top of the board. `Enter` adds the card to Backlog; `Add details` opens a second, taller field for the spec (a new line is typed there as in the prompt box; `Enter` in either field adds the card). `Cancel`, or `n: New` again, closes the form and drops what you typed; `Esc` only gives the keys back to the prompt, so a half-typed card is not lost. An empty title is refused with a toast. The button is not shown on mobile, which has no text field.
+Press `n: New` in the toolbar (or the `n` key while the pane has the keys) to open a title field at the top of the board. `Enter` adds the card to Backlog; A dim line under the field says so (`⏎ adds to Backlog`) and holds two links: `Add details` opens a second, taller field for the spec (a new line is typed there as in the prompt box; `Enter` in either field adds the card), and while it is open the link reads `Hide details` and folds the field away, keeping what was typed in it for when it is shown again; hidden details are not added to the card. The wording shortens to fit a narrow pane. `Cancel`, or `n: New` again, closes the form and drops what you typed; `Esc` only gives the keys back to the prompt, so a half-typed card is not lost. An empty title is refused with a toast. The button is not shown on mobile, which has no text field.
 
 The card shows at once with a pulsing `⟳` (`#0` until its backend has numbered it) and `✓` when it exists. On the local backend it is written to `.kanban/NNNN-slug.md`. On GitHub it is an issue with the `triage` label (created in the repo if missing, never overwritten), added to the project board with Status Backlog: that label marks it for grooming. If the backend refuses, the card disappears, a toast gives the reason and the form comes back with your text. If GitHub made the issue but could not add it to the board, the toast names the issue.
 
@@ -83,17 +87,18 @@ Press `f: Find` in the toolbar (or the `f` key while the pane has the keys) to o
 | `#12` | card number 12 (`#12 #15` shows either) |
 | `label:ai`, `-label:human` | cards with that GitHub label, or without it; every `label:` must hold; `label:"good first issue"` names a label with spaces (local cards have no labels) |
 | `[KANB-UIX]`, `[KANB]`, `area:UIX` | cards whose title starts with that `[PRJ-AREA]` prefix, its project, or its area (several are alternatives) |
-| `@claude`, `@human`, `@backlog`, `@done` | cards in those sections only |
+| `@claude`, `@human`, `@backlog`, `@done`, `@cancelled` (or `@canceled`), `@suspended` | cards in those sections only |
+| `@active`, `@inactive` | cards in the three sections of that group |
 
 The words, labels and kinds of term all have to hold together: `@backlog label:ai area:UIX retry`. A key with nothing after it yet (`label:`) asks for nothing, and an unknown `@name` is a word.
 
-Each header counts the cards shown out of all it holds while a filter is on (`Backlog 3/41`; Claude's header shows this too instead of its load, which is back when the filter is cleared), a collapsed section with a match opens for as long as the filter is on (its fold is not changed), and Done's ten newest are taken from the cards that match. A section with none says `(no matches)`. The text shows in the toolbar as `f: Find "fix login"` followed by a `✕` that clears it (cut with an ellipsis to fit the row, and left out when there is no room); `Enter` in the field shuts the field and keeps the filter, so the board can be walked by key. `Esc` only gives the keys back to the prompt (it is the engine's), so clearing is the `✕`. The filter is not saved: it lasts until the session ends.
+Each header counts the cards shown out of all it holds while a filter is on (`Backlog 3/41`), the group that has matches is drawn open for as long as the filter is on (the open one if it has any, else Active, else Inactive; the group you chose is not changed, and pressing a group while a filter is on picks which one is drawn until the text changes), a folded group says how many cards match (`3 matches`), and Done's and Cancelled's ten newest are taken from the cards that match. A section with none says `(no matches)`. The text shows in the toolbar as `f: Find "fix login"` followed by a `✕` that clears it (cut with an ellipsis to fit the row, and left out when there is no room); `Enter` in the field shuts the field and keeps the filter, so the board can be walked by key. `Esc` only gives the keys back to the prompt (it is the engine's), so clearing is the `✕`. The filter is not saved: it lasts until the session ends.
 
 The filter only changes what is drawn. Everything you do acts on the cards you can see: the keyboard cursor, a click, a drop, the wheel and `J`/`K` all use the visible rows. A card put at a place in a section goes right after the nearest visible card above that place, ahead of any hidden cards that followed it (first in the section when none is above), so the visible order is the one you made and the hidden cards keep their order among themselves. The field is not shown on mobile, which has no text field. While the field is open the wheel scrolls the pane, not a section.
 
 ### Suggestions from Claude
 
-When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
 
 ## Backends
 
@@ -161,14 +166,18 @@ The result is kept per directory (`detect:<cwd>` in the plugin's store) with the
 
 ### GitHub mapping
 
-The board maps onto your existing Projects board without restructuring it. The Status field needs the options Backlog, In progress, In review and Done (Ready is optional); a few other names are understood (see [No config needed](#no-config-needed)), and a board found without config may lack In review. Section means who holds the ball now, not the ownership label.
+The board maps onto your existing Projects board without restructuring it, and never adds an option to it. The Status field needs the options Backlog, In progress, In review and Done (Ready is optional); a few other names are understood (see [No config needed](#no-config-needed)), and a board found without config may lack In review. Section means who holds the ball now, not the ownership label.
 
 | Section | A card is there when |
 |---|---|
-| Done | Status is Done, or the issue is closed. |
+| Cancelled | The issue is closed as not planned (or as a duplicate), or its Status is named like Cancelled, Won't do or Not planned. |
+| Done | The issue is closed any other way, or its Status is Done. |
+| Suspended | Its Status is named like Suspended, On hold, Paused, Icebox, Someday or Deferred, or the issue has the label `suspended`. Not Blocked: blocked work is active work that waits. |
 | Backlog | Status is Backlog, Todo, Ready or empty, even if the issue has the `human` label. Any other Status the board does not know goes here too, unless the issue has the `human` label. |
 | Human | Status is In review (tagged `rev`), or Status is In progress (or one the board does not know) and the issue has the `human` label (tagged `hum`). |
 | Claude | Status is In progress and the issue has no `human` label. |
+
+The first page of the board query also lists the Status field's options (a list, so it costs no more: 3 points a page, with it or without), which is how a board's own Cancelled and Suspended options are found even when CLAUDE.md names only five.
 
 Moving a card on GitHub:
 
@@ -177,9 +186,11 @@ Moving a card on GitHub:
 | Backlog | Status becomes Backlog. |
 | Claude | The label `ai` is added and `human` is removed if present (whatever its case), then Status becomes In progress. If the repo has no `ai` label, it is created first. |
 | Human | Status becomes In review. No label changes. (A board without In review: the label `human` is added, created in the repo if missing, and Status becomes In progress.) |
-| Done | Status becomes Done and the issue is closed. The close is re-read to make sure it took. |
+| Done | Status becomes Done and the issue is closed as completed. The close is re-read, reason included, to make sure it took. |
+| Cancelled | Status becomes the board's Cancelled option, or Done on a board with none (the board keeps closed items in its Done column), and the issue is closed as not planned and re-read. |
+| Suspended | Status becomes the board's Suspended option. On a board with none, the issue gets the label `suspended` (created in the repo once, never overwritten; `human` is removed if present) and rests in Backlog. |
 
-Moving a closed issue out of Done reopens it first. Handoffs and feedback are posted as issue comments; the Diff tab of a card with a linked pull request shows `gh pr diff`.
+Moving a card out of Suspended takes the `suspended` label off, as the repo spells it. Without a Cancelled or Suspended option, GitHub's own board shows those cards in Done and Backlog; the difference is the issue's close reason ("Closed as not planned") and the label. Moving a closed issue out of Done or Cancelled reopens it first, and so does moving a Done issue to Cancelled or the other way (`gh issue close` on a closed issue changes nothing, so the reason would stay). Handoffs and feedback are posted as issue comments; the Diff tab of a card with a linked pull request shows `gh pr diff`.
 
 Only comments written by the account `gh` is signed in as count toward the handoff rule. Anyone else's Handoff, Feedback, Question or Answer comment is shown on the card, marked with its author, and ignored when deciding whether a card may move to Human.
 
@@ -191,11 +202,11 @@ Claude gets these tools. They work with the pane closed.
 
 | Tool | Does |
 |---|---|
-| `kanban_list` | Lists cards, one line each: `#number [column] title`. Done lists only its 10 newest. |
+| `kanban_list` | Lists cards, one line each: `#number [column] title`. Any of the six columns. Done and Cancelled list only their 10 newest. |
 | `kanban_show` | Reads one card: the spec and every handoff, feedback, question and answer, newest last. |
 | `kanban_handoff` | Records a handoff on a card. |
 | `kanban_ask` | Asks you a blocking question on a card (see below). |
-| `kanban_move` | Moves a card to `human`, `claude`, `backlog` or `done`. |
+| `kanban_move` | Moves a card to `human`, `claude`, `backlog` or `done`. Suspended and Cancelled are your calls: Claude cannot move a card there, and it is refused a move (or a question) on a card you set aside until you move it back. `kanban_show` and `kanban_handoff` still work on it. |
 | `kanban_create` | Creates a card: a file on the local backend, an issue labeled `triage` on the project board on GitHub. The spec cannot open a handoff or feedback section: marker lines in it are escaped (local backend). |
 | `kanban_suggest` | Proposes a card for a follow-up. Creates nothing: the suggestion waits in the strip for you to add or dismiss it. |
 
@@ -221,16 +232,16 @@ In the detail view of a question card the question is shown at the top and the b
 
 ## The feedback loop
 
-Open a card in Human to review it. The detail view has:
+Open a card in Human to review it. The detail view shows the nav row, the title and where the card stands, then the actions, then the handoff to review (Claude's newest handoff, or its open question) as a short list of Did, Check, Changed and Need, the Check with its **Run check** button, the `Move to` and `Set aside` rows, the spec, and a History of every other section, oldest first, each with its date and colored by who wrote it (Claude or you). Nothing runs past the edge of a narrow pane: the buttons wrap, and the nav row gives up its arrows, then its place, then its words. The actions are:
 
 - **Approve:** moves the card to Done. On GitHub this closes the issue.
 - **Send back:** type feedback in the box first, then press the button. The feedback is appended to the card (a `## Feedback (date)` section, or an issue comment on GitHub), the card moves to Claude, and once that move is confirmed Claude is prompted to resume the card: read the newest feedback and continue. An empty box shows a toast and moves nothing.
 - **Park:** moves the card to Backlog.
-- **Run check:** shown when the newest handoff's **Check** holds a command, as an inline code span (`` `npm test` ``) or a fenced `sh` / `bash` block. The button shows the exact command; nothing runs until you press it, and Claude cannot start it. It runs through `sh -c` in the session's directory and ends at 5 minutes. The result row shows ✓ or ✕, the exit code, the time and the last 20 lines of output. A local card gets a `## Check run (date)` section at once; on GitHub the run is posted as an issue comment only when you press **Attach to card**. There is no Stop: the engine cannot cancel a run in progress.
+- **Run check:** shown when the newest handoff's **Check** holds a command, as an inline code span (`` `npm test` ``) or a fenced `sh` / `bash` block. The button shows the exact command (on a narrow pane it is cut to fit, with the whole command above it); nothing runs until you press it, and Claude cannot start it. It runs through `sh -c` in the session's directory and ends at 5 minutes. The result row shows ✓ or ✕, the exit code, the time and the last 20 lines of output. A local card gets a `## Check run (date)` section at once; on GitHub the run is posted as an issue comment only when you press **Attach to card**. There is no Stop: the engine cannot cancel a run in progress.
 
-The Human queue can be reviewed from the keyboard: `a` approve, `s` send back, `p` park, `f` write feedback (moves the cursor to the box), `n` / `k` next / previous Human card (wrapping), `b` back to the board. The line under the title reads `Human 2 of 5`, and a dim line lists the keys. After Approve, Send back (or Answer) or Park the next Human card opens by itself, or the board when none is left; that card ignores Approve, Send back and Park for 0.6 s, so a key pressed twice decides one card, and the walking keys are never held back. The keys work while the pane has the keyboard; `Esc` is the engine's and hands the keyboard back to the prompt.
+The Human queue can be reviewed from the keyboard: `a` approve, `s` send back, `p` park, `f` write feedback (moves the cursor to the box), `n` / `k` next / previous Human card (wrapping), `b` back to the board. The nav row reads `k: ‹ Prev  2/5  n: Next ›`, and every key is drawn on its button, so there is no separate list of keys. After Approve, Send back (or Answer) or Park the next Human card opens by itself, or the board when none is left; that card ignores Approve, Send back and Park for 0.6 s, so a key pressed twice decides one card, and the walking keys are never held back. The keys work while the pane has the keyboard; `Esc` is the engine's and hands the keyboard back to the prompt.
 
-Moving a card from Backlog to Claude with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. Reordering a card within a section never prompts. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
+Moving a card to Claude from Backlog, Suspended, Cancelled or Done with the move buttons, by drag or by key prompts Claude to start: work on the card, then hand it off. (From Human it is Send back, with its own prompt.) Reordering a card within a section never prompts. Prompts are sent only after the backend confirms the move and only for moves you make in the pane; Claude's own `kanban_move` never prompts, so the two cannot loop.
 
 On mobile there is no text box, so Send back is not shown; the detail view says to use the terminal or desktop.
 
@@ -261,11 +272,11 @@ The spec, in markdown.
 Your feedback.
 ```
 
-- `status` is one of `human`, `claude`, `backlog`, `done`; anything else counts as `backlog`.
+- `status` is one of `human`, `claude`, `backlog`, `done`, `suspended`, `cancelled` (`canceled` is read as `cancelled` and written back as `cancelled`); anything else counts as `backlog`.
 - `id` is the card number (`#7`); a missing `id` falls back to the filename's number. Titles may contain colons.
-- `order` sorts a section, lowest first. Done sorts by `updated`, newest first. Reordering a card writes only its `order`, between its neighbours' when there is a gap and otherwise renumbering the section by tens (10, 20, 30, …), rewriting only the cards whose number changed. On GitHub the order is the project item's position (`updateProjectV2ItemPosition`); a card moved to another section with no place asked is positioned after the last card there, so a reload keeps the order it arrived in.
+- `order` sorts a section, lowest first. Done and Cancelled sort by `updated`, newest first; Suspended keeps its `order`, like Backlog. Reordering a card writes only its `order`, between its neighbours' when there is a gap and otherwise renumbering the section by tens (10, 20, 30, …), rewriting only the cards whose number changed. On GitHub the order is the project item's position (`updateProjectV2ItemPosition`); a card moved to another section with no place asked is positioned after the last card there, so a reload keeps the order it arrived in.
 - The Handoff, Feedback, Question, Answer and Check run sections are appended below the spec. The board rewrites `status`, `order` and `updated` when a card moves, and leaves the body alone.
-- Done cards stay as files with `status: done`. The pane never deletes a file.
+- Done and Cancelled cards stay as files with `status: done` or `cancelled`. The pane never deletes a file.
 - Files Claude writes or edits show on the board straight away.
 
 Whether to commit `.kanban/` is up to you.
