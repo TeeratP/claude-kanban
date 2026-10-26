@@ -211,8 +211,6 @@ export const S = {
       ? ''
       : `${BACKEND[name]}${mode === 'auto' ? ' (auto)' : ''}`
   },
-  githubNoProject:
-    'CLAUDE.md or AGENTS.md needs a Repo and a Project board line',
   githubSignedOut: (reason: string) =>
     `gh auth status failed: run gh auth login (${reason})`,
   githubNoRemote: (reason: string) =>
@@ -400,7 +398,32 @@ export const S = {
     'CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
   configUnclear: 'board config not understood',
   githubHint: [
-    'GitHub board? Add Repo and Project board lines to CLAUDE.md or AGENTS.md',
+    'GitHub board? Link a Project to the repo, or add Repo and Project board lines to CLAUDE.md or AGENTS.md',
     'Not picked up? Set backend: github to see why',
   ],
+
+  // #33
+  boardName: (number: number, title: string) => `#${number} ${title}`,
+  noGithubBoard: (repo: string) => `no GitHub board for ${repo}`,
+  pickBoard: 'Pick board:',
+  changeBoard: 'Change board:',
+  pickLabel: (name: string) => ` [${name}]`,
+  noOtherBoard: (repo: string) => `No other GitHub board is linked to ${repo}.`,
+  pickFailed: (reason: string) => `Could not use that board: ${reason}`,
+  noReviewStatus:
+    'This board has no In review status: Human is the human label on a card in progress.',
+  humanLabelDescription: 'needs a person (credentials, console, device)',
+  detectSaveFailed: (reason: string) =>
+    `kanban: could not save the detected board: ${reason}`,
+  githubNoGh: (reason: string) =>
+    `gh is not installed: install it from https://cli.github.com (${reason})`,
+  originNotGithub: (url: string) => `origin ${url} is not a github.com URL`,
+  githubLookupFailed: (repo: string, reason: string) =>
+    `could not list the GitHub Projects of ${repo}: ${reason}; run gh auth refresh -s read:project`,
+  githubDetectedFailed: (number: number, reason: string) =>
+    `project board #${number} can't be used: ${reason}`,
+  githubNoBoard: (repo: string) =>
+    `no GitHub Project is linked to ${repo}: link one on GitHub, or add Repo and Project board lines to CLAUDE.md or AGENTS.md`,
+  githubPick: (repo: string) =>
+    `Several GitHub boards fit ${repo}: the person must pick one in the kanban pane`,
 }

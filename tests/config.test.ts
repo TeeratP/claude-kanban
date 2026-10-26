@@ -5,6 +5,7 @@ import { importsOf, readConfigText } from '../hooks/config'
 import { LOTTO, NAE, PUNN_AGENTS, PUNN_CLAUDE } from './configs'
 import { fakeEngine } from './fake-gh'
 import type { Route } from './fake-gh'
+import { GH_VERSION, graphql, lines } from './zero'
 
 const SIGNED_IN: Route = { match: ['gh', 'auth', 'status'], reply: {} }
 const REMOTE: Route = {
@@ -261,8 +262,8 @@ test('a file that cannot be read is skipped, logged, and the rest still count', 
   ])
 })
 
-test('auto marks a local fallback when a board is mentioned but cannot be read, and logs why', async () => {
-  const { $, logs, calls } = fakeEngine(ROUTES, {
+test('auto marks a local fallback when a board is mentioned but cannot be read and none is found, and logs why', async () => {
+  const { $, logs, calls } = fakeEngine([...ROUTES, GH_VERSION, graphql()], {
     'AGENTS.md':
       'Board id: `PVT_kwHOAcCsLc4Bbjg2`, number written down elsewhere.',
   })
@@ -274,11 +275,18 @@ test('auto marks a local fallback when a board is mentioned but cannot be read, 
   expect(logs).toEqual([
     'kanban: using local cards, GitHub is not usable here: CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
   ])
-  expect(calls).toEqual([])
+  // The config gave nothing to go on, so only the search for a board ran.
+  expect(lines(calls)).toEqual([
+    'git remote get-url origin',
+    'gh --version',
+    'gh auth status',
+    'gh api graphql -f query=… -f o=TeeratP -f n=attend-baby',
+    'gh api graphql -f query=… -f o=TeeratP',
+  ])
 })
 
 test('auto does not mark a local fallback that mentions no board, or one gh refused', async () => {
-  const plain = fakeEngine(ROUTES, {
+  const plain = fakeEngine([...ROUTES, GH_VERSION, graphql()], {
     'CLAUDE.md': '# Notes\n\nA job board app.\n',
   })
   const refused = fakeEngine(
@@ -292,7 +300,10 @@ test('auto does not mark a local fallback that mentions no board, or one gh refu
     { 'AGENTS.md': LOTTO },
   )
 
-  expect(await detectBackend(plain.$, 'auto')).toEqual({ kind: 'local' })
+  expect(await detectBackend(plain.$, 'auto')).toEqual({
+    kind: 'local',
+    noBoardFor: 'TeeratP/attend-baby',
+  })
   expect(plain.logs).toEqual([])
   expect(await detectBackend(refused.$, 'auto')).toEqual({ kind: 'local' })
   expect(refused.logs).toEqual([
@@ -300,12 +311,12 @@ test('auto does not mark a local fallback that mentions no board, or one gh refu
   ])
 })
 
-test('github mode with a board it cannot read says what the files need', async () => {
-  const { $ } = fakeEngine(ROUTES, {
+test('github mode with a board it cannot read looks for one itself, and says what the files need when none is linked', async () => {
+  const { $ } = fakeEngine([...ROUTES, GH_VERSION, graphql()], {
     'AGENTS.md': 'Board id: `PVT_kwHOAcCsLc4Bbjg2`',
   })
 
   await expect(detectBackend($, 'github')).rejects.toThrow(
-    'CLAUDE.md or AGENTS.md needs a Repo and a Project board line',
+    'add Repo and Project board lines to CLAUDE.md or AGENTS.md',
   )
 })

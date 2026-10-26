@@ -39,7 +39,23 @@ export function fakeEngine(
   const logs: string[] = []
   const toasts: string[] = []
   const fsCalls = { exists: [] as string[], reads: [] as string[] }
+  // Kept as JSON text, as the engine keeps it.
+  const saved = new Map<string, string>()
   const $ = {
+    session: { cwd: async () => '/work' },
+    store: {
+      get: async (key: string) => {
+        const text = saved.get(key)
+
+        return text === undefined ? undefined : JSON.parse(text)
+      },
+      set: async (key: string, value: unknown) => {
+        saved.set(key, JSON.stringify(value))
+      },
+      delete: async (key: string) => {
+        saved.delete(key)
+      },
+    },
     fs: {
       exists: async (file: string) => {
         fsCalls.exists.push(file)
@@ -79,7 +95,7 @@ export function fakeEngine(
     },
   } as unknown as EngineInterface
 
-  return { $, calls, fsCalls, logs, toasts }
+  return { $, calls, fsCalls, logs, toasts, saved }
 }
 
 /**
@@ -91,7 +107,8 @@ export function fakeProcess(
   on: On,
   routes: readonly Route[],
   hold?:
-    Promise<void> | ((argv: readonly string[]) => Promise<void> | undefined),
+    | Promise<void>
+    | ((argv: readonly string[]) => Promise<void> | undefined),
 ) {
   const calls: Call[] = []
   on('process.run', async (_, e) => {

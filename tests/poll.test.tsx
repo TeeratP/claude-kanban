@@ -419,7 +419,7 @@ test('a saved board of another shape is ignored', async ($, on) => {
   await clock.settle()
 
   expect((await row(ui, 'card:md:0001-login'))?.text).toContain('Fix login')
-  expect(logs).toEqual([])
+  expect(logs.filter(line => line.includes('saved board'))).toEqual([])
   await ui.unmount()
 })
 

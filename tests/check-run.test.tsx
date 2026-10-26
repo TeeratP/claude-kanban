@@ -32,10 +32,17 @@ type Reply = {
 }
 type Shell = { argv: readonly string[]; timeoutMs?: number; cwd?: string }
 
+// The board looks for a GitHub board with git and gh; these tests are about the check, so none is found.
+const NO_GITHUB = { deny: 'no GitHub board here' }
+const isProbe = (argv: readonly string[]) =>
+  argv[0] === 'git' || argv[0] === 'gh'
+
 /** Answers `process.run` for the check: records each call, then replies when `reply` does. */
 function fakeShell(on: On, reply: () => Promise<Reply> | Reply = () => ({})) {
   const calls: Shell[] = []
   on('process.run', async (_, e) => {
+    if (isProbe(e.argv)) return NO_GITHUB
+
     calls.push({
       argv: e.argv,
       ...(e.init?.timeoutMs === undefined
@@ -243,6 +250,8 @@ for (const surface of SURFACES) {
       })
       // The engine kills the child at its timeout and rejects the call.
       on('process.run', async (_, e) => {
+        if (isProbe(e.argv)) return NO_GITHUB
+
         asked.push(e.init?.timeoutMs)
         await expired
 
@@ -275,7 +284,9 @@ for (const surface of SURFACES) {
 
   test(`a command that cannot start says why and is not saved on the ${surface}`, async ($, on) => {
     const world = boot(on, cardWith('Run `npm test`'))
-    on('process.run', () => ({ deny: 'spawn sh ENOENT' }))
+    on('process.run', (_, e) =>
+      isProbe(e.argv) ? NO_GITHUB : { deny: 'spawn sh ENOENT' },
+    )
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
     await world.clock.settle()
