@@ -12,13 +12,12 @@ import {
   detailIds,
   detailSegs,
   durationLabel,
-  roundLabel,
+  statsLabel,
   tokenLabel,
-  totalLabel,
   totalsOf,
   truncateStart,
 } from '../hooks/activity-view'
-import { detailReserve, hitTest, layoutBoard } from '../hooks/layout'
+import { hitTest, layoutBoard, sectionWindow } from '../hooks/layout'
 import type { Row } from '../hooks/layout'
 import { EMPTY_ACTIVITY, INITIAL_UI, cellWidth } from '../hooks/model'
 
@@ -56,6 +55,8 @@ const RUNNING: KanbanActivity['live'] = {
   isRunning: true,
 }
 const STOPPED = EMPTY_ACTIVITY.live
+// Where a card's title starts, so where its second row does.
+const TITLE_AT = 5
 
 const text = (segs: { text: string }[]) => segs.map(one => one.text).join('')
 
@@ -106,16 +107,11 @@ test('rounds add up, with the cache reads kept apart from the tokens', () => {
     tokens: 48_000,
     cacheRead: 120_000,
   })
-  expect(totalLabel(totalsOf(rounds))).toBe(
-    'Total · 8m · 48k tok · 120k cached',
-  )
-  expect(roundLabel(2, rounds[1] as KanbanRound)).toBe(
-    'Round 2 · 3m · 36k tok · 70k cached · Claude',
-  )
+  expect(statsLabel(totalsOf(rounds))).toBe('8m · 48k tok')
 })
 
-test('a card row stays on one line while Claude has nothing to show yet', () => {
-  expect(totalLabel(totalsOf([round()]))).toBe('Total · -')
+test('a round with nothing to count has no stats to label', () => {
+  expect(statsLabel(totalsOf([round()]))).toBe('')
 })
 
 test('a path cut to fit keeps its end, from a slash when there is one', () => {
@@ -131,9 +127,9 @@ test('the second row names the main session and shows what it is doing', () => {
     target: 'src/auth.ts',
     isToolRunning: true,
   })
-  const segs = detailSegs(44, one, RUNNING, NOW)
+  const segs = detailSegs(44, one, RUNNING, NOW, TITLE_AT)
 
-  expect(text(segs)).toBe('    ● Claude ⟳ Edit src/auth.ts')
+  expect(text(segs)).toBe('     ● Claude · ⟳ Edit src/auth.ts')
   expect(segs.find(one => one.text === '●')?.color).toBe(colorOf('Claude'))
   expect(segs.find(one => one.text === '●')?.dim).toBe(false)
 })
@@ -146,9 +142,9 @@ test('several agents show as several dots and the last to act is named', () => {
     target: 'login',
     isToolRunning: true,
   })
-  const segs = detailSegs(44, one, RUNNING, NOW)
+  const segs = detailSegs(44, one, RUNNING, NOW, TITLE_AT)
 
-  expect(text(segs)).toBe('    ●●● Explore ⟳ Grep login')
+  expect(text(segs)).toBe('     ●●● Explore · ⟳ Grep login')
   expect(segs.filter(one => one.text === '●').map(one => one.color)).toEqual([
     colorOf('Claude'),
     colorOf('Explore'),
@@ -160,7 +156,7 @@ test('past four agents the dots stop and a count follows', () => {
   const names = ['Claude', 'a', 'b', 'c', 'd', 'e']
   const one = activityOf({ rounds: [round({ agents: names })] })
 
-  expect(text(detailSegs(44, one, STOPPED, NOW))).toContain('●●●●+2')
+  expect(text(detailSegs(44, one, STOPPED, NOW, TITLE_AT))).toContain('●●●●+2')
 })
 
 test('the stats keep their room and a path gives up its front', () => {
@@ -170,12 +166,12 @@ test('the stats keep their room and a path gives up its front', () => {
     target: 'src/hooks/authentication.ts',
     isToolRunning: true,
   })
-  const line = text(detailSegs(44, one, STOPPED, NOW))
-  const running = text(detailSegs(44, one, RUNNING, NOW))
+  const line = text(detailSegs(44, one, STOPPED, NOW, TITLE_AT))
+  const running = text(detailSegs(44, one, RUNNING, NOW, TITLE_AT))
 
-  expect(line).toMatch(/ · 12m · 48k tok$/)
+  expect(line).toMatch(/ · 12m · 48k$/)
   expect(line).toContain('idle')
-  expect(running).toMatch(/^ {4}● Claude ⟳ Edit …\S+ · 12m · 48k tok$/)
+  expect(running).toMatch(/^ {5}● Claude · ⟳ Edit …\S+ · 12m · 48k$/)
   expect(cellWidth(running)).toBeLessThanOrEqual(44)
 })
 
@@ -183,8 +179,8 @@ test('a turn running on the card counts its time up to now', () => {
   const one = activityOf({ rounds: [round({ ms: 2 * MINUTE })] })
   const live = { ...RUNNING, since: NOW - 3 * MINUTE }
 
-  expect(text(detailSegs(60, one, live, NOW))).toContain('5m')
-  expect(text(detailSegs(60, one, STOPPED, NOW))).toContain('2m')
+  expect(text(detailSegs(60, one, live, NOW, TITLE_AT))).toContain('5m')
+  expect(text(detailSegs(60, one, STOPPED, NOW, TITLE_AT))).toContain('2m')
 })
 
 test('Claude is idle once nothing has run for a minute, and says for how long', () => {
@@ -195,18 +191,26 @@ test('Claude is idle once nothing has run for a minute, and says for how long', 
     lastAt: NOW - 3 * MINUTE,
   })
 
-  expect(text(detailSegs(44, one, RUNNING, NOW))).toBe('    ● Claude idle 3m')
+  expect(text(detailSegs(44, one, RUNNING, NOW, TITLE_AT))).toBe(
+    '     ● Claude · idle 3m',
+  )
   expect(
-    text(detailSegs(44, { ...one, lastAt: NOW - 20_000 }, RUNNING, NOW)),
-  ).toBe('    ● Claude ⟳ Bash npm test')
+    text(
+      detailSegs(44, { ...one, lastAt: NOW - 20_000 }, RUNNING, NOW, TITLE_AT),
+    ),
+  ).toBe('     ● Claude · ⟳ Bash npm test')
   // A tool still running is not idle, however long it takes.
   expect(
-    text(detailSegs(44, { ...one, isToolRunning: true }, RUNNING, NOW)),
-  ).toBe('    ● Claude ⟳ Bash npm test')
+    text(
+      detailSegs(44, { ...one, isToolRunning: true }, RUNNING, NOW, TITLE_AT),
+    ),
+  ).toBe('     ● Claude · ⟳ Bash npm test')
   // With no turn running it is idle, whatever the card was last doing.
   expect(
-    text(detailSegs(44, { ...one, isToolRunning: true }, STOPPED, NOW)),
-  ).toBe('    ● Claude idle 3m')
+    text(
+      detailSegs(44, { ...one, isToolRunning: true }, STOPPED, NOW, TITLE_AT),
+    ),
+  ).toBe('     ● Claude · idle 3m')
 })
 
 test('the row is never wider than the pane, whatever the pane', () => {
@@ -227,7 +231,7 @@ test('the row is never wider than the pane, whatever the pane', () => {
 
   for (let columns = 1; columns <= 100; columns += 1) {
     expect(
-      cellWidth(text(detailSegs(columns, one, RUNNING, NOW))),
+      cellWidth(text(detailSegs(columns, one, RUNNING, NOW, TITLE_AT))),
     ).toBeLessThanOrEqual(columns)
   }
 })
@@ -246,12 +250,12 @@ function cardOf(number: number, column: KanbanColumn): KanbanCard {
   }
 }
 
-const open = {
-  ...INITIAL_UI,
-  collapsed: { human: false, claude: false, backlog: false, done: false },
-}
+const open = INITIAL_UI
 const kinds = (rows: Row[]) =>
   rows.map(row => ('column' in row ? `${row.kind}:${row.column}` : row.kind))
+// Without the blank filler that keeps the sections' heights.
+const content = (rows: Row[]) =>
+  kinds(rows).filter(kind => !kind.startsWith('blank'))
 
 const worked = (...numbers: number[]): KanbanActivity => ({
   ...EMPTY_ACTIVITY,
@@ -289,24 +293,25 @@ test('the second row follows its card and belongs to its section', () => {
     details: new Set(['md:1']),
   })
 
-  expect(kinds(rows)).toEqual([
+  expect(content(rows)).toEqual([
     'toolbar',
     'toolbar',
+    'group',
+    'header:backlog',
+    'card:backlog',
     'header:human',
     'empty:human',
     'header:claude',
     'card:claude',
     'detail:claude',
     'card:claude',
-    'header:backlog',
-    'card:backlog',
-    'header:done',
-    'empty:done',
+    'group',
   ])
   // The row is the tree row it is drawn on, so a wheel over it is the Claude section's.
-  expect(hitTest(rows, 6)).toBe('claude')
-  expect(hitTest(rows, 7)).toBe('claude')
-  expect(hitTest(rows, 9)).toBe('backlog')
+  const at = rows.findIndex(row => row.kind === 'detail')
+  expect(hitTest(rows, at)).toBe('claude')
+  expect(hitTest(rows, at + 1)).toBe('claude')
+  expect(hitTest(rows, at - 5)).toBe('human')
 })
 
 test('with no second rows the layout is as it was', () => {
@@ -332,23 +337,130 @@ test('the tree still fits the pane when second rows are on show', () => {
 
     expect(rows.length).toBeLessThanOrEqual(bodyRows)
     expect(bare.length).toBeLessThanOrEqual(bodyRows)
-    expect(rows.filter(row => row.kind === 'detail').length).toBe(
-      rows.filter(row => row.kind === 'card' && row.column === 'claude').length,
+    // A second row shows with its card, and the section is no taller for it.
+    const shown = rows.filter(
+      row => row.kind === 'card' && row.column === 'claude',
     )
+    expect(rows.filter(row => row.kind === 'detail').length).toBe(shown.length)
+    expect(rows.length).toBe(bare.length)
   }
 })
 
-test('second rows are kept room for only while the Claude section is open', () => {
-  const cards = [cardOf(1, 'claude'), cardOf(2, 'claude')]
-  const details = new Set(['md:1', 'md:2'])
+test('a Claude section holds as many rows as another: its cards with second rows take two each', () => {
+  const claude = Array.from({ length: 12 }, (_, i) => cardOf(i + 1, 'claude'))
+  const details = new Set(claude.map(one => one.id))
+  const rows = layoutBoard({ cards: claude, ui: open, bodyRows: 30, details })
+  const claudeRows = rows.filter(
+    row => 'column' in row && row.column === 'claude' && row.kind !== 'header',
+  )
 
-  expect(detailReserve(cards, open, details)).toBe(2)
-  expect(detailReserve(cards, open, undefined)).toBe(0)
+  // Seven rows: three cards with their second rows, and the count of the nine others.
+  expect(claudeRows.map(row => row.kind)).toEqual([
+    'card',
+    'detail',
+    'card',
+    'detail',
+    'card',
+    'detail',
+    'more',
+  ])
+  expect(claudeRows.at(-1)).toMatchObject({ dir: 'down', n: 9 })
+})
+
+test('a window pages by the cards it shows, however many rows their second rows take', () => {
+  const claude = Array.from({ length: 12 }, (_, i) => cardOf(i + 1, 'claude'))
+  const details = new Set(claude.map(one => one.id))
+
+  const first = sectionWindow(claude, 'claude', 0, 7, details)
+  expect(first.taken).toBe(3)
+  const second = sectionWindow(claude, 'claude', first.taken, 7, details)
+  // The count above takes a row, so two cards with their second rows fit with the count below.
+  expect(second.rows[0]).toMatchObject({ kind: 'more', dir: 'up', n: 3 })
+  expect(second.taken).toBe(2)
+  expect(second.rows).toHaveLength(7)
+})
+
+// The second row, B.3: aligned to the title, joined by separators, stats kept short.
+
+test('the second row starts at the title column, whatever the width of the numbers', () => {
+  const one = activityOf({ tool: 'Edit', target: 'a.ts', isToolRunning: true })
+
+  for (const indent of [3, 5, 7, 9]) {
+    const line = text(detailSegs(60, one, RUNNING, NOW, indent))
+
+    expect(line.indexOf('●')).toBe(indent)
+  }
+})
+
+test('the name, the activity and the stats are joined by a dot, and the row says 48k, not 48k tok', () => {
+  const one = activityOf({
+    rounds: [round({ ms: 12 * MINUTE, input: 40_000, output: 8_000 })],
+    lastAgent: 'Explore',
+    tool: 'Edit',
+    target: 'session.ts',
+    isToolRunning: true,
+  })
+
+  expect(text(detailSegs(60, one, RUNNING, NOW, 5))).toBe(
+    '     ● Explore · ⟳ Edit session.ts · 12m · 48k',
+  )
   expect(
-    detailReserve(
-      cards,
-      { ...open, collapsed: { ...open.collapsed, claude: true } },
-      details,
+    text(
+      detailSegs(
+        60,
+        { ...one, isToolRunning: false, lastAt: NOW - 3 * MINUTE },
+        RUNNING,
+        NOW,
+        5,
+      ),
     ),
-  ).toBe(0)
+  ).toBe('     ● Explore · idle 3m · 12m · 48k')
+  // The detail view keeps the long form, where there is room to say what it is.
+  expect(statsLabel(totalsOf(one.rounds))).toBe('12m · 48k tok')
+})
+
+test('a narrow pane gives up the activity first, then the name, and keeps the stats', () => {
+  const one = activityOf({
+    rounds: [round({ ms: 12 * MINUTE, input: 40_000, output: 8_000 })],
+    lastAgent: 'Explore',
+    tool: 'Edit',
+    target: 'session.ts',
+    isToolRunning: true,
+  })
+  const at = (columns: number) =>
+    text(detailSegs(columns, one, RUNNING, NOW, 7))
+
+  expect(at(44)).toBe('       ● Explore · ⟳ Edit …on.ts · 12m · 48k')
+  // Too tight for the activity (under 6 cells): the name and the stats.
+  expect(at(30)).toBe('       ● Explore · 12m · 48k')
+  // Too tight for the name as well: just the stats.
+  expect(at(24)).toBe('       ● 12m · 48k')
+  for (const columns of [24, 30, 44]) {
+    expect(cellWidth(at(columns))).toBeLessThanOrEqual(columns)
+  }
+})
+
+test("Claude's own dot is always Claude's colour, and a subagent's never is, nor the colour for what needs you", () => {
+  expect(colorOf('Claude')).toBe('claude')
+  const names = [
+    'Explore',
+    'Plan',
+    'general-purpose',
+    'reviewer',
+    'a',
+    'b',
+    'c',
+    'test-runner',
+    'security-auditor',
+    'x1',
+    'x2',
+    'x3',
+  ]
+  const colours = names.map(colorOf)
+
+  expect(colours).not.toContain('claude')
+  expect(colours).not.toContain('permission')
+  // The same name always gets the same colour, however it is cased.
+  expect(colorOf('explore')).toBe(colorOf('Explore'))
+  expect(new Set(colours).size).toBeGreaterThan(2)
 })

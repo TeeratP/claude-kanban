@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { parseSections } from '../hooks/handoff'
+import { TOOL_SPECS } from '../hooks/tools'
 import { parseCardFile, serializeCardFile } from '../hooks/local'
 import { click } from './board-ui'
 import { NOW, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
@@ -269,7 +270,7 @@ test('kanban_handoff shows in a detail view that is open on the card', async ($,
   await clock.settle()
 
   expect((await ui.find({ key: 'section:0' }))?.text).toContain(
-    'Handoff (2026-10-25)',
+    'Handoff · Oct 25',
   )
   await ui.unmount()
 })
@@ -438,6 +439,185 @@ test('kanban_create refuses a bad title, a bad column and a start in Human', asy
     deny: expect.stringContaining('kanban_handoff'),
   })
   expect(files).toEqual({})
+})
+
+test('kanban_list takes any of the six columns, lists Done and Cancelled by their newest ten and Suspended whole', async ($, on) => {
+  const files: Record<string, string> = {}
+  for (let n = 1; n <= 12; n += 1) {
+    for (const [offset, status] of [
+      [0, 'done'],
+      [100, 'cancelled'],
+      [200, 'suspended'],
+    ] as const) {
+      files[path(offset + n, `c${offset + n}`)] = card(offset + n, {
+        status,
+        title: `${status} ${n}`,
+        updated: `2026-10-${String(10 + n)}T10:00:00Z`,
+      })
+    }
+  }
+  boot(on, files)
+  const call = (column?: string) =>
+    $.tool.call({
+      tool: tool('kanban_list'),
+      ...(column === undefined ? {} : { column }),
+    })
+  const listed = async (column?: string) => {
+    const answer = await call(column)
+    if (!('result' in answer)) throw new Error('kanban_list refused')
+
+    return String(answer.result).split('\n')
+  }
+
+  const done = await listed('done')
+  expect(done).toHaveLength(10)
+  expect(done[0]).toMatch(/^#12 \[done\] done 12 /)
+  expect(done.some(line => line.startsWith('#2 [done]'))).toBe(false)
+  const cancelled = await listed('cancelled')
+  expect(cancelled).toHaveLength(10)
+  expect(cancelled[0]).toMatch(/^#112 \[cancelled\] cancelled 12 /)
+  expect(await listed('suspended')).toHaveLength(12)
+  // All six, in the order of the board: Done, Cancelled, Suspended.
+  expect(await listed()).toHaveLength(32)
+  expect(await call('later')).toMatchObject({
+    deny: expect.stringContaining(
+      'use backlog, human, claude, done, cancelled or suspended',
+    ),
+  })
+})
+
+test('Claude cannot move a card the person set aside, nor ask about it, but can still read it and hand it off', async ($, on) => {
+  const files = {
+    [path(1, 'a')]: card(1, { status: 'suspended', title: 'On hold' }, 'Spec.'),
+    [path(2, 'b')]: card(2, { status: 'cancelled', title: 'Dropped' }, 'Spec.'),
+  }
+  boot(on, files)
+  const before = { ...files }
+
+  for (const [number, word] of [
+    [1, 'suspended'],
+    [2, 'cancelled'],
+  ] as const) {
+    const refused = `Card #${number} is ${word} by the person; leave it unless they move it back.`
+    for (const to of ['claude', 'human', 'backlog', 'done']) {
+      expect(
+        await $.tool.call({ tool: tool('kanban_move'), card: number, to }),
+      ).toEqual({ deny: refused })
+    }
+    expect(
+      await $.tool.call({
+        tool: tool('kanban_ask'),
+        card: number,
+        question: 'Which one?',
+      }),
+    ).toEqual({ deny: refused })
+    expect(
+      await $.tool.call({ tool: tool('kanban_show'), card: number }),
+    ).toMatchObject({ result: expect.stringContaining('Spec.') })
+  }
+  expect(files).toEqual(before)
+
+  // A handoff is only a section written on the card; it moves nothing.
+  expect(
+    await $.tool.call({
+      tool: tool('kanban_handoff'),
+      card: 1,
+      did: 'Looked again',
+      check: 'Read it',
+      need: 'Decide',
+    }),
+  ).toMatchObject({ result: expect.stringContaining('#1') })
+  expect(files[path(1, 'a')]).toContain('status: suspended')
+  expect(files[path(1, 'a')]).toContain('## Handoff (')
+})
+
+for (const to of ['suspended', 'cancelled'] as const) {
+  test(`a card the person ${to === 'suspended' ? 'suspends' : 'cancels'} while kanban_move reads its handoff stays ${to}`, async ($, on) => {
+    const files = { [path(1, 'a')]: withBody(`The spec.\n\n${HANDOFF}`) }
+    const { clock, calls, toasts } = boot(on, files)
+    await $.session.start({
+      cwd: '/',
+      surface: 'terminal',
+      isInteractive: true,
+    })
+    await $.command.run({ ...RUN })
+    await clock.settle()
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await click(ui, 'card:md:0001-a')
+    let release = () => {}
+    calls.lateRead = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    const moving = moveToHuman($)
+    await ui.press({ key: `move:${to}` })
+    release()
+
+    expect(await moving).toEqual({
+      deny: `Card #1 is ${to} by the person; leave it unless they move it back.`,
+    })
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+    expect(files[path(1, 'a')]).toContain(`status: ${to}`)
+    expect(await $.tool.call({ tool: tool('kanban_list') })).toMatchObject({
+      result: expect.stringContaining(`#1 [${to}] Fix login`),
+    })
+    expect(toasts).toEqual([])
+    await ui.unmount()
+  })
+}
+
+test('Claude cannot move a card to Suspended or Cancelled, and the tool says it can not', async ($, on) => {
+  const files = { [path(1, 'a')]: card(1, { status: 'claude' }) }
+  boot(on, files)
+  const spec = (name: string) => TOOL_SPECS.find(one => one.name === name)
+  const enumOf = (name: string, key: string): unknown => {
+    const properties = spec(name)?.inputSchema?.properties as
+      | Record<string, { enum?: unknown }>
+      | undefined
+
+    return properties?.[key]?.enum
+  }
+
+  expect(enumOf('kanban_move', 'to')).toEqual([
+    'human',
+    'claude',
+    'backlog',
+    'done',
+  ])
+  expect(enumOf('kanban_create', 'column')).toEqual([
+    'claude',
+    'backlog',
+    'done',
+  ])
+  expect(enumOf('kanban_list', 'column')).toEqual([
+    'backlog',
+    'human',
+    'claude',
+    'done',
+    'cancelled',
+    'suspended',
+  ])
+  expect(spec('kanban_move')?.description).toContain(
+    'Suspended and Cancelled are set by the person only.',
+  )
+
+  for (const to of ['suspended', 'cancelled', 'canceled']) {
+    expect(
+      await $.tool.call({ tool: tool('kanban_move'), card: 1, to }),
+    ).toMatchObject({
+      deny: expect.stringContaining(`"${to}" is not a column`),
+    })
+    expect(
+      await $.tool.call({
+        tool: tool('kanban_create'),
+        title: 'T',
+        spec: 's',
+        column: to,
+      }),
+    ).toMatchObject({ deny: expect.stringContaining('is not a column') })
+  }
+  expect(files[path(1, 'a')]).toContain('status: claude')
 })
 
 test('kanban_create that cannot write says why', async ($, on) => {

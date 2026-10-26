@@ -1,4 +1,7 @@
-export type KanbanColumn = 'human' | 'claude' | 'backlog' | 'done'
+export type KanbanColumn =
+  'human' | 'claude' | 'backlog' | 'done' | 'suspended' | 'cancelled'
+/** Active: Backlog, Human, Claude. Inactive: Done, Cancelled, Suspended. */
+export type KanbanGroup = 'active' | 'inactive'
 export type KanbanTag = 'review' | 'human' | 'question'
 export type KanbanCard = {
   id: string
@@ -17,8 +20,11 @@ export type KanbanCard = {
   isClosed?: boolean
   url?: string
   prNumbers?: number[]
+  /** Why a GitHub issue was closed (or reopened); absent for one never closed. */
+  stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'DUPLICATE' | 'REOPENED'
 }
 // `inReview` is missing on a detected board without that status: Human is then the `human` label.
+// `cancelled` and `suspended` are Status options the board happens to have, learned from its loads.
 // `isDetected`: found from git and gh with no config (`title` is the board's name then).
 export type KanbanGithub = {
   kind: 'github'
@@ -33,7 +39,11 @@ export type KanbanGithub = {
     inProgress: string
     inReview?: string
     done: string
+    cancelled?: string
+    suspended?: string
   }
+  // The names the board gives its `cancelled` and `suspended` options, learned from its loads.
+  optionNames?: { cancelled?: string; suspended?: string }
   title?: string
   isDetected?: true
 }
@@ -85,14 +95,15 @@ export type KanbanView =
 export type KanbanUi = {
   view: KanbanView
   offsets: Record<KanbanColumn, number>
-  collapsed: Record<KanbanColumn, boolean>
+  /** The group drawn open; 'none' when both are folded. */
+  openGroup: KanbanGroup | 'none'
   draft: string
   /** The filter query applied to the board ('' for none); kept for the session only. */
   filter: string
   /** Whether the filter's text field is shown. */
   isFilterOpen: boolean
-  /** Sections the person collapsed or opened by a header press while filtering; dropped when the filter changes. */
-  filterCollapsed: Partial<Record<KanbanColumn, boolean>>
+  /** The group a header press chose while filtering; dropped when the filter changes. */
+  filterGroup?: KanbanGroup | 'none'
 }
 export type KanbanQuickAdd = {
   isOpen: boolean

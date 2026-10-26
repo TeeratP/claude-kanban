@@ -4,7 +4,8 @@ import { expect, test } from 'claude-code/testing'
 import type { KanbanCard } from '../types'
 import { parseSections } from '../hooks/handoff'
 import { appendLocal, parseCardFile, serializeCardFile } from '../hooks/local'
-import { NOW, boot, card, path } from './fakes'
+import { click } from './board-ui'
+import { NOW, PANE, RUN, boot, card, path } from './fakes'
 
 const CARD: KanbanCard = {
   id: 'md:0007-fix-login',
@@ -55,6 +56,26 @@ test('an unknown status lands in Backlog', () => {
   const text = '---\nid: 2\ntitle: T\nstatus: someday\n---\n'
 
   expect(parseCardFile('0002-t.md', text)?.card.column).toBe('backlog')
+})
+
+test('suspended and cancelled are read, and the American spelling is written back as cancelled', () => {
+  const read = (status: string) =>
+    parseCardFile('0002-t.md', `---\nid: 2\ntitle: T\nstatus: ${status}\n---\n`)
+
+  expect(read('suspended')?.card.column).toBe('suspended')
+  expect(read('cancelled')?.card.column).toBe('cancelled')
+  expect(read('canceled')?.card.column).toBe('cancelled')
+
+  for (const column of ['suspended', 'cancelled'] as const) {
+    const text = serializeCardFile({ ...CARD, column }, 'Spec.')
+
+    expect(text).toContain(`\nstatus: ${column}\n`)
+    expect(parseCardFile('0007-fix-login.md', text)?.card.column).toBe(column)
+  }
+  // Read as cancelled, a card is written as cancelled.
+  expect(serializeCardFile(read('canceled')?.card ?? CARD, '')).toContain(
+    '\nstatus: cancelled\n',
+  )
 })
 
 test('a card without an id takes its number from the file name', () => {
@@ -168,6 +189,39 @@ test('moving a card rewrites status, updated and order, and keeps the body', asy
   expect(parsed?.card.createdAt).toBe('2026-10-25T10:00:00Z')
   expect(parsed?.body).toBe('Spec text.')
   expect(files[path(2, 'b')]).toContain('Old.')
+})
+
+test('the person moving a card to Suspended or Cancelled writes the status and the next order of that section', async ($, on) => {
+  const files = {
+    [path(1, 'a')]: card(1, { status: 'claude', order: 4 }),
+    [path(2, 'b')]: card(2, { status: 'suspended', order: 7 }),
+    [path(3, 'c')]: card(3, { status: 'backlog', order: 9 }),
+  }
+  const { clock } = boot(on, files)
+  await $.session.start({ cwd: '/', surface: 'vscode', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+
+  await click(ui, 'card:md:0001-a')
+  await ui.press({ key: 'move:suspended' })
+  await clock.advance(300)
+  const suspended = parseCardFile('0001-a.md', files[path(1, 'a')] ?? '')
+  expect(suspended?.card.column).toBe('suspended')
+  expect(suspended?.card.order).toBe(8)
+  expect(suspended?.card.updatedAt).toBe(new Date(NOW + 300).toISOString())
+
+  await ui.press({ key: 'back' })
+  await click(ui, 'card:md:0003-c')
+  await ui.press({ key: 'move:cancelled' })
+  await clock.advance(300)
+  const cancelled = parseCardFile('0003-c.md', files[path(3, 'c')] ?? '')
+  expect(cancelled?.card.column).toBe('cancelled')
+  expect(files[path(3, 'c')]).toContain('\nstatus: cancelled\n')
+  expect(
+    parseCardFile('0002-b.md', files[path(2, 'b')] ?? '')?.card.order,
+  ).toBe(7)
+  await ui.unmount()
 })
 
 test('a move the backend refuses is answered at once and writes nothing', async ($, on) => {

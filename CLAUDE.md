@@ -1,6 +1,6 @@
 # claude-kanban
 
-Claude Code mod (plugin): a kanban side pane with Backlog / Claude / Human / Done sections. Cards are backed by GitHub Issues + a Projects-v2 board, or by local `.kanban/*.md` files when GitHub isn't set up.
+Claude Code mod (plugin): a kanban side pane with two groups of sections: Active (Backlog, Human, Claude) and Inactive (Done, Cancelled, Suspended). Cards are backed by GitHub Issues + a Projects-v2 board, or by local `.kanban/*.md` files when GitHub isn't set up.
 
 Design and API notes: `docs/plan.md` (authoritative spec; cites line numbers in the plugin-authoring types file).
 

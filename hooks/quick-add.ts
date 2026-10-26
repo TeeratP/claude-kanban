@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { KanbanCard } from '../types'
+import type { KanbanCard, KanbanQuickAdd } from '../types'
 import { updateQuickAdd, updateSync, updateUi } from './atoms'
 import { createCard } from './backend'
 import { ensureBackend, inBackground, refresh, setBoard } from './board'
@@ -17,6 +17,8 @@ import { S } from './strings'
 import { ensureTicker, expireLater } from './sync'
 
 let added = 0
+// The rows the details field is given in the form.
+const DETAILS_ROWS = 3
 
 type Field = 'title' | 'spec'
 
@@ -27,12 +29,22 @@ export function toggleQuickAdd($: EngineInterface) {
   )
 }
 
+/** Rows the add form takes above the list: the title field, its buttons, and the details field when shown. */
+export function quickAddRows(form: KanbanQuickAdd): number {
+  return form.isOpen ? 2 + (form.hasDetails ? DETAILS_ROWS : 0) : 0
+}
+
 export function closeQuickAdd($: EngineInterface) {
   return updateQuickAdd($, () => EMPTY_QUICK_ADD)
 }
 
 export function showQuickAddDetails($: EngineInterface) {
   return updateQuickAdd($, form => ({ ...form, hasDetails: true }))
+}
+
+/** Hides the details field. What was typed in it stays, but is not added until it is shown again. */
+export function hideQuickAddDetails($: EngineInterface) {
+  return updateQuickAdd($, form => ({ ...form, hasDetails: false }))
 }
 
 /** Keeps what has been typed, so a redraw does not lose it. */
@@ -62,7 +74,8 @@ export async function submitQuickAdd(
     const typed = { title: form.title, spec: form.spec, [field]: value }
     seen.isOpen = form.isOpen
     seen.title = oneLine(typed.title)
-    seen.spec = typed.spec.trim()
+    // Details that are hidden are not part of the card.
+    seen.spec = form.hasDetails ? typed.spec.trim() : ''
 
     return form.isOpen && seen.title !== '' ? EMPTY_QUICK_ADD : form
   })
@@ -125,11 +138,13 @@ export async function addCard(
     ...current,
     cards: withCard(current.cards, pending),
   }))
-  // The card goes last in Backlog: open the section and scroll it into view.
+  // The card goes last in Backlog: open Active and scroll the section to it.
   const total = sectionList(board.cards, 'backlog').length
-  await updateUi($, ui => ({
+  await updateUi($, ({ filterGroup, ...ui }) => ({
     ...ui,
-    collapsed: { ...ui.collapsed, backlog: false },
+    openGroup: 'active',
+    // A group chosen under a filter stays when it is Active already.
+    ...(filterGroup === 'active' ? { filterGroup } : {}),
     offsets: { ...ui.offsets, backlog: total },
   }))
 

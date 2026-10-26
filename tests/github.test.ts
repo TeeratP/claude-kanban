@@ -9,6 +9,7 @@ import {
   createGithub,
   detailGithub,
   diffGithub,
+  extraOptions,
   isRateLimited,
   loadGithub,
   moveGithub,
@@ -16,11 +17,12 @@ import {
   parseClaudeMd,
   planMove,
   planPosition,
+  withStatusOptions,
 } from '../hooks/github'
 import { isHandoffValid } from '../hooks/handoff'
 import { click } from './board-ui'
 import { LOTTO, NAE, PUNN_AGENTS, PUNN_CLAUDE } from './configs'
-import { NOW, PANE, RUN, SYNC_PAUSE, boot } from './fakes'
+import { CWD, NOW, PANE, RUN, SYNC_PAUSE, boot } from './fakes'
 import {
   LIVE_RATE_LIMIT,
   boardReply,
@@ -342,6 +344,56 @@ test('columnOf: statuses compare without regard to case, unknown ones park in Ba
   expect(columnOf('Blocked', ['human'], false).column).toBe('human')
 })
 
+test('columnOf: a closed issue is Cancelled when GitHub closed it as not planned or a duplicate', () => {
+  for (const reason of ['NOT_PLANNED', 'DUPLICATE']) {
+    expect(columnOf('Done', none, true, reason)).toEqual({
+      column: 'cancelled',
+    })
+    expect(columnOf('In progress', ['ai'], true, reason)).toEqual({
+      column: 'cancelled',
+    })
+  }
+  // Completed, reopened or no reason at all (an old issue): Done.
+  for (const reason of ['COMPLETED', 'REOPENED', undefined]) {
+    expect(columnOf('Done', none, true, reason)).toEqual({ column: 'done' })
+  }
+})
+
+test('columnOf: a Status named Cancelled puts the card in Cancelled, closed or not', () => {
+  for (const status of ['Cancelled', 'canceled', "Won't do", 'Not planned']) {
+    expect(columnOf(status, none, false)).toEqual({ column: 'cancelled' })
+    expect(columnOf(status, ['ai'], true)).toEqual({ column: 'cancelled' })
+  }
+})
+
+test('columnOf: a Status named Suspended, or the suspended label, puts an open issue in Suspended', () => {
+  for (const status of [
+    'Suspended',
+    'On hold',
+    'on-hold',
+    'Paused',
+    'Icebox',
+  ]) {
+    expect(columnOf(status, none, false)).toEqual({ column: 'suspended' })
+  }
+  // The label wins over the board's own sections, but not over a closed issue.
+  expect(columnOf('In progress', ['ai', 'Suspended'], false)).toEqual({
+    column: 'suspended',
+  })
+  expect(columnOf('Backlog', ['suspended'], false)).toEqual({
+    column: 'suspended',
+  })
+  expect(columnOf('In review', ['suspended'], false)).toEqual({
+    column: 'suspended',
+  })
+  expect(columnOf('Done', ['suspended'], true)).toEqual({ column: 'done' })
+})
+
+test('columnOf: Blocked is not Suspended; blocked work waits where it is', () => {
+  expect(columnOf('Blocked', none, false)).toEqual({ column: 'backlog' })
+  expect(columnOf('Blocked', ['human'], false).column).toBe('human')
+})
+
 const CFG: KanbanGithub = {
   kind: 'github',
   repo: 'TeeratP/claude-kanban',
@@ -357,6 +409,69 @@ const CFG: KanbanGithub = {
     done: 'o-done',
   },
 }
+
+test("extraOptions finds Cancelled and Suspended among a board's Status options by name", () => {
+  expect(
+    extraOptions([
+      { id: 'a', name: 'Backlog' },
+      { id: 'b', name: 'In progress' },
+      { id: 'c', name: 'On hold' },
+      { id: 'd', name: 'Cancelled' },
+      { id: 'e', name: 'Paused' },
+    ]),
+  ).toEqual({ cancelled: 'd', suspended: 'c' })
+  expect(extraOptions([{ id: 'a', name: 'Backlog' }])).toEqual({})
+  expect(extraOptions([])).toEqual({})
+})
+
+test('withStatusOptions adds the options found, and is the same object when nothing changed', () => {
+  const options = [
+    { id: 'x-susp', name: 'Suspended' },
+    { id: 'x-canc', name: 'Cancelled' },
+  ]
+  const added = withStatusOptions(CFG, options)
+
+  expect(added.options).toEqual({
+    ...CFG.options,
+    cancelled: 'x-canc',
+    suspended: 'x-susp',
+  })
+  expect(withStatusOptions(added, options)).toBe(added)
+  // A load that did not report the options says nothing.
+  expect(withStatusOptions(added, [])).toBe(added)
+  // An option taken off the board leaves the info.
+  expect(
+    withStatusOptions(added, [{ id: 'x-canc', name: 'Cancelled' }]).options,
+  ).toEqual({ ...CFG.options, cancelled: 'x-canc' })
+})
+
+test('withStatusOptions also keeps the names the board spells the options with', () => {
+  const options = [
+    { id: 'x-susp', name: 'On hold' },
+    { id: 'x-canc', name: "Won't do" },
+  ]
+  const added = withStatusOptions(CFG, options)
+
+  expect(added.optionNames).toEqual({
+    cancelled: "Won't do",
+    suspended: 'On hold',
+  })
+  expect(withStatusOptions(added, options)).toBe(added)
+  // The same option renamed on the board is noticed.
+  expect(
+    withStatusOptions(added, [
+      { id: 'x-susp', name: 'On hold' },
+      { id: 'x-canc', name: 'Dropped' },
+    ]).optionNames,
+  ).toEqual({ cancelled: 'Dropped', suspended: 'On hold' })
+  // An option taken off the board takes its name too.
+  expect(
+    withStatusOptions(added, [{ id: 'x-canc', name: "Won't do" }]).optionNames,
+  ).toEqual({ cancelled: "Won't do" })
+  expect(
+    withStatusOptions(added, [{ id: 'a', name: 'Backlog' }]).optionNames,
+  ).toBeUndefined()
+})
 
 function ghCard(fields: Partial<KanbanCard> = {}): KanbanCard {
   return {
@@ -396,7 +511,17 @@ const REOPEN = [
   '--repo',
   'TeeratP/claude-kanban',
 ]
-const CLOSE = ['gh', 'issue', 'close', '12', '--repo', 'TeeratP/claude-kanban']
+const CLOSE = [
+  'gh',
+  'issue',
+  'close',
+  '12',
+  '--repo',
+  'TeeratP/claude-kanban',
+  '--reason',
+  'completed',
+]
+const CLOSE_UNPLANNED = [...CLOSE.slice(0, -1), 'not planned']
 const VERIFY = [
   'gh',
   'issue',
@@ -405,10 +530,19 @@ const VERIFY = [
   '--repo',
   'TeeratP/claude-kanban',
   '--json',
-  'state',
+  'state,stateReason',
   '--jq',
-  '.state',
+  '.state + " " + (.stateReason // "")',
 ]
+// A board with Cancelled and Suspended among its Status options.
+const CFG_FULL: KanbanGithub = {
+  ...CFG,
+  options: {
+    ...CFG.options,
+    cancelled: 'o-cancelled',
+    suspended: 'o-suspended',
+  },
+}
 const EDIT = ['gh', 'issue', 'edit', '12', '--repo', 'TeeratP/claude-kanban']
 
 test('planMove to Claude edits the labels first, then sets In progress', () => {
@@ -470,7 +604,7 @@ test('planMove to Done sets Done, closes the issue, then reads the state back', 
   ])
 })
 
-test('planMove reopens a closed issue first, for every target but Done', () => {
+test('planMove reopens a closed issue first, for every target but the Done it is in', () => {
   const closed = ghCard({ status: 'Done', isClosed: true })
 
   expect(planMove(closed, 'human', CFG)).toEqual([REOPEN, itemEdit('o-review')])
@@ -480,6 +614,105 @@ test('planMove reopens a closed issue first, for every target but Done', () => {
     itemEdit('o-backlog'),
   ])
   expect(planMove(closed, 'done', CFG)).not.toContainEqual(REOPEN)
+  expect(planMove(closed, 'suspended', CFG_FULL)[0]).toEqual(REOPEN)
+})
+
+test('planMove to Cancelled sets the Cancelled option, closes as not planned, then reads the reason back', () => {
+  expect(
+    planMove(ghCard({ status: 'Backlog' }), 'cancelled', CFG_FULL),
+  ).toEqual([itemEdit('o-cancelled'), CLOSE_UNPLANNED, VERIFY])
+  // A board with no such option keeps closed items where Done is.
+  expect(planMove(ghCard({ status: 'Backlog' }), 'cancelled', CFG)).toEqual([
+    itemEdit('o-done'),
+    CLOSE_UNPLANNED,
+    VERIFY,
+  ])
+})
+
+test('planMove swaps Done and Cancelled by reopening first: closing a closed issue changes nothing', () => {
+  const done = ghCard({
+    status: 'Done',
+    isClosed: true,
+    stateReason: 'COMPLETED',
+  })
+  const cancelled = ghCard({
+    status: 'Cancelled',
+    isClosed: true,
+    stateReason: 'NOT_PLANNED',
+  })
+
+  expect(planMove(done, 'cancelled', CFG_FULL)).toEqual([
+    REOPEN,
+    itemEdit('o-cancelled'),
+    CLOSE_UNPLANNED,
+    VERIFY,
+  ])
+  expect(planMove(cancelled, 'done', CFG_FULL)).toEqual([
+    REOPEN,
+    itemEdit('o-done'),
+    CLOSE,
+    VERIFY,
+  ])
+  // A duplicate is cancelled too. An old issue with no reason counts as Done.
+  const duplicate = ghCard({ isClosed: true, stateReason: 'DUPLICATE' })
+  expect(planMove(duplicate, 'done', CFG_FULL)[0]).toEqual(REOPEN)
+  expect(
+    planMove(ghCard({ isClosed: true }), 'cancelled', CFG_FULL)[0],
+  ).toEqual(REOPEN)
+  // Already closed the way it is asked for: nothing to reopen.
+  expect(planMove(cancelled, 'cancelled', CFG_FULL)).not.toContainEqual(REOPEN)
+  expect(planMove(done, 'done', CFG_FULL)).not.toContainEqual(REOPEN)
+})
+
+test('planMove to Suspended sets the Suspended option; without one the card rests in Backlog under the label', () => {
+  expect(
+    planMove(ghCard({ status: 'In progress' }), 'suspended', CFG_FULL),
+  ).toEqual([itemEdit('o-suspended')])
+  expect(
+    planMove(
+      ghCard({ status: 'In progress', labels: ['ai', 'human'] }),
+      'suspended',
+      CFG_FULL,
+    ),
+  ).toEqual([[...EDIT, '--remove-label', 'human'], itemEdit('o-suspended')])
+
+  expect(planMove(ghCard({ status: 'In progress' }), 'suspended', CFG)).toEqual(
+    [[...EDIT, '--add-label', 'suspended'], itemEdit('o-backlog')],
+  )
+  // Already parked in Backlog: only the label.
+  expect(planMove(ghCard({ status: 'Backlog' }), 'suspended', CFG)).toEqual([
+    [...EDIT, '--add-label', 'suspended'],
+  ])
+})
+
+test('planMove out of Suspended takes the label off, as the repo spells it', () => {
+  const held = ghCard({ status: 'Backlog', labels: ['ai', 'Suspended'] })
+  const off = [...EDIT, '--remove-label', 'Suspended']
+
+  expect(planMove(held, 'backlog', CFG)).toEqual([off])
+  expect(planMove(held, 'human', CFG)).toEqual([off, itemEdit('o-review')])
+  expect(planMove(held, 'done', CFG)).toEqual([
+    off,
+    itemEdit('o-done'),
+    CLOSE,
+    VERIFY,
+  ])
+  expect(planMove(held, 'cancelled', CFG)[0]).toEqual(off)
+  expect(planMove(held, 'claude', CFG)[0]).toEqual([
+    ...EDIT,
+    '--add-label',
+    'ai',
+    '--remove-label',
+    'Suspended',
+  ])
+  // Out of the label's Suspended into another Status of the board's.
+  expect(
+    planMove(
+      ghCard({ status: 'Suspended', labels: ['ai'] }),
+      'backlog',
+      CFG_FULL,
+    ),
+  ).toEqual([itemEdit('o-backlog')])
 })
 
 test('planMove needs the card to be on the board', () => {
@@ -670,6 +903,80 @@ test("load keeps the issues of this repo, in board order, with labels, state and
   expect(cards[6]).not.toHaveProperty('prNumbers')
 })
 
+test('load puts an issue closed as not planned in Cancelled, and one on hold in Suspended', async () => {
+  const { $ } = fakeEngine([
+    boardRoute([
+      issueNode({
+        number: 1,
+        status: 'Done',
+        state: 'CLOSED',
+        stateReason: 'COMPLETED',
+      }),
+      issueNode({
+        number: 2,
+        status: 'Done',
+        state: 'CLOSED',
+        stateReason: 'NOT_PLANNED',
+      }),
+      issueNode({
+        number: 3,
+        status: 'Done',
+        state: 'CLOSED',
+        stateReason: 'DUPLICATE',
+      }),
+      issueNode({
+        number: 4,
+        status: 'In progress',
+        labels: ['ai', 'suspended'],
+      }),
+      issueNode({ number: 5, status: 'On hold' }),
+      issueNode({ number: 6, status: 'Cancelled' }),
+      issueNode({
+        number: 7,
+        status: 'In progress',
+        state: 'OPEN',
+        stateReason: 'REOPENED',
+      }),
+    ]),
+  ])
+
+  const { cards } = await loadGithub($, CFG)
+
+  expect(cards.map(card => [card.number, card.column])).toEqual([
+    [1, 'done'],
+    [2, 'cancelled'],
+    [3, 'cancelled'],
+    [4, 'suspended'],
+    [5, 'suspended'],
+    [6, 'cancelled'],
+    [7, 'claude'],
+  ])
+  expect(cards[1]).toMatchObject({ isClosed: true, stateReason: 'NOT_PLANNED' })
+  expect(cards[6]).toMatchObject({ stateReason: 'REOPENED' })
+  expect(cards[3]).not.toHaveProperty('stateReason')
+})
+
+test('load asks for the close reason and the Status options, and reports the options of the first page', async () => {
+  const options = [
+    { id: 'o-1', name: 'Backlog' },
+    { id: 'o-2', name: 'Suspended' },
+  ]
+  const nodes = Array.from({ length: 150 }, (_, index) =>
+    issueNode({ number: index + 1 }),
+  )
+  const { $, calls } = fakeEngine([boardRoute(nodes, undefined, options)])
+
+  const load = await loadGithub($, CFG)
+
+  expect(queryOf(calls[0]?.argv ?? [])).toContain('state stateReason')
+  expect(queryOf(calls[0]?.argv ?? [])).toContain('field(name: "Status") {')
+  expect(calls).toHaveLength(2)
+  expect(load.statusOptions).toEqual(options)
+  // A board that reports no field says nothing, and a card load still works.
+  const bare = fakeEngine([boardRoute([issueNode({ number: 1 })])])
+  expect((await loadGithub(bare.$, CFG)).statusOptions).toEqual([])
+})
+
 test('load pages with the cursor of the page before, one query each', async () => {
   const nodes = Array.from({ length: 250 }, (_, index) =>
     issueNode({ number: index + 1, status: 'Backlog' }),
@@ -683,7 +990,11 @@ test('load pages with the cursor of the page before, one query each', async () =
     'c100',
     'c200',
   ])
-  expect(new Set(calls.map(call => queryOf(call.argv))).size).toBe(1)
+  // The Status options come with the first page's query only.
+  const queries = calls.map(call => queryOf(call.argv))
+  expect(queries[0]).toContain('field(name: "Status")')
+  expect(queries[1]).not.toContain('field(name: "Status")')
+  expect(new Set(queries.slice(1)).size).toBe(1)
   expect(cards.map(card => card.number)).toEqual(
     Array.from({ length: 250 }, (_, index) => index + 1),
   )
@@ -839,19 +1150,293 @@ test('moving to Done runs the plan in order and reads the closed state back', as
     CLOSE,
     VERIFY,
   ])
-  expect(patch).toEqual({ status: 'Done', isClosed: true })
+  expect(patch).toEqual({
+    status: 'Done',
+    isClosed: true,
+    stateReason: 'COMPLETED',
+  })
 })
 
 test('a close that did not take is an error, not a quiet success', async () => {
   const { $ } = fakeEngine([
     { match: ['gh', 'project', 'item-edit'], reply: {} },
     { match: ['gh', 'issue', 'close'], reply: {} },
-    { match: ['gh', 'issue', 'view'], reply: { stdout: 'OPEN\n' } },
+    { match: ['gh', 'issue', 'view'], reply: { stdout: 'OPEN \n' } },
   ])
 
   await expect(moveGithub($, CFG, ghCard(), 'done')).rejects.toThrow(
-    '#12 is still open after gh issue close.',
+    '#12 is not closed as expected after gh issue close.',
   )
+})
+
+// What an older `gh` prints for a JSON field it does not know.
+const NO_STATE_REASON = {
+  exitCode: 1,
+  stderr:
+    'Unknown JSON field: "stateReason"\nAvailable fields:\n  state\n  title\n',
+}
+const VERIFY_STATE = [...VERIFY.slice(0, -3), 'state', '--jq', '.state']
+
+test('a gh that does not know stateReason is read back by the state alone, and a closed issue is taken as closed', async () => {
+  for (const [config, to] of [
+    [CFG, 'done'],
+    [CFG_FULL, 'cancelled'],
+  ] as const) {
+    const { $, calls } = fakeEngine([
+      { match: ['gh', 'project', 'item-edit'], reply: {} },
+      { match: ['gh', 'issue', 'close'], reply: {} },
+      {
+        match: ['gh', 'issue', 'view'],
+        reply: argv =>
+          argv.includes('state,stateReason')
+            ? NO_STATE_REASON
+            : { stdout: 'CLOSED\n' },
+      },
+    ])
+
+    const patch = await moveGithub($, config, ghCard(), to)
+
+    expect(calls.map(call => call.argv.slice(0, 3).join(' '))).toEqual([
+      'gh project item-edit',
+      'gh issue close',
+      'gh issue view',
+      'gh issue view',
+    ])
+    expect(calls[3]?.argv).toEqual(VERIFY_STATE)
+    expect(patch).toMatchObject({ isClosed: true })
+  }
+})
+
+test('a gh that does not know stateReason still fails a close that did not take', async () => {
+  const { $ } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: argv =>
+        argv.includes('state,stateReason')
+          ? NO_STATE_REASON
+          : { stdout: 'OPEN\n' },
+    },
+  ])
+
+  await expect(moveGithub($, CFG, ghCard(), 'done')).rejects.toThrow(
+    '#12 is not closed as expected after gh issue close.',
+  )
+})
+
+test('a read-back that fails for another reason is still an error', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { exitCode: 1, stderr: 'HTTP 502: Bad Gateway\n' },
+    },
+  ])
+
+  await expect(moveGithub($, CFG, ghCard(), 'done')).rejects.toThrow(
+    'HTTP 502: Bad Gateway',
+  )
+  expect(calls).toHaveLength(3)
+})
+
+test('moving to Done accepts a close the old API reports with no reason, and refuses one closed as not planned', async () => {
+  const closed = (readBack: string) =>
+    fakeEngine([
+      { match: ['gh', 'project', 'item-edit'], reply: {} },
+      { match: ['gh', 'issue', 'close'], reply: {} },
+      { match: ['gh', 'issue', 'view'], reply: { stdout: readBack } },
+    ]).$
+
+  await expect(
+    moveGithub(closed('CLOSED \n'), CFG, ghCard(), 'done'),
+  ).resolves.toBeDefined()
+  await expect(
+    moveGithub(closed('CLOSED COMPLETED\n'), CFG, ghCard(), 'done'),
+  ).resolves.toBeDefined()
+  await expect(
+    moveGithub(closed('CLOSED NOT_PLANNED\n'), CFG, ghCard(), 'done'),
+  ).rejects.toThrow('#12 is not closed as expected after gh issue close.')
+})
+
+test('moving to Cancelled closes as not planned and verifies the reason, reporting it', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { stdout: 'CLOSED NOT_PLANNED\n' },
+    },
+  ])
+
+  const patch = await moveGithub($, CFG_FULL, ghCard(), 'cancelled')
+
+  expect(calls.map(call => call.argv)).toEqual([
+    itemEdit('o-cancelled'),
+    CLOSE_UNPLANNED,
+    VERIFY,
+  ])
+  expect(patch).toEqual({
+    status: 'Cancelled',
+    isClosed: true,
+    stateReason: 'NOT_PLANNED',
+  })
+})
+
+test('a Cancelled close that GitHub filed as completed is an error', async () => {
+  const { $ } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    { match: ['gh', 'issue', 'view'], reply: { stdout: 'CLOSED COMPLETED\n' } },
+  ])
+
+  await expect(moveGithub($, CFG_FULL, ghCard(), 'cancelled')).rejects.toThrow(
+    '#12 is not closed as expected after gh issue close.',
+  )
+})
+
+test('moving a Done card to Cancelled reopens it first and ends closed as not planned', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'issue', 'reopen'], reply: {} },
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { stdout: 'CLOSED NOT_PLANNED\n' },
+    },
+  ])
+
+  await moveGithub(
+    $,
+    CFG_FULL,
+    ghCard({ status: 'Done', isClosed: true, stateReason: 'COMPLETED' }),
+    'cancelled',
+  )
+
+  expect(calls.map(call => call.argv.slice(0, 3).join(' '))).toEqual([
+    'gh issue reopen',
+    'gh project item-edit',
+    'gh issue close',
+    'gh issue view',
+  ])
+})
+
+test('moving to Suspended on a board with the option sets it and reports the card open and still', async () => {
+  const { $, calls } = fakeEngine([{ match: ['gh'], reply: {} }])
+
+  const patch = await moveGithub(
+    $,
+    CFG_FULL,
+    ghCard({ status: 'In progress', labels: ['ai'] }),
+    'suspended',
+  )
+
+  expect(calls.map(call => call.argv)).toEqual([itemEdit('o-suspended')])
+  expect(patch).toEqual({ status: 'Suspended', isClosed: false })
+})
+
+test("moving to Cancelled or Suspended reports the board's own name for the option", async () => {
+  const named: KanbanGithub = {
+    ...CFG_FULL,
+    optionNames: { cancelled: "Won't do", suspended: 'On hold' },
+  }
+  const { $ } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { stdout: 'CLOSED NOT_PLANNED\n' },
+    },
+  ])
+
+  expect(await moveGithub($, named, ghCard(), 'cancelled')).toMatchObject({
+    status: "Won't do",
+  })
+  expect(
+    await moveGithub($, named, ghCard({ status: 'In progress' }), 'suspended'),
+  ).toMatchObject({ status: 'On hold' })
+})
+
+test('moving to Suspended with no such option makes the suspended label once, labels the issue and rests it in Backlog', async () => {
+  const labels = ['bug']
+  const { $, calls } = fakeEngine([
+    {
+      match: ['gh', 'label', 'list'],
+      reply: () => ({ stdout: `${labels.join('\n')}\n` }),
+    },
+    {
+      match: ['gh', 'label', 'create'],
+      reply: () => {
+        labels.push('suspended')
+
+        return {}
+      },
+    },
+    { match: ['gh', 'issue', 'edit'], reply: {} },
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+  ])
+
+  const patch = await moveGithub(
+    $,
+    CFG,
+    ghCard({ status: 'In progress', labels: ['ai', 'human'] }),
+    'suspended',
+  )
+  await moveGithub($, CFG, ghCard({ labels: [] }), 'suspended')
+
+  expect(calls.filter(call => call.argv[2] === 'create')).toHaveLength(1)
+  expect(calls[0]?.argv.slice(0, 4)).toEqual(['gh', 'label', 'list', '--repo'])
+  expect(calls[0]?.argv).toContain('suspended')
+  expect(calls.find(call => call.argv[2] === 'create')?.argv).toContain(
+    'suspended',
+  )
+  expect(calls.find(call => call.argv[2] === 'edit')?.argv).toEqual([
+    ...EDIT,
+    '--add-label',
+    'suspended',
+    '--remove-label',
+    'human',
+  ])
+  expect(patch).toEqual({
+    status: 'Backlog',
+    labels: ['ai', 'suspended'],
+    isClosed: false,
+  })
+})
+
+test('the suspended label is never overwritten: one that exists under another case is left alone', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'label', 'list'], reply: { stdout: 'bug\nSuspended\n' } },
+    { match: ['gh', 'issue', 'edit'], reply: {} },
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+  ])
+
+  await moveGithub(
+    $,
+    CFG,
+    ghCard({ labels: [], status: 'In progress' }),
+    'suspended',
+  )
+
+  expect(calls.some(call => call.argv[2] === 'create')).toBe(false)
+  expect(calls.map(call => call.argv[2])).toEqual(['list', 'edit', 'item-edit'])
+})
+
+test('moving out of Suspended drops the label and reports the labels the card has now', async () => {
+  const { $, calls } = fakeEngine([{ match: ['gh'], reply: {} }])
+
+  const patch = await moveGithub(
+    $,
+    CFG,
+    ghCard({ status: 'Backlog', labels: ['p1', 'suspended'] }),
+    'backlog',
+  )
+
+  expect(calls.map(call => call.argv)).toEqual([
+    [...EDIT, '--remove-label', 'suspended'],
+  ])
+  expect(patch).toEqual({ labels: ['p1'], isClosed: false })
 })
 
 test('the first command that fails stops the move and gives its reason', async () => {
@@ -922,6 +1507,7 @@ test('moving to Claude reports the new status, the ai label and no human label',
     status: 'In progress',
     labels: ['p1', 'ai'],
     isClosed: false,
+    stateReason: 'REOPENED',
   })
 })
 
@@ -1567,6 +2153,55 @@ test('through the board: a CLAUDE.md names the project, cards load from gh, a mo
   ])
   const steps = calls.map(call => call.argv[2])
   expect(steps.indexOf('edit')).toBeLessThan(steps.indexOf('item-edit'))
+})
+
+test('through the board: the Status options a load reports are kept with the board, and a card the person suspends goes to the Suspended option', async ($, on) => {
+  const { clock, saved } = boot(on, { 'CLAUDE.md': KANBAN })
+  const calls = fakeProcess(on, [
+    AUTH,
+    REMOTE,
+    boardRoute(MIXED, undefined, [
+      { id: 'o-backlog', name: 'Backlog' },
+      { id: 'o-hold', name: 'On hold' },
+      { id: 'o-dropped', name: "Won't do" },
+    ]),
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'edit'], reply: {} },
+    { match: ['gh', 'api', 'user'], reply: { stdout: 'TeeratP\n' } },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { stdout: '{"body":"","comments":[],"url":"","state":"OPEN"}' },
+    },
+  ])
+  await $.session.start({ cwd: '/', surface: 'vscode', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+
+  // The CLAUDE.md names only five options; the board's own are learned from the load.
+  const cache = JSON.parse(saved.get(`cache:${CWD}`) ?? '{}') as {
+    backend?: KanbanGithub
+  }
+  expect(cache.backend?.options).toMatchObject({
+    suspended: 'o-hold',
+    cancelled: 'o-dropped',
+    done: '201b4a64',
+  })
+
+  await click(ui, 'card:gh:4')
+  await ui.press({ key: 'move:suspended' })
+  await clock.advance(SYNC_PAUSE)
+
+  expect(
+    calls.find(call => call.argv[2] === 'item-edit')?.argv.slice(-2),
+  ).toEqual(['--single-select-option-id', 'o-hold'])
+  // Issue 4 carries the human label, which leaves with it; no suspended label is made.
+  expect(calls.find(call => call.argv[2] === 'edit')?.argv.slice(6)).toEqual([
+    '--remove-label',
+    'human',
+  ])
+  expect(calls.some(call => call.argv[1] === 'label')).toBe(false)
+  await ui.unmount()
 })
 
 test('a card that leaves Human on a GitHub board loses its tag without a reload', async ($, on) => {

@@ -7,10 +7,17 @@ import type {
   KanbanCard,
   KanbanSync,
 } from '../types'
-import { readBoard, readSync, updateBoard, updatePausedUntil } from './atoms'
+import {
+  readBoard,
+  readSync,
+  updateBoard,
+  updatePausedUntil,
+  updateTick,
+} from './atoms'
 import { backendMode, detectBackend, loadCards } from './backend'
+import type { Loaded } from './backend'
 import { choicesOf, forgetDetected } from './detect'
-import { isRateLimited } from './github'
+import { isRateLimited, withStatusOptions } from './github'
 import {
   EMPTY_BOARD,
   PANE,
@@ -24,6 +31,11 @@ import { limitHit, pauseLeft } from './rate-limit'
 import { S } from './strings'
 
 const POLL_MS = 45_000
+// Ages move by the minute, so the open pane redraws this often, not only at a poll.
+const AGE_MS = 30_000
+// The size the pane asks for; a retitle repeats it, as each open sets it anew.
+const PANE_ROWS = 30
+const PANE_COLUMNS = 44
 const CACHE_SHAPE = 'cache-2'
 // A load that says the project is gone: a detected board was deleted or moved.
 const BOARD_GONE = /not found|could not resolve/i
@@ -39,6 +51,12 @@ type BoardCache = {
 let loading: Promise<KanbanBoard> | undefined
 let isStale = false
 let pollTimer: Timer | undefined
+let ageTimer: Timer | undefined
+// Counts the starts of the polling: a tick that began before a restart must not
+// end the timers the restart made.
+let pollingRun = 0
+// The Human count the pane's title follows; undefined until the pane opens.
+let titledFor: number | undefined
 // Cards whose move the backend confirmed while a load was reading: it may have read them
 // from before the move. Not the sync entries, which are gone two seconds after a confirm,
 // sooner than a slow load can land.
@@ -53,6 +71,42 @@ export function noteConfirmed(cardId: string): void {
 function updateStatusLine($: EngineInterface, cards: readonly KanbanCard[]) {
   const waiting = cards.filter(card => card.column === 'human').length
   $.ui.status(waiting === 0 ? undefined : S.waiting(waiting))
+  if (waiting !== titledFor) {
+    titledFor = waiting
+    inBackground($, retitle($))
+  }
+}
+
+// Retitles the open pane to the Human count, `Kanban · 2`. Per the types, an open
+// of an open id is "retitled in place" (`UiOpenResult`) and only `focus` asks to
+// raise or focus it (`PaneOpenArgs`), left out here; the size is repeated because
+// each open sets it anew, and one the person set wins. A failure is only logged.
+async function retitle($: EngineInterface): Promise<void> {
+  try {
+    const pane = (await $.ui.panes()).find(one => one.id === PANE)
+    // Read after the wait: a later change wins over the one that asked.
+    const waiting = titledFor
+    if (pane === undefined || !pane.isPlaced || waiting === undefined) return
+
+    const title = waiting === 0 ? S.paneTitle : S.paneTitleCount(waiting)
+    if (pane.title === title) return
+
+    // The list above may be older than this open, which would bring back a pane
+    // closed since: ask again right before it.
+    const isOpen = (await $.ui.panes()).some(
+      one => one.id === PANE && one.isPlaced,
+    )
+    if (!isOpen) return
+
+    await $.ui.open({
+      id: 'kanban',
+      title,
+      rows: PANE_ROWS,
+      columns: PANE_COLUMNS,
+    })
+  } catch (error) {
+    $.ui.log(S.retitleFailed(errorMessage(error)), { to: 'debug' })
+  }
 }
 
 /** The one way the board is written, so every write can be followed up. */
@@ -339,7 +393,7 @@ async function detectInto(
 async function loadOrRedetect(
   $: EngineInterface,
   info: KanbanBackendInfo,
-): Promise<KanbanCard[]> {
+): Promise<Loaded> {
   try {
     return await loadCards($, info)
   } catch (error) {
@@ -375,7 +429,7 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     const info = await ensureBackend($)
     const confirmed = new Set<string>()
     confirmedDuringLoad = confirmed
-    const remote = await loadOrRedetect($, info)
+    const loaded = await loadOrRedetect($, info)
     const sync = await readSync($)
     const fetchedAt = await $.clock.now()
 
@@ -385,7 +439,13 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
 
       return {
         ...current,
-        cards: mergeRemote(remote, current.cards, sync, confirmed),
+        cards: mergeRemote(loaded.cards, current.cards, sync, confirmed),
+        // The board's own Cancelled and Suspended options, as this load found them.
+        ...(current.backend?.kind === 'github'
+          ? {
+              backend: withStatusOptions(current.backend, loaded.statusOptions),
+            }
+          : {}),
         fetchedAt,
         isLoading: false,
       }
@@ -429,16 +489,24 @@ export function refresh($: EngineInterface): Promise<KanbanBoard> {
   return loading
 }
 
-/** Reloads the board every 45 s; asking again restarts the count. */
+/**
+ * Reloads the board every 45 s and redraws its ages every 30 s; asking again
+ * restarts both counts.
+ */
 export function startPolling($: EngineInterface): void {
+  pollingRun += 1
+  const run = pollingRun
   pollTimer?.cancel()
-  pollTimer = $.clock.every(POLL_MS, () => inBackground($, pollOnce($)))
+  pollTimer = $.clock.every(POLL_MS, () => inBackground($, pollOnce($, run)))
+  ageTimer?.cancel()
+  ageTimer = $.clock.every(AGE_MS, () => inBackground($, ageOnce($, run)))
 }
 
 // A tick reloads while the pane is open and ends the polling once it is not;
 // opening the pane again starts it. While the GitHub rate limit pauses polling,
-// or boards wait for the person's pick, ticks pass without a load.
-async function pollOnce($: EngineInterface): Promise<void> {
+// or boards wait for the person's pick, ticks pass without a load. A tick of an
+// older run leaves the timer alone: it belongs to the run that replaced it.
+async function pollOnce($: EngineInterface, run: number): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) {
     const { backend, pick } = await readBoard($)
@@ -447,13 +515,32 @@ async function pollOnce($: EngineInterface): Promise<void> {
 
     return
   }
+  if (run !== pollingRun) return
 
   pollTimer?.cancel()
   pollTimer = undefined
 }
 
+// A tick bumps the tick atom, which the open board reads, so the `updated` age and
+// the card ages move without a load. Once the pane is not open it ends the ticking,
+// unless the tick is of an older run than the timer.
+async function ageOnce($: EngineInterface, run: number): Promise<void> {
+  const panes = await $.ui.panes()
+  if (panes.some(pane => pane.id === PANE)) {
+    await updateTick($, count => count + 1)
+
+    return
+  }
+  if (run !== pollingRun) return
+
+  ageTimer?.cancel()
+  ageTimer = undefined
+}
+
 /** Called when the pane opens. */
 export async function openBoard($: EngineInterface): Promise<void> {
+  // The pane opens with the plain title, so the badge is set again.
+  titledFor = undefined
   startPolling($)
   await showCached($)
   await refresh($)

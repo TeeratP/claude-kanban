@@ -29,6 +29,7 @@ import {
   card,
   path,
 } from './fakes'
+import { overflow, renderPane } from './render'
 
 const EVERY_SURFACE = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 const WITH_CLIENT = ['terminal', 'desktop'] as const
@@ -103,13 +104,18 @@ async function start<S extends RenderSurface>(
   surface: S,
   files: Record<string, string> = cards(),
   store?: Record<string, unknown>,
+  bodyColumns: number = PANE.props.bodyColumns,
 ) {
   const world = boot(on, files, store)
   const agents = fakeAgents(on)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
-  const ui = await $.ui.mount({ ...PANE, surface })
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, bodyColumns },
+  })
 
   const turn = (n = 1) => ({ text: 'go', turnId: `t${n}` })
   const step = async (spent: Usage, agentId?: string) => {
@@ -165,7 +171,7 @@ const explorer = (id: string): AgentInfo => ({
 async function detail(ui: BoardUi, id = API_ROW) {
   const found = (await ui.find({ type: 'Client', key: 'board' }))
     ? await row(ui, id)
-    : await ui.find({ type: 'Text', text: /^ {4}●/ })
+    : await ui.find({ type: 'Text', text: /^ {5}●/ })
 
   return found?.text
 }
@@ -177,7 +183,7 @@ test('the main session shows as Claude with a dot on its card', async ($, on) =>
   await $.turn.start(turn())
   await showCard($, 2)
 
-  expect(await detail(ui)).toBe('    ● Claude ⟳ working')
+  expect(await detail(ui)).toBe('     ● Claude · ⟳ working')
   expect((await marks(ui, '●')).map(one => one.props.color)).toEqual([
     colorOf('Claude'),
   ])
@@ -208,7 +214,7 @@ test('a subagent shows by its type, with its own dot, and keeps its colour on a 
     agentId: 'agent-1',
   })
 
-  expect(await detail(ui)).toBe('    ●● Explore ⟳ WebSearch login')
+  expect(await detail(ui)).toBe('     ●● Explore · ⟳ WebSearch login')
   const colours = [colorOf('Claude'), colorOf('Explore')]
   expect((await marks(ui, '●')).map(one => one.props.color)).toEqual(colours)
 
@@ -219,7 +225,7 @@ test('a subagent shows by its type, with its own dot, and keeps its colour on a 
     mode: 'standard',
     agentId: 'agent-1',
   })
-  expect(await detail(ui)).toBe('    ●● Explore ⟳ WebSearch logout')
+  expect(await detail(ui)).toBe('     ●● Explore · ⟳ WebSearch logout')
   expect((await marks(ui, '●')).map(one => one.props.color)).toEqual(colours)
   await ui.unmount()
 })
@@ -263,7 +269,7 @@ test('a named subagent shows by its name', async ($, on) => {
     agentId: 'agent-1',
   })
 
-  expect(await detail(ui)).toBe('    ●● reviewer ⟳ Read a.ts')
+  expect(await detail(ui)).toBe('     ●● reviewer · ⟳ Read a.ts')
   await ui.unmount()
 })
 
@@ -279,11 +285,11 @@ test('a subagent the spawn hook did not see is found in the agent list', async (
     mode: 'standard',
     agentId: 'agent-7',
   })
-  expect(await detail(ui)).toBe('    ●● Explore ⟳ WebSearch login')
+  expect(await detail(ui)).toBe('     ●● Explore · ⟳ WebSearch login')
 
   // One no list names, as the engine's own forks are, is left out.
   await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'agent-9' })
-  expect(await detail(ui)).toBe('    ●● Explore ⟳ WebSearch login')
+  expect(await detail(ui)).toBe('     ●● Explore · ⟳ WebSearch login')
   await ui.unmount()
 })
 
@@ -305,8 +311,8 @@ test('a subagent works for the card its spawner worked for when it was spawned',
     agentId: 'agent-1',
   })
 
-  expect(await detail(ui, API_ROW)).toBe('    ●● Explore ⟳ WebSearch login')
-  expect(await detail(ui, 'act:md:0004-web')).toBe('    ● Claude ⟳ working')
+  expect(await detail(ui, API_ROW)).toBe('     ●● Explore · ⟳ WebSearch login')
+  expect(await detail(ui, 'act:md:0004-web')).toBe('     ● Claude · ⟳ working')
   await ui.unmount()
 })
 
@@ -322,16 +328,16 @@ test('the activity line follows the tool calls and turns idle when they stop', a
     new_string: 'b',
   })
   expect(edited).toMatchObject({ result: {} })
-  expect(await detail(ui)).toBe('    ● Claude ⟳ Edit src/auth.ts')
+  expect(await detail(ui)).toBe('     ● Claude · ⟳ Edit src/auth.ts')
 
   await $.tool.call({ tool: 'Bash', command: 'npm test\nnpm run lint' })
-  expect(await detail(ui)).toBe('    ● Claude ⟳ Bash npm test')
+  expect(await detail(ui)).toBe('     ● Claude · ⟳ Bash npm test')
 
   await $.tool.call({ tool: KANBAN('list') })
-  expect(await detail(ui)).toBe('    ● Claude ⟳ kanban_list')
+  expect(await detail(ui)).toBe('     ● Claude · ⟳ kanban_list')
 
   await finish()
-  expect(await detail(ui)).toBe('    ● Claude idle')
+  expect(await detail(ui)).toBe('     ● Claude · idle')
 
   await clock.advance(3 * MINUTE)
   await ui.press({ key: 'refresh' })
@@ -366,7 +372,7 @@ test('a long path or command is cut to the pane, a path from its front', async (
   })
   const path = await detail(ui)
   expect(cellWidth(path ?? '')).toBeLessThanOrEqual(44)
-  expect(path).toBe('    ● Claude ⟳ Write …/oauth/callback.ts')
+  expect(path).toBe('     ● Claude · ⟳ Write …/oauth/callback.ts')
 
   await $.tool.call({
     tool: 'Bash',
@@ -374,7 +380,7 @@ test('a long path or command is cut to the pane, a path from its front', async (
   })
   const command = await detail(ui)
   expect(cellWidth(command ?? '')).toBeLessThanOrEqual(44)
-  expect(command).toBe('    ● Claude ⟳ Bash npm run build -- --watc…')
+  expect(command).toBe('     ● Claude · ⟳ Bash npm run build -- --w…')
   await ui.unmount()
 })
 
@@ -387,16 +393,16 @@ test('tokens add up from the model requests while the card is active', async ($,
 
   await step(usage(10_000, 2_000, 50_000))
   await step(usage(30_000, 6_000, 70_000))
-  expect(await detail(ui)).toMatch(/ · 48k tok$/)
+  expect(await detail(ui)).toMatch(/ · 48k$/)
 
   // Tokens written to the cache were new input; those read are kept apart.
   await step(usage(500, 100, 0, 1_400))
-  expect(await detail(ui)).toMatch(/ · 50k tok$/)
+  expect(await detail(ui)).toMatch(/ · 50k$/)
   expect(await detail(ui)).not.toContain('cached')
 
   await spawn($, 'Explore')
   await step(usage(1_000, 1_000), 'agent-1')
-  expect(await detail(ui)).toMatch(/ · 52k tok$/)
+  expect(await detail(ui)).toMatch(/ · 52k$/)
   await ui.unmount()
 })
 
@@ -417,15 +423,31 @@ test('the detail view lists the agents by name and breaks the totals into rounds
   await clock.advance(3 * MINUTE)
   await finish(2)
 
-  expect(await detail(ui)).toMatch(/ · 8m · 48k tok$/)
+  expect(await detail(ui)).toMatch(/ · 8m · 48k$/)
   await click(ui, API)
   const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
   expect(texts).toContain('Agents: ● Claude ● Explore')
-  expect(texts).toContain('Total · 8m · 48k tok · 120k cached')
-  expect(texts).toContain(
-    'Round 1 · 5m · 12k tok · 50k cached · Claude, Explore',
-  )
-  expect(texts).toContain('Round 2 · 3m · 36k tok · 70k cached · Claude')
+  // The totals and each round are rows of two columns: a label, then the figures.
+  expect(texts).toContain('Total')
+  expect(texts).toContain('8m · 48k tok · 120k cached')
+  expect(texts).toContain('Round 1')
+  expect(texts).toContain('5m · 12k tok · 50k cached · Claude, Explore')
+  expect(texts).toContain('Round 2')
+  expect(texts).toContain('3m · 36k tok · 70k cached · Claude')
+  await ui.unmount()
+})
+
+test('the detail view marks a total and a round with nothing counted yet with a dash', async ($, on) => {
+  const { ui, turn } = await start($, on, 'terminal')
+  await $.turn.start(turn())
+  await showCard($, 2)
+
+  await click(ui, API)
+  const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+  expect(texts).toContain('Total')
+  expect(texts).toContain('Round 1')
+  expect(texts.filter(text => text === '-')).toHaveLength(1)
+  expect(texts).toContain('- · Claude')
   await ui.unmount()
 })
 
@@ -487,7 +509,7 @@ test(
     await step(usage(5_000, 1_000))
     await finish(1)
 
-    expect(await detail(ui, 'act:md:0003-docs')).toMatch(/idle · 2m · 6k tok$/)
+    expect(await detail(ui, 'act:md:0003-docs')).toMatch(/idle · 2m · 6k$/)
     await ui.unmount()
   },
 )
@@ -521,7 +543,7 @@ test('a turn started by the answer prompt belongs to the card that was answered'
   await step(usage(5_000, 1_000))
   await finish(1)
 
-  expect(await detail(ui, 'act:md:0001-login')).toMatch(/idle · 1m · 6k tok$/)
+  expect(await detail(ui, 'act:md:0001-login')).toMatch(/idle · 1m · 6k$/)
   await ui.unmount()
 })
 
@@ -536,7 +558,7 @@ test('a later turn belongs to no card until it touches one', async ($, on) => {
   await step(usage(20_000, 4_000))
   await finish(2)
 
-  expect(await detail(ui)).toMatch(/ · 12k tok$/)
+  expect(await detail(ui)).toMatch(/ · 12k$/)
   await ui.unmount()
 })
 
@@ -556,7 +578,7 @@ test('watching changes nothing: the call answers as it would and a failure goes 
   expect(logs.some(line => line.includes("could not record Claude's"))).toBe(
     true,
   )
-  expect(await detail(ui)).toBe('    ● Claude ⟳ working')
+  expect(await detail(ui)).toBe('     ● Claude · ⟳ working')
   await ui.unmount()
 })
 
@@ -648,8 +670,49 @@ test('the totals kept in the store come back after a reload', async ($, on) => {
     },
   })
 
-  expect(await detail(ui)).toBe('    ●● Explore idle 2h · 12m · 48k tok')
+  expect(await detail(ui)).toBe('     ●● Explore · idle 2h · 12m · 48k')
   expect(await row(ui, 'act:md:0003-docs')).toBeUndefined()
+  await ui.unmount()
+})
+
+test('setting aside the card Claude is working on, and only that one, toasts that its turn goes on', async ($, on) => {
+  const files = {
+    ...cards(),
+    [path(4, 'ui')]: card(4, { status: 'claude', title: 'Build UI' }),
+    [path(5, 'ops')]: card(5, { status: 'claude', title: 'Run ops' }),
+  }
+  const { clock, ui, turn, finish, toasts } = await start(
+    $,
+    on,
+    'terminal',
+    files,
+  )
+  await $.turn.start(turn())
+  await showCard($, 2)
+
+  // Card 4 is not the card the turn is on: setting it aside says nothing.
+  await click(ui, 'card:md:0004-ui')
+  await ui.press({ key: 'move:cancelled' })
+  await clock.advance(SYNC_PAUSE)
+  await ui.press({ key: 'back' })
+  expect(toasts).toEqual([])
+
+  await click(ui, API)
+  await ui.press({ key: 'move:suspended' })
+  await clock.advance(SYNC_PAUSE)
+  expect(toasts).toEqual([
+    'Claude is still working on #2. Press Esc in the prompt to stop it.',
+  ])
+  expect(files[path(2, 'api')]).toContain('status: suspended')
+
+  // Once the turn is over nothing is said, of this card or another.
+  await finish()
+  await showCard($, 5)
+  await ui.press({ key: 'back' })
+  await click(ui, 'card:md:0005-ops')
+  await ui.press({ key: 'move:suspended' })
+  await clock.advance(SYNC_PAUSE)
+  expect(toasts).toHaveLength(1)
   await ui.unmount()
 })
 
@@ -692,9 +755,51 @@ test('a card waiting in the queue has no second row and no round, until it start
   await clock.advance(SYNC_PAUSE)
   expect(prompts).toEqual([expect.stringMatching(/^Resume kanban card #2: /)])
   expect((await row(ui, API))?.text).not.toContain('queued')
-  expect(await detail(ui)).toBe('    ●● Explore idle 2h · 12m · 48k tok')
+  expect(await detail(ui)).toBe('     ●● Explore · idle 2h · 12m · 48k')
   await ui.unmount()
 })
+
+// Twelve finished rounds, the tenth on, whose labels fill the narrow label box.
+const manyRounds = () =>
+  Array.from({ length: 12 }, (_, index) => ({
+    startedAt: NOW - (13 - index) * 60 * MINUTE,
+    ms: (index + 1) * MINUTE,
+    input: 1_000,
+    output: 100,
+    cacheRead: 0,
+    agents: ['Claude'],
+    isOpen: false,
+  }))
+
+for (const columns of [30, 44]) {
+  test(`a round label as wide as the label box keeps a space before its figures at ${columns} columns`, async ($, on) => {
+    const { ui } = await start(
+      $,
+      on,
+      'terminal',
+      cards(),
+      {
+        [SAVED_KEY]: {
+          shape: 'activity-1',
+          cwd: '/work',
+          card: savedCard({ rounds: manyRounds() }),
+        },
+      },
+      columns,
+    )
+    await click(ui, API)
+
+    const lines = await renderPane(ui, columns)
+    const rounds = lines.filter(line => /^ {2}Round \d+/.test(line))
+    expect(rounds).toHaveLength(12)
+    // The figures start in one column, a space after the widest label, `Round 10`.
+    const starts = rounds.map(line => /^ {2}Round \d+ +/.exec(line)?.[0].length)
+    expect(starts).toEqual(Array(12).fill(2 + 'Round 10'.length + 1))
+    expect(rounds[9]).toMatch(/^ {2}Round 10 \S/)
+    expect(overflow(lines, columns)).toEqual([])
+    await ui.unmount()
+  })
+}
 
 test('a card that comes back after a reload starts a round of its own', async ($, on) => {
   const { clock, ui, turn, finish } = await start($, on, 'terminal', cards(), {
@@ -708,8 +813,9 @@ test('a card that comes back after a reload starts a round of its own', async ($
 
   await click(ui, API)
   const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
-  expect(texts).toContain('Total · 14m · 48k tok · 120k cached')
-  expect(texts).toContain('Round 3 · 2m · Claude')
+  expect(texts).toContain('14m · 48k tok · 120k cached')
+  expect(texts).toContain('Round 3')
+  expect(texts).toContain('2m · Claude')
   await ui.unmount()
 })
 
@@ -728,7 +834,7 @@ for (const surface of EVERY_SURFACE) {
       agentId: 'agent-1',
     })
 
-    expect(await detail(ui)).toMatch(/^ {4}●● general-purpo… /)
+    expect(await detail(ui)).toMatch(/^ {5}●● general-purpo… · /)
     const rows = [
       ...(await ui.findAll({ type: 'Button' })),
       ...(await ui.findAll({ type: 'Text' })),
@@ -768,9 +874,9 @@ for (const surface of WITH_CLIENT) {
     const { clock, ui, files, prompts, scrolls } = await crowd($, on, surface)
     const keysOf = async () => rowKeys(ui)
 
-    // Four of the six cards show, each with its row, and the tree fits the pane.
+    // Three of the six cards show, each with its row, and the tree fits the pane.
     expect((await keysOf()).filter(key => key.startsWith('act:'))).toHaveLength(
-      4,
+      3,
     )
     expect((await keysOf()).length + TOOLBAR_ROWS).toBeLessThanOrEqual(30)
     const index = (await keysOf()).indexOf('card:md:0011-c')
@@ -789,7 +895,7 @@ for (const surface of WITH_CLIENT) {
       pointer: { column: 3, row: await at('act:md:0011-c') },
     })
     expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:claude:up'))?.text).toBe('  ↑ 1 more')
+    expect((await row(ui, 'more:claude:up'))?.text).toBe('      ↑ 1 more')
     expect(await row(ui, 'card:md:0011-c')).toBeUndefined()
     expect(await row(ui, 'act:md:0012-c')).toBeDefined()
 
@@ -800,10 +906,10 @@ for (const surface of WITH_CLIENT) {
       pointer: { column: 3, row: await at('card:md:0021-b') },
     })
     expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toBe('      ↑ 1 more')
     expect(await row(ui, 'more:claude:up')).toBeDefined()
 
-    // A card dragged past second rows lands on the header it is dropped on.
+    // A card dragged to the header of the section below lands there.
     const from = await rowIndex(ui, 'card:md:0022-b')
     const human = await rowIndex(ui, 'hdr:human')
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
@@ -845,24 +951,23 @@ for (const surface of WITH_CLIENT) {
     const at = async (key: string) =>
       (await rowIndex(ui, key)) + TOOLBAR_ROWS + strip
 
-    // Over the last second row of Claude, three rows above Backlog's cards: the
-    // Claude section, which scrolls itself.
+    // Over the last second row of Claude shown: the Claude section, which scrolls itself.
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
-      pointer: { column: 3, row: await at('act:md:0014-c') },
+      pointer: { column: 3, row: await at('act:md:0012-c') },
     })
     expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:claude:up'))?.text).toBe('  ↑ 1 more')
+    expect((await row(ui, 'more:claude:up'))?.text).toBe('      ↑ 1 more')
 
-    // Over a card of Backlog below the second rows: Backlog.
+    // Over a card of Backlog, above the second rows: Backlog.
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
       pointer: { column: 3, row: await at('card:md:0021-b') },
     })
     expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toBe('      ↑ 1 more')
 
     // Over the strip, which follows the toolbar's two rows: the engine's.
     await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 3 } })

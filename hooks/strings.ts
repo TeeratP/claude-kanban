@@ -2,15 +2,19 @@ import type {
   KanbanBackendMode,
   KanbanCard,
   KanbanColumn,
+  KanbanGroup,
   KanbanSection,
   KanbanTag,
 } from '../types'
+import type { Copy } from './model'
 
 const COL = {
   human: 'Human',
   claude: 'Claude',
   backlog: 'Backlog',
   done: 'Done',
+  cancelled: 'Cancelled',
+  suspended: 'Suspended',
 } satisfies Record<KanbanColumn, string>
 
 const SECTION_NAME = {
@@ -38,21 +42,13 @@ export const S = {
     `kanban: could not refresh the board: ${reason}`,
 
   col: COL,
-  tagShort: {
-    review: 'rev',
-    human: 'hum',
-    question: '?',
-  } satisfies Record<KanbanTag, string>,
-  count: (shown: number, total: number) =>
-    shown === total ? String(total) : `${shown} of ${total}`,
-  empty: '  (empty)',
-  noCards: 'No cards yet. Add .kanban/0001-title.md',
   more: (dir: 'up' | 'down', n: number) =>
-    `  ${dir === 'up' ? '↑' : '↓'} ${n} more`,
+    `${dir === 'up' ? '↑' : '↓'} ${n} more`,
 
   refresh: 'Refresh',
   loading: 'loading…',
-  updated: (age: string) => `updated ${age}`,
+  updated: (age: string) =>
+    age === 'now' ? 'updated just now' : `updated ${age} ago`,
   expand: '▸',
   collapse: '▾',
   syncing: '⟳',
@@ -63,26 +59,20 @@ export const S = {
   cardHasNoFile: (card: KanbanCard) => `Card #${card.number} has no file.`,
 
   back: '← Board',
-  moveTo: 'Move to:',
   detailLoading: 'Loading…',
   noSpec: '(no description)',
   cardGone: 'This card is no longer on the board.',
   detailFailed: (reason: string) => `Could not read the card: ${reason}`,
-  metaColumn: (column: KanbanColumn) => COL[column],
   syncPending: (to: KanbanColumn) => `⟳ syncing to ${COL[to]}`,
-  handoffHeading: (date: string, byOther?: string) =>
-    `Handoff (${date})${fromOther(byOther)}`,
-  feedbackHeading: (date: string, byOther?: string) =>
-    `Feedback (${date})${fromOther(byOther)}`,
 
   toolList: {
     description:
-      'List the cards on the kanban board, one per line: #number [column] title. Done lists only its 10 newest.',
+      'List the cards on the kanban board, one per line: #number [column] title. Done and Cancelled list only their 10 newest.',
     column: 'Only list cards in this column.',
   },
   toolMove: {
     description:
-      'Move a kanban card to another column (human, claude, backlog or done).',
+      'Move a kanban card to another column (human, claude, backlog or done). Suspended and Cancelled are set by the person only.',
     card: 'The card number, as shown by kanban_list.',
     to: 'The column to move the card to.',
   },
@@ -158,7 +148,7 @@ export const S = {
   noBoardItem: (card: KanbanCard) =>
     `#${card.number} is not on the project board.`,
   closeNotVerified: (card: KanbanCard) =>
-    `#${card.number} is still open after gh issue close.`,
+    `#${card.number} is not closed as expected after gh issue close.`,
   noStatusField: (projectNumber: string) =>
     `Project #${projectNumber} has no Status field.`,
   missingStatusOption: (name: string) =>
@@ -204,12 +194,17 @@ export const S = {
     `kanban: could not send the prompt to Claude: ${reason}`,
 
   // #10
-  backendLabel: (mode: KanbanBackendMode, kind?: 'github' | 'local') => {
+  // `isShort` drops the " (auto)" a narrow pane has no room for.
+  backendLabel: (
+    mode: KanbanBackendMode,
+    kind?: 'github' | 'local',
+    isShort = false,
+  ) => {
     const name = kind ?? mode
 
     return name === 'auto'
       ? ''
-      : `${BACKEND[name]}${mode === 'auto' ? ' (auto)' : ''}`
+      : `${BACKEND[name]}${mode === 'auto' && !isShort ? ' (auto)' : ''}`
   },
   githubSignedOut: (reason: string) =>
     `gh auth status failed: run gh auth login (${reason})`,
@@ -219,7 +214,6 @@ export const S = {
     `project board: ${reason}; check the IDs in CLAUDE.md`,
   // #11
   keyHint: '↑↓ ⏎ open · m move',
-  moveKeys: (keys: readonly string[]) => `  ${keys.join('/')}`,
 
   // #19
   checkHeading: 'Check',
@@ -246,25 +240,10 @@ export const S = {
   checkLogFailed: (reason: string) => `kanban: a check run failed: ${reason}`,
 
   // #18
-  queuePosition: (at: number, total: number) =>
-    `${COL.human} ${at} of ${total}`,
-  prevCard: '‹ Prev',
-  nextCard: 'Next ›',
   focusFeedback: 'Write feedback',
   focusAnswer: 'Write answer',
   focusFailed: (reason: string) =>
     `Could not move to the feedback box: ${reason}`,
-  reviewHint: (keys: readonly string[]) => keys.join(' · '),
-  reviewKeys: {
-    approve: 'a approve',
-    sendBack: 's send back',
-    answer: 's answer',
-    park: 'p park',
-    write: 'f write',
-    next: 'n next',
-    prev: 'k prev',
-    board: 'b board',
-  },
 
   // #15
   // Short: they share a 44-column toolbar with the backend label.
@@ -294,7 +273,6 @@ export const S = {
     `Recorded your question on #${card.number} and moved it to Human (syncing). Stop here: you are asked to resume once the person answers.`,
   claudeAsks: (card: KanbanCard) =>
     `Claude asks: ${card.question ?? card.title} (#${card.number})`,
-  askBlock: 'Claude asks',
   answerButton: 'Answer',
   answerLabel: 'Answer',
   answerPlaceholder: 'Your answer to Claude',
@@ -322,9 +300,6 @@ export const S = {
     `kanban: could not record Claude's activity: ${reason}`,
 
   // #20
-  claudeCount: (running: number, limit: number, queued: number) =>
-    `${running}/${limit}${queued === 0 ? '' : ` · ${queued} queued`}`,
-  queuedMark: (place: number) => `queued ${place}`,
   queueSaveFailed: (reason: string) =>
     `kanban: could not save the queue: ${reason}`,
   queueRestoreFailed: (reason: string) =>
@@ -339,7 +314,6 @@ export const S = {
     `Could not reorder #${card.number} in ${COL[card.column]}, so it is back where it was: ${reason}`,
   reorderUp: '↑',
   reorderDown: '↓',
-  reorderLabel: 'Move in section:',
 
   // #23
   add: 'New',
@@ -348,7 +322,6 @@ export const S = {
   addDetailsLabel: 'Details',
   addDetailsPlaceholder: 'What is to be done, and how to tell it is done',
   addSubmit: 'add',
-  addDetails: 'Add details',
   addCancel: 'Cancel',
   addNeedsTitle: 'Give the card a title first.',
   addFailed: (reason: string) => `Could not add the card: ${reason}`,
@@ -381,11 +354,9 @@ export const S = {
   // #25
   filter: 'Find',
   filterLabel: 'Filter',
-  filterPlaceholder: 'words, #12, label:ai, @claude',
   filterSubmit: 'done',
   filterClear: '✕',
   filterCount: (shown: number, total: number) => `${shown}/${total}`,
-  noMatches: '  (no matches)',
 
   // #31
   positionSkipped: (card: KanbanCard, reason: string) =>
@@ -397,10 +368,6 @@ export const S = {
   githubConfigUnclear:
     'CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
   configUnclear: 'board config not understood',
-  githubHint: [
-    'GitHub board? Link a Project to the repo, or add Repo and Project board lines to CLAUDE.md or AGENTS.md',
-    'Not picked up? Set backend: github to see why',
-  ],
 
   // #33
   boardName: (number: number, title: string) => `#${number} ${title}`,
@@ -429,4 +396,146 @@ export const S = {
 
   // #34
   filterQuery: (query: string) => `Find "${query}"`,
+  // #35
+  group: { active: 'Active', inactive: 'Inactive' } satisfies Record<
+    KanbanGroup,
+    string
+  >,
+  groupsFolded: '  Press a group to open it',
+  groupEmpty: 'empty',
+  groupMatches: (n: number) =>
+    n === 0 ? 'no matches' : n === 1 ? '1 match' : `${n} matches`,
+  // A section's count in a folded group's summary: `12 Done`, or `12D` when short.
+  groupCount: (n: number, column: KanbanColumn, isShort: boolean) =>
+    isShort ? `${n}${COL[column].charAt(0)}` : `${n} ${COL[column]}`,
+  newestMeta: (n: number) => `${n} newest`,
+  // Claude's limit, who waits for a slot and who is over it; `short` for a narrow pane.
+  claudeMeta: (limit: number, queued: number, over: number, isShort: boolean) =>
+    [
+      isShort ? `lim ${limit}` : `limit ${limit}`,
+      ...(queued === 0 ? [] : [isShort ? `${queued}q` : `${queued} queued`]),
+      ...(over === 0 ? [] : [`${over} over`]),
+    ].join(' · '),
+  setAside: (card: KanbanCard) =>
+    `Card #${card.number} is ${card.column} by the person; leave it unless they move it back.`,
+  stillWorking: (card: KanbanCard) =>
+    `Claude is still working on #${card.number}. Press Esc in the prompt to stop it.`,
+  setAsideTo: { done: 'Done', suspended: 'Suspend', cancelled: 'Cancel' },
+  suspendedLabelDescription: 'on hold (kanban Suspended)',
+  badSection: (to: unknown) =>
+    `"${String(to)}" is not a column; use backlog, human, claude, done, cancelled or suspended.`,
+
+  // #39
+  paneTitleCount: (waiting: number) => `Kanban · ${waiting}`,
+  retitleFailed: (reason: string) =>
+    `kanban: could not retitle the pane: ${reason}`,
+
+  // #38
+  dot: ' · ',
+  // The nav's Prev and Next, whole to bare: the arrows go first, then the place, then the words.
+  navPrev: ['‹ Prev', 'Prev', 'Prev', '‹'],
+  navNext: ['Next ›', 'Next', 'Next', '›'],
+  position: (at: number, total: number) => `${at}/${total}`,
+  tagWords: {
+    review: 'in review',
+    human: 'labelled human',
+    question: 'question',
+  } satisfies Record<KanbanTag, string>,
+  detailUpdated: (age: string) =>
+    age === 'now' ? 'updated just now' : `updated ${age} ago`,
+  githubLink: 'GitHub',
+  shortDate: (iso: string) => {
+    const [, month, day] = /^\d{4}-(\d{2})-(\d{2})$/.exec(iso) ?? []
+    const name = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ][Number(month) - 1]
+
+    return name === undefined ? iso : `${name} ${Number(day)}`
+  },
+  pinnedHandoff: { who: "Claude's", rest: ' handoff' },
+  pinnedAsk: { who: 'Claude', rest: ' asks' },
+  sectionName: SECTION_NAME,
+  notCounted: (login: string) => ` from @${login}, not counted`,
+  historyHeading: 'History',
+  handoffField: {
+    did: 'Did',
+    check: 'Check',
+    changed: 'Changed',
+    need: 'Need',
+  },
+  moveRowLabel: 'Move to',
+  setAsideRow: { long: 'Set aside', short: 'Aside' },
+  reorderRowLabel: 'Reorder',
+  // Quick add's hint and details button, the longest that fits first.
+  addRowClosed: [
+    { hint: '⏎ adds to Backlog', details: 'Add details' },
+    { hint: '⏎ add', details: 'Details' },
+    { hint: '⏎', details: 'Details' },
+  ],
+  addRowOpen: [
+    { hint: '⏎ adds to Backlog', details: 'Hide details' },
+    { hint: '⏎ adds', details: 'Hide details' },
+    { hint: '⏎ add', details: 'Hide' },
+    { hint: '⏎', details: 'Hide' },
+  ],
+  filterTerms: 'words, #12, label:ai, @done',
+
+  // #37
+  // A card not yet made has no number: the column says `new`.
+  newCard: 'new',
+  // Marks a spare row of a section, under the numbers.
+  slot: '·',
+  // A queued card's place in the queue, in place of its age: `queued 1`, or `q1` in a narrow pane.
+  queued: (place: number, isShort: boolean) =>
+    isShort ? `q${place}` : `queued ${place}`,
+  // What a section says when it holds no card, long and short; the person's surface decides some.
+  emptyHuman: { long: 'All clear, nothing needs you', short: 'All clear' },
+  emptyClaude: (canDrag: boolean): Copy => ({
+    long: canDrag ? 'Idle · drag a card here' : 'Idle · open a card to move it',
+    short: 'Idle',
+  }),
+  emptyBacklog: (canType: boolean): Copy =>
+    canType
+      ? { long: 'Nothing yet · n adds a card', short: 'n adds a card' }
+      : { long: 'Nothing parked', short: 'Nothing parked' },
+  emptyDone: { long: 'Nothing finished yet', short: 'None yet' },
+  emptySuspended: { long: 'Nothing on hold', short: 'None' },
+  emptyCancelled: { long: 'Nothing dropped', short: 'None' },
+  noMatches: 'No matches',
+  // An empty board: what it is, and for an auto board on local cards how to use GitHub.
+  noCards: {
+    long: 'Cards live in .kanban/*.md here.',
+    short: 'Cards live in .kanban/',
+  },
+  noIssues: { long: 'No issues on this board yet.', short: 'No issues yet.' },
+  githubHint: [
+    {
+      long: 'On GitHub? Link a Project to the repo',
+      short: 'GitHub? Link a Project',
+    },
+    {
+      long: 'or set backend: github to see why.',
+      short: 'or set backend: github',
+    },
+  ] satisfies Copy[],
+  // The key hint in a spare row at the bottom of the list, before and after the first key.
+  legendIdle: {
+    long: '⏎ open · m move · ⇧J/K reorder',
+    short: '⏎ open · m move',
+  },
+  legendKeys: {
+    long: '↑↓ walk · ⏎ open · m+key move',
+    short: '↑↓ ⏎ open · m move',
+  },
 }

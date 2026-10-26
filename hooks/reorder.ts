@@ -5,7 +5,7 @@ import { readBoard } from './atoms'
 import type { Place } from './board-client'
 import { filterCards } from './filter'
 import { sectionList } from './layout'
-import { isPendingId } from './model'
+import { isOrdered, isPendingId } from './model'
 import { moveCard, moveOptions } from './sync'
 
 /**
@@ -28,8 +28,9 @@ export function anchorFor(
 /**
  * Drops a card into a section, at `place` in it: moves it from another
  * section, or reorders it within its own. Left without a place, or dropped in
- * Done (which lists by update time), it goes last. A card still being made is
- * not on the backend: it is not dropped, and no place is taken from it.
+ * Done or Cancelled (which list by update time), it goes last. A card still
+ * being made is not on the backend: it is not dropped, and no place is taken
+ * from it.
  *
  * Under the board's filter `query`, `place` is among the cards the person sees,
  * and the card goes right after the nearest of them above that place (first
@@ -54,7 +55,7 @@ export async function dropCard(
     one => one.id !== cardId,
   )
   const after =
-    column === 'done' || place === undefined
+    !isOrdered(column) || place === undefined
       ? undefined
       : anchorFor(others, place)
 
@@ -67,9 +68,10 @@ export async function dropCard(
 /**
  * Moves a card one place up or down in its section. Resolves its section, where
  * it ended up there and how many cards the section holds, or nothing when it
- * cannot move (at the end, in Done, or still being made). Under the board's
- * filter `query` a place is among the cards the person sees: the card passes
- * the visible one next to it, hidden cards in between staying where they are.
+ * cannot move (at the end, in Done or Cancelled, or still being made). Under
+ * the board's filter `query` a place is among the cards the person sees: the
+ * card passes the visible one next to it, hidden cards in between staying
+ * where they are.
  */
 export async function shiftCard(
   $: EngineInterface,
@@ -81,7 +83,7 @@ export async function shiftCard(
 > {
   const { cards } = await readBoard($)
   const card = cards.find(one => one.id === cardId)
-  if (card === undefined || card.column === 'done' || isPendingId(cardId)) {
+  if (card === undefined || !isOrdered(card.column) || isPendingId(cardId)) {
     return undefined
   }
 

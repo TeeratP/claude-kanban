@@ -1,4 +1,4 @@
-import type { On } from 'claude-code'
+import type { On, PaneOpenArgs } from 'claude-code'
 import { mock } from 'claude-code/testing'
 
 export const NOW = Date.parse('2026-10-25T12:00:00Z')
@@ -165,7 +165,18 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
   const scrolls: { by: number }[] = []
   const registered: string[] = []
   const prompts: string[] = []
-  const world = { panes: [] as string[], opened: [] as string[] }
+  const world = {
+    panes: [] as string[],
+    // False: the listed panes wait undrawn, as on a terminal too narrow for them.
+    isPlaced: true,
+    opened: [] as string[],
+    // The next `ui.panes` answers with the panes as they stood when asked, but only
+    // once this settles: a pane closed meanwhile is still listed.
+    holdPanes: undefined as Promise<void> | undefined,
+    // Every open as the engine got it, and the title each pane carries now.
+    opens: [] as PaneOpenArgs[],
+    titles: {} as Record<string, string>,
+  }
 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: CWD }))
@@ -205,18 +216,25 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
   })
   on('ui.open', (_, e) => {
     world.opened.push(e.id)
+    world.opens.push(e)
+    world.titles[e.id] = e.title ?? e.id
 
     return { value: { isPlaced: true } }
   })
-  on('ui.panes', () => ({
-    value: world.panes.map(id => ({
+  on('ui.panes', async () => {
+    const listed = world.panes.map(id => ({
       id,
-      title: id,
+      title: world.titles[id] ?? 'Kanban',
       isShown: true,
       isFocused: false,
-      isPlaced: true,
-    })),
-  }))
+      isPlaced: world.isPlaced,
+    }))
+    const late = world.holdPanes
+    world.holdPanes = undefined
+    await late
+
+    return { value: listed }
+  })
   on('ui.toast', (_, e) => {
     toasts.push(e.text)
 

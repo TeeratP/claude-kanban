@@ -93,6 +93,36 @@ test('kanban_ask records the question, moves the card to Human tagged question a
   expect(prompts).toEqual([])
 })
 
+test('a card the person suspends while kanban_ask writes the question stays suspended', async ($, on) => {
+  const files = { [path(1, 'login')]: withBody('Spec text.') }
+  const { clock, calls, toasts } = boot(on, files)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  let release = () => {}
+  calls.hold = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  const asking = ask($)
+  await click(ui, 'card:md:0001-login')
+  await ui.press({ key: 'move:suspended' })
+  release()
+
+  expect(await asking).toEqual({
+    deny: 'Card #1 is suspended by the person; leave it unless they move it back.',
+  })
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+  expect(files[path(1, 'login')]).toContain('status: suspended')
+  expect(await $.tool.call({ tool: tool('kanban_list') })).toMatchObject({
+    result: expect.stringContaining('#1 [suspended] Fix login'),
+  })
+  expect(toasts).toEqual([])
+  await ui.unmount()
+})
+
 test('a question card shows a ? tag on its row, and an answered one does not', async ($, on) => {
   const files = {
     [path(1, 'login')]: withBody(`Spec text.\n\n${QUESTION}`, 'human'),
@@ -113,9 +143,7 @@ test('a question card shows a ? tag on its row, and an answered one does not', a
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await row(ui, 'card:md:0001-login'))?.text).toContain(
-    '#1 ? Fix login',
-  )
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('?1 Fix login')
   expect((await row(ui, 'card:md:0002-api'))?.text).toContain('#2 Build API')
   // A question only waits on the person while the card is theirs.
   expect((await row(ui, 'card:md:0003-docs'))?.text).toContain('#3 Write docs')
@@ -480,10 +508,10 @@ for (const surface of SURFACES) {
     await click(ui, 'card:md:0001-login')
     expect(await ui.find({ key: 'question' })).toBeUndefined()
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
-      'Question (2026-10-25)',
+      'Question · Oct 25',
     )
     expect((await ui.find({ key: 'section:1' }))?.text).toContain(
-      'Answer (2026-10-25)',
+      'Answer · Oct 25',
     )
     expect((await ui.find({ key: 'section:1' }))?.text).toContain(
       'Use the staging one',

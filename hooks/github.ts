@@ -14,7 +14,8 @@ import { errorMessage } from './model'
 import { S } from './strings'
 
 type Options = KanbanGithub['options']
-type OptionKey = keyof Options
+// The Status options the mod needs to exist; Cancelled and Suspended are optional extras.
+type OptionKey = 'backlog' | 'ready' | 'inProgress' | 'inReview' | 'done'
 
 /** What a CLAUDE.md or AGENTS.md says about its GitHub project; ids it leaves out are looked up. */
 export type ParsedClaudeMd = {
@@ -146,18 +147,122 @@ const AI_LABEL = 'ai'
 
 const HUMAN_LABEL = 'human'
 
+const SUSPENDED_LABEL = 'suspended'
+
 const isHumanLabel = (label: string) => label.toLowerCase() === HUMAN_LABEL
 const isAiLabel = (label: string) => label.toLowerCase() === AI_LABEL
+const isSuspendedLabel = (label: string) =>
+  label.toLowerCase() === SUSPENDED_LABEL
 
-/** The column a GitHub card sits in: who holds the ball, not who owns the issue. */
+// Status names a board may give to Cancelled and Suspended (lower case). Not
+// `blocked`: blocked work is active work that waits, so it stays in Claude or Human.
+const CANCELLED_NAME =
+  /^(cancel+ed|cancel|won'?t (do|fix)|not planned|dropped|abandoned)$/
+const SUSPENDED_NAME =
+  /^(suspended?|on[ -]?hold|paused?|ice ?box|someday|deferred)$/
+
+const nameOf = (status: string | undefined) =>
+  (status ?? '').trim().toLowerCase()
+
+/** A Status option the board has, by id and name. */
+export type StatusOption = { id: string; name: string }
+
+const cancelledOf = (options: readonly StatusOption[]) =>
+  options.find(one => CANCELLED_NAME.test(nameOf(one.name)))
+const suspendedOf = (options: readonly StatusOption[]) =>
+  options.find(one => SUSPENDED_NAME.test(nameOf(one.name)))
+
+/** Cancelled and Suspended among a board's Status options, found by name; the first of each. */
+export function extraOptions(options: readonly StatusOption[]): {
+  cancelled?: string
+  suspended?: string
+} {
+  const cancelled = cancelledOf(options)
+  const suspended = suspendedOf(options)
+
+  return {
+    ...(cancelled === undefined ? {} : { cancelled: cancelled.id }),
+    ...(suspended === undefined ? {} : { suspended: suspended.id }),
+  }
+}
+
+// The names `extraOptions`' options go by on the board, as the board spells them.
+function extraNames(options: readonly StatusOption[]): {
+  cancelled?: string
+  suspended?: string
+} {
+  const cancelled = cancelledOf(options)
+  const suspended = suspendedOf(options)
+
+  return {
+    ...(cancelled === undefined ? {} : { cancelled: cancelled.name }),
+    ...(suspended === undefined ? {} : { suspended: suspended.name }),
+  }
+}
+
+/**
+ * The board's info with its Cancelled and Suspended options, and the names they
+ * go by, as `options` lists them; the same object when nothing changed, and when
+ * `options` is empty (a load that did not report them says nothing).
+ */
+export function withStatusOptions(
+  info: KanbanGithub,
+  options: readonly StatusOption[],
+): KanbanGithub {
+  if (options.length === 0) return info
+
+  const { cancelled: _cancelled, suspended: _suspended, ...rest } = info.options
+  const { optionNames: known, ...bare } = info
+  const found = extraOptions(options)
+  const names = extraNames(options)
+  if (
+    found.cancelled === info.options.cancelled &&
+    found.suspended === info.options.suspended &&
+    names.cancelled === known?.cancelled &&
+    names.suspended === known?.suspended
+  ) {
+    return info
+  }
+
+  return {
+    ...bare,
+    options: { ...rest, ...found },
+    ...(Object.keys(names).length === 0 ? {} : { optionNames: names }),
+  }
+}
+
+// Closed as not planned (or as a duplicate): the way GitHub says cancelled.
+const isCancelledReason = (reason: string | undefined) =>
+  reason === 'NOT_PLANNED' || reason === 'DUPLICATE'
+
+/**
+ * The column a GitHub card sits in: who holds the ball, not who owns the issue.
+ * A closed issue is Done, or Cancelled when GitHub's close reason (`stateReason`)
+ * says not planned; an open one is Cancelled or Suspended by a Status named so
+ * (Suspended also by the `suspended` label).
+ */
 export function columnOf(
   status: string | undefined,
   labels: readonly string[],
   isClosed: boolean,
+  stateReason?: string,
 ): { column: KanbanColumn; tag?: KanbanTag } {
-  const name = (status ?? '').trim().toLowerCase()
+  const name = nameOf(status)
   const key = KEY_OF_NAME[name]
-  if (key === 'done' || isClosed) return { column: 'done' }
+  const isCancelledName = CANCELLED_NAME.test(name)
+  if (isClosed) {
+    return {
+      column:
+        isCancelledReason(stateReason) || isCancelledName
+          ? 'cancelled'
+          : 'done',
+    }
+  }
+  if (isCancelledName) return { column: 'cancelled' }
+  if (SUSPENDED_NAME.test(name) || labels.some(isSuspendedLabel)) {
+    return { column: 'suspended' }
+  }
+  if (key === 'done') return { column: 'done' }
   if (name === '' || key === 'backlog' || key === 'ready') {
     return { column: 'backlog' }
   }
@@ -165,13 +270,6 @@ export function columnOf(
   if (labels.some(isHumanLabel)) return { column: 'human', tag: 'human' }
 
   return { column: key === 'inProgress' ? 'claude' : 'backlog' }
-}
-
-const STATUS_OF: Record<KanbanColumn, string> = {
-  backlog: STATUS_NAME.backlog,
-  claude: STATUS_NAME.inProgress,
-  human: STATUS_NAME.inReview,
-  done: STATUS_NAME.done,
 }
 
 function isParked(card: KanbanCard): boolean {
@@ -184,8 +282,10 @@ function isParked(card: KanbanCard): boolean {
 const isInProgress = (card: KanbanCard) =>
   KEY_OF_NAME[(card.status ?? '').trim().toLowerCase()] === 'inProgress'
 
-// Read back after `gh issue close`, which can fail without an error.
-const verifyClosed = (issue: string, repo: string) => [
+// Read back after `gh issue close`, which can fail without an error: the state
+// and the reason the issue was closed for, as `CLOSED NOT_PLANNED`. An older gh
+// does not know the reason and can be asked for the state alone, as `CLOSED`.
+const verifyClosed = (issue: string, repo: string, isReasonKnown = true) => [
   'gh',
   'issue',
   'view',
@@ -193,10 +293,23 @@ const verifyClosed = (issue: string, repo: string) => [
   '--repo',
   repo,
   '--json',
-  'state',
+  isReasonKnown ? 'state,stateReason' : 'state',
   '--jq',
-  '.state',
+  isReasonKnown ? '.state + " " + (.stateReason // "")' : '.state',
 ]
+
+// Whether the read-back says the issue is closed the way `to` closes it. Done
+// takes an issue with no reason too (an old one); Cancelled needs not planned.
+function isClosedAs(readBack: string, to: KanbanColumn): boolean {
+  const [state, reason = ''] = readBack.trim().split(' ')
+
+  return (
+    state === 'CLOSED' &&
+    (to === 'cancelled'
+      ? reason === 'NOT_PLANNED'
+      : reason === '' || reason === 'COMPLETED')
+  )
+}
 
 // Sets the item's Status to the option with this id.
 const statusEdit = (itemId: string, cfg: KanbanGithub, option: string) => [
@@ -224,26 +337,53 @@ export function planMove(
 
   const issue = String(card.number)
   const itemEdit = (option: string) => statusEdit(itemId, cfg, option)
-  const reopen =
-    card.isClosed === true && to !== 'done'
-      ? [['gh', 'issue', 'reopen', issue, '--repo', cfg.repo]]
-      : []
+  const edit = ['gh', 'issue', 'edit', issue, '--repo', cfg.repo]
+  const close = (reason: string) => [
+    'gh',
+    'issue',
+    'close',
+    issue,
+    '--repo',
+    cfg.repo,
+    '--reason',
+    reason,
+  ]
+  // A closed issue is reopened first, unless it is to be closed again the way
+  // it is: `gh issue close` on a closed issue changes nothing and exits 0, so
+  // Done and Cancelled would never swap.
+  const isCancelledClose =
+    card.isClosed === true && isCancelledReason(card.stateReason)
+  const isReopened =
+    card.isClosed === true &&
+    (to === 'done'
+      ? isCancelledClose
+      : to === 'cancelled'
+        ? !isCancelledClose
+        : true)
+  const reopen = isReopened
+    ? [['gh', 'issue', 'reopen', issue, '--repo', cfg.repo]]
+    : []
+  // Leaving Suspended takes the label with it, as the repo spells it.
+  const suspended = card.labels?.find(isSuspendedLabel)
+  const unsuspend = suspended === undefined ? [] : ['--remove-label', suspended]
+  const unsuspendEdit = suspended === undefined ? [] : [[...edit, ...unsuspend]]
 
   if (to === 'backlog') {
     return [
       ...reopen,
+      ...unsuspendEdit,
       ...(isParked(card) ? [] : [itemEdit(cfg.options.backlog)]),
     ]
   }
-  const edit = ['gh', 'issue', 'edit', issue, '--repo', cfg.repo]
   if (to === 'human') {
     const review = cfg.options.inReview
-    if (review !== undefined) return [...reopen, itemEdit(review)]
+    if (review !== undefined)
+      return [...reopen, ...unsuspendEdit, itemEdit(review)]
 
     // A board without In review: Human is the label on a card in progress.
     return [
       ...reopen,
-      [...edit, '--add-label', HUMAN_LABEL],
+      [...edit, '--add-label', HUMAN_LABEL, ...unsuspend],
       ...(isInProgress(card) ? [] : [itemEdit(cfg.options.inProgress)]),
     ]
   }
@@ -258,14 +398,46 @@ export function planMove(
         '--add-label',
         AI_LABEL,
         ...(human === undefined ? [] : ['--remove-label', human]),
+        ...unsuspend,
       ],
       itemEdit(cfg.options.inProgress),
     ]
   }
+  if (to === 'suspended') {
+    const human = card.labels?.find(isHumanLabel)
+    const unhuman = human === undefined ? [] : ['--remove-label', human]
+    const option = cfg.options.suspended
+    if (option !== undefined) {
+      return [
+        ...reopen,
+        ...(human === undefined ? [] : [[...edit, ...unhuman]]),
+        itemEdit(option),
+      ]
+    }
+
+    // No such option on the board: the label says so, and the item rests in Backlog.
+    return [
+      ...reopen,
+      [...edit, '--add-label', SUSPENDED_LABEL, ...unhuman],
+      ...(isParked(card) ? [] : [itemEdit(cfg.options.backlog)]),
+    ]
+  }
+  if (to === 'cancelled') {
+    // Without a Cancelled option the item stays in Done, where the board keeps closed items.
+    return [
+      ...reopen,
+      ...unsuspendEdit,
+      itemEdit(cfg.options.cancelled ?? cfg.options.done),
+      close('not planned'),
+      verifyClosed(issue, cfg.repo),
+    ]
+  }
 
   return [
+    ...reopen,
+    ...unsuspendEdit,
     itemEdit(cfg.options.done),
-    ['gh', 'issue', 'close', issue, '--repo', cfg.repo],
+    close('completed'),
     verifyClosed(issue, cfg.repo),
   ]
 }
@@ -303,6 +475,9 @@ export function planPosition(
 
 const isVerify = (argv: readonly string[]) =>
   argv[1] === 'issue' && argv[2] === 'view'
+
+// What an older gh says of a JSON field it has not got.
+const NO_STATE_REASON = /unknown json field.*stateReason/i
 
 const firstLine = (text: string) => text.split('\n')[0]?.trim() ?? ''
 
@@ -351,8 +526,15 @@ function listOf(value: unknown, what: string): Rec[] {
 /** GitHub's GraphQL budget after a query; `resetAt` is epoch milliseconds. */
 export type RateLimit = { cost: number; remaining: number; resetAt: number }
 
-/** What a load found: the cards, and the rate limit as the last page reported it. */
-export type GithubLoad = { cards: KanbanCard[]; rateLimit?: RateLimit }
+/**
+ * What a load found: the cards, the rate limit as the last page reported it,
+ * and the board's Status options (none when the load did not report them).
+ */
+export type GithubLoad = {
+  cards: KanbanCard[]
+  rateLimit?: RateLimit
+  statusOptions: StatusOption[]
+}
 
 /** A failure from GitHub's rate limit; `resetAt` is epoch milliseconds when known. */
 export type RateLimitedError = Error & {
@@ -379,15 +561,26 @@ const PAGE_SIZE = 100
 // Enough to see past a few remarks to the newest section.
 const COMMENTS_SEEN = 5
 
+// The Status field's options: how a board's Cancelled and Suspended are found
+// even when a CLAUDE.md names only the options it uses. Asked on the first page
+// only, and a list, so it adds no connection to the cost: measured on board #7
+// (2026-10-26), a page costs 3 points with it and without.
+const STATUS_OPTIONS_FIELD = `field(name: "Status") {
+        ... on ProjectV2SingleSelectField { options { id name } }
+      }`
+
 // One query per page of the project's items: the Status value and, for the
 // issues, only the fields a card shows, plus the newest comments to tell an open
 // question from the rest. Measured at 3 points a page (the cost follows the
 // connections asked for: 2 without the comments), where `gh project item-list`
 // took about 100.
-const BOARD_QUERY = `query($projectId: ID!, $cursor: String) {
+const boardQuery = (
+  withOptions: boolean,
+) => `query($projectId: ID!, $cursor: String) {
   viewer { login }
   node(id: $projectId) {
     ... on ProjectV2 {
+      ${withOptions ? STATUS_OPTIONS_FIELD : ''}
       items(first: ${PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
@@ -397,7 +590,7 @@ const BOARD_QUERY = `query($projectId: ID!, $cursor: String) {
           }
           content {
             ... on Issue {
-              number title url state createdAt updatedAt
+              number title url state stateReason createdAt updatedAt
               repository { nameWithOwner }
               labels(first: 20) { nodes { name } }
               closedByPullRequestsReferences(first: 5) {
@@ -427,13 +620,29 @@ type Entry = {
   status?: string
   labels: string[]
   isClosed: boolean
+  stateReason?: NonNullable<KanbanCard['stateReason']>
   createdAt: string
   updatedAt: string
   prNumbers: number[]
   question?: string
 }
 
-type Page = { entries: Entry[]; next?: string; rateLimit?: RateLimit }
+type Page = {
+  entries: Entry[]
+  next?: string
+  rateLimit?: RateLimit
+  statusOptions: StatusOption[]
+}
+
+const STATE_REASONS = [
+  'COMPLETED',
+  'NOT_PLANNED',
+  'DUPLICATE',
+  'REOPENED',
+] as const
+
+const reasonOf = (value: unknown) =>
+  STATE_REASONS.find(reason => reason === value)
 
 /** Whether a GraphQL `repository { nameWithOwner }` reference is this repo (any case). */
 export const isRepo = (ref: unknown, repo: string) =>
@@ -500,6 +709,9 @@ function parsePage(stdout: string, repo: string): Page {
           .map(label => str(label.name))
           .filter(name => name !== ''),
         isClosed: content.state === 'CLOSED',
+        ...(reasonOf(content.stateReason) === undefined
+          ? {}
+          : { stateReason: reasonOf(content.stateReason) }),
         createdAt: str(content.createdAt),
         updatedAt: str(content.updatedAt),
         prNumbers: nodesOf(content.closedByPullRequestsReferences).flatMap(
@@ -513,10 +725,23 @@ function parsePage(stdout: string, repo: string): Page {
     ]
   })
 
+  const statusOptions = (
+    isRec(node.field) && Array.isArray(node.field.options)
+      ? node.field.options
+      : []
+  )
+    .filter(isRec)
+    .flatMap(option =>
+      str(option.id) === ''
+        ? []
+        : [{ id: str(option.id), name: str(option.name) }],
+    )
+
   return {
     entries,
     ...(hasNextPage === true ? { next: str(endCursor) } : {}),
     ...(rateLimit === undefined ? {} : { rateLimit }),
+    statusOptions,
   }
 }
 
@@ -577,7 +802,7 @@ function runPage(
   info: KanbanGithub,
   cursor: string | undefined,
 ): Promise<string> {
-  return graphql($, BOARD_QUERY, [
+  return graphql($, boardQuery(cursor === undefined), [
     '-F',
     `projectId=${info.projectId}`,
     ...(cursor === undefined ? [] : ['-f', `cursor=${cursor}`]),
@@ -594,12 +819,14 @@ export async function loadGithub(
 ): Promise<GithubLoad> {
   const entries: Entry[] = []
   let rateLimit: RateLimit | undefined
+  let statusOptions: StatusOption[] = []
   let cursor: string | undefined
 
   for (let pages = 1; ; pages += 1) {
     const page = parsePage(await runPage($, info, cursor), info.repo)
     entries.push(...page.entries)
     rateLimit = page.rateLimit ?? rateLimit
+    if (pages === 1) statusOptions = page.statusOptions
     if (page.next === undefined) break
     if (pages === MAX_PAGES) {
       $.ui.log(S.pageLimitReached(MAX_PAGES * PAGE_SIZE), { to: 'debug' })
@@ -609,7 +836,12 @@ export async function loadGithub(
   }
 
   const cards = entries.map((entry, order): KanbanCard => {
-    const { column, tag } = columnOf(entry.status, entry.labels, entry.isClosed)
+    const { column, tag } = columnOf(
+      entry.status,
+      entry.labels,
+      entry.isClosed,
+      entry.stateReason,
+    )
     // Only a card in Human is waiting on the person for an answer.
     const question = column === 'human' ? entry.question : undefined
     const shown = question === undefined ? tag : 'question'
@@ -628,12 +860,19 @@ export async function loadGithub(
       ...(entry.status === undefined ? {} : { status: entry.status }),
       labels: entry.labels,
       isClosed: entry.isClosed,
+      ...(entry.stateReason === undefined
+        ? {}
+        : { stateReason: entry.stateReason }),
       ...(entry.url === '' ? {} : { url: entry.url }),
       ...(entry.prNumbers.length === 0 ? {} : { prNumbers: entry.prNumbers }),
     }
   })
 
-  return { cards, ...(rateLimit === undefined ? {} : { rateLimit }) }
+  return {
+    cards,
+    ...(rateLimit === undefined ? {} : { rateLimit }),
+    statusOptions,
+  }
 }
 
 type LabelSpec = { name: string; color: string; description: string }
@@ -647,6 +886,12 @@ const HUMAN: LabelSpec = {
   name: HUMAN_LABEL,
   color: 'b60205',
   description: S.humanLabelDescription,
+}
+// Marks an issue the person put on hold, on a board with no Suspended status.
+const SUSPENDED: LabelSpec = {
+  name: SUSPENDED_LABEL,
+  color: 'cfd3d7',
+  description: S.suspendedLabelDescription,
 }
 // The user's marker for an issue still to be groomed.
 const TRIAGE: LabelSpec = {
@@ -716,6 +961,59 @@ async function setPosition(
   }
 }
 
+// The labels a card has after a move to `to`: Claude's work carries `ai` and not
+// `human`; Human on a board without In review is the `human` label; Suspended
+// without an option is the `suspended` label and any other section has none.
+function labelsAfter(
+  labels: readonly string[],
+  to: KanbanColumn,
+  isLabelOnly: boolean,
+  hasSuspendedOption: boolean,
+): string[] {
+  const rest = labels.filter(label => !isSuspendedLabel(label))
+  const unhumaned = rest.filter(label => !isHumanLabel(label))
+
+  switch (to) {
+    case 'claude':
+      return [...unhumaned, ...(labels.some(isAiLabel) ? [] : [AI_LABEL])]
+    case 'human':
+      return isLabelOnly ? [...unhumaned, HUMAN_LABEL] : rest
+    case 'suspended':
+      return hasSuspendedOption
+        ? [...labels.filter(label => !isHumanLabel(label))]
+        : [
+            ...labels.filter(label => !isHumanLabel(label)),
+            ...(labels.some(isSuspendedLabel) ? [] : [SUSPENDED_LABEL]),
+          ]
+    default:
+      return rest
+  }
+}
+
+// Reads the issue back after its close; resolves whether it is closed the way `to`
+// closes it. An older gh rejects the `stateReason` field though the close took:
+// the state is all it can then say, and a closed issue is taken as closed as asked.
+async function isCloseVerified(
+  $: EngineInterface,
+  argv: readonly string[],
+  card: KanbanCard,
+  to: KanbanColumn,
+  info: KanbanGithub,
+): Promise<boolean> {
+  try {
+    return isClosedAs(await runCommand($, argv), to)
+  } catch (error) {
+    if (!NO_STATE_REASON.test(errorMessage(error))) throw error
+
+    const state = await runCommand(
+      $,
+      verifyClosed(String(card.number), info.repo, false),
+    )
+
+    return state.trim() === 'CLOSED'
+  }
+}
+
 /**
  * Moves the card on GitHub, and puts it after the card `after` (first when
  * null) when one is given; resolves the fields that changed, throws on the
@@ -742,10 +1040,21 @@ export async function moveGithub(
   if (!isReorder && isLabelOnly && !labels.some(isHumanLabel)) {
     await ensureLabel($, info, HUMAN)
   }
+  // Without a Suspended status, so is Suspended.
+  const hasSuspendedOption = info.options.suspended !== undefined
+  if (
+    !isReorder &&
+    to === 'suspended' &&
+    !hasSuspendedOption &&
+    !labels.some(isSuspendedLabel)
+  ) {
+    await ensureLabel($, info, SUSPENDED)
+  }
 
   for (const argv of isReorder ? [] : planMove(card, to, info)) {
-    const out = await runCommand($, argv)
-    if (isVerify(argv) && out.trim() !== 'CLOSED') {
+    if (!isVerify(argv)) {
+      await runCommand($, argv)
+    } else if (!(await isCloseVerified($, argv, card, to, info))) {
       throw new Error(S.closeNotVerified(card))
     }
   }
@@ -760,26 +1069,18 @@ export async function moveGithub(
   }
   if (isReorder) return {}
 
+  const next = labelsAfter(labels, to, isLabelOnly, hasSuspendedOption)
+  const isRelabelled =
+    to === 'claude' ||
+    isLabelOnly ||
+    next.length !== labels.length ||
+    next.some((label, index) => label !== labels[index])
+  const status = statusAfter(card, to, info, isLabelOnly)
+  const reason = reasonAfter(card, to)
+
   return {
-    ...(to === 'backlog' && isParked(card)
-      ? {}
-      : { status: isLabelOnly ? STATUS_NAME.inProgress : STATUS_OF[to] }),
-    ...(to === 'claude'
-      ? {
-          labels: [
-            ...labels.filter(label => !isHumanLabel(label)),
-            ...(labels.some(isAiLabel) ? [] : [AI_LABEL]),
-          ],
-        }
-      : {}),
-    ...(isLabelOnly
-      ? {
-          labels: [
-            ...labels.filter(label => !isHumanLabel(label)),
-            HUMAN_LABEL,
-          ],
-        }
-      : {}),
+    ...(status === undefined ? {} : { status }),
+    ...(isRelabelled ? { labels: next } : {}),
     ...(to === 'human'
       ? {
           tag:
@@ -790,8 +1091,49 @@ export async function moveGithub(
                 : ('review' as const),
         }
       : {}),
-    isClosed: to === 'done',
+    isClosed: to === 'done' || to === 'cancelled',
+    ...(reason === undefined ? {} : { stateReason: reason }),
   }
+}
+
+// The Status the item has after the move, as the board names it; none when it keeps its own.
+function statusAfter(
+  card: KanbanCard,
+  to: KanbanColumn,
+  info: KanbanGithub,
+  isLabelOnly: boolean,
+): string | undefined {
+  switch (to) {
+    case 'backlog':
+      return isParked(card) ? undefined : STATUS_NAME.backlog
+    case 'human':
+      return isLabelOnly ? STATUS_NAME.inProgress : STATUS_NAME.inReview
+    case 'claude':
+      return STATUS_NAME.inProgress
+    case 'done':
+      return STATUS_NAME.done
+    case 'cancelled':
+      return info.options.cancelled === undefined
+        ? STATUS_NAME.done
+        : (info.optionNames?.cancelled ?? S.col.cancelled)
+    case 'suspended':
+      if (info.options.suspended !== undefined) {
+        return info.optionNames?.suspended ?? S.col.suspended
+      }
+
+      return isParked(card) ? undefined : STATUS_NAME.backlog
+  }
+}
+
+// Why the issue is closed (or reopened) after the move; none for an issue that was never closed.
+function reasonAfter(
+  card: KanbanCard,
+  to: KanbanColumn,
+): KanbanCard['stateReason'] {
+  if (to === 'done') return 'COMPLETED'
+  if (to === 'cancelled') return 'NOT_PLANNED'
+
+  return card.isClosed === true ? 'REOPENED' : undefined
 }
 
 const ISSUE_URL = /\/issues\/(\d+)$/

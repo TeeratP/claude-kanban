@@ -130,7 +130,7 @@ test('a repo with one linked board loads it with no config, and the toolbar name
   const wide = await view($, 120)
 
   expect(wide.toolbar).toContain("GitHub (auto) · #2 @TeeratP's Kanban")
-  expect(wide.cards).toEqual(['card:gh:20', 'card:gh:21'])
+  expect(wide.cards).toEqual(['card:gh:21', 'card:gh:20'])
   expect(wide.picks).toEqual([])
   expect(lines(commands).slice(0, 5)).toEqual([
     'git remote get-url origin',
@@ -153,9 +153,9 @@ test('in a narrow pane the board name is cut, not the backend or the status', as
 test('the board name is cut to the status row at 30, 44 and 80 columns, with the buttons on the row below', async ($, on) => {
   await open($, on, ready({ linked: [SHARED] }))
   const expected = {
-    30: ' GitHub (auto) · updated now',
-    44: " GitHub (auto) · #2 @TeeratP'… · updated now",
-    80: " GitHub (auto) · #2 @TeeratP's Kanban · updated now · ↑↓ ⏎ open · m move",
+    30: ' GitHub · updated just now',
+    44: ' GitHub (auto) · #2 @Tee… · updated just now',
+    80: " GitHub (auto) · #2 @TeeratP's Kanban · updated just now · ↑↓ ⏎ open · m move",
   }
 
   for (const width of [30, 44, 80] as const) {
@@ -232,7 +232,7 @@ test('picking a board loads it, and the choice is kept for this directory', asyn
 
   expect(after.picks).toEqual([])
   expect(after.toolbar).toContain('GitHub (auto) · #8 Twin')
-  expect(after.cards).toEqual(['card:gh:80', 'card:gh:81'])
+  expect(after.cards).toEqual(['card:gh:81', 'card:gh:80'])
   expect(JSON.parse(saved.get(`detect:${CWD}`) ?? 'null')).toMatchObject({
     shape: 'detect-1',
     origin: URL,
@@ -253,7 +253,7 @@ test('a saved choice means no lookup and no picker in the next session', async (
 
   expect(shown.picks).toEqual([])
   expect(shown.toolbar).toContain('#8 Twin')
-  expect(shown.cards).toEqual(['card:gh:80', 'card:gh:81'])
+  expect(shown.cards).toEqual(['card:gh:81', 'card:gh:80'])
   expect(lookups(commands)).toEqual([])
   expect(lines(commands)).not.toContain('gh --version')
   expect(lines(commands)[0]).toBe('git remote get-url origin')
@@ -276,7 +276,7 @@ test('a changed origin is detected again, and the old board is not restored from
   const shown = await view($, 120)
 
   expect(shown.toolbar).toContain('#2 @TeeratP')
-  expect(shown.cards).toEqual(['card:gh:20', 'card:gh:21'])
+  expect(shown.cards).toEqual(['card:gh:21', 'card:gh:20'])
   expect(lookups(commands)).toHaveLength(1)
 })
 
@@ -288,7 +288,7 @@ test('a detected board that is gone is looked for again in the same refresh', as
   const shown = await view($, 120)
 
   expect(shown.toolbar).toContain('#2 @TeeratP')
-  expect(shown.cards).toEqual(['card:gh:20', 'card:gh:21'])
+  expect(shown.cards).toEqual(['card:gh:21', 'card:gh:20'])
   expect(lookups(commands)).toHaveLength(1)
   expect(JSON.parse(saved.get(`detect:${CWD}`) ?? 'null')).toMatchObject({
     info: { projectNumber: 2 },
@@ -346,7 +346,7 @@ test('Change board looks again and reopens the picker with the other boards', as
 
   expect(after.picks).toEqual([])
   expect(after.toolbar).toContain('#6 Car Cast')
-  expect(after.cards).toEqual(['card:gh:60', 'card:gh:61'])
+  expect(after.cards).toEqual(['card:gh:61', 'card:gh:60'])
 })
 
 test('Change board with no other board only says so', async ($, on) => {
@@ -359,7 +359,7 @@ test('Change board with no other board only says so', async ($, on) => {
 
   expect(toasts).toContain(`No other GitHub board is linked to ${BABY}.`)
   expect(after.picks).toEqual([])
-  expect(after.cards).toEqual(['card:gh:20', 'card:gh:21'])
+  expect(after.cards).toEqual(['card:gh:21', 'card:gh:20'])
 })
 
 test('an explicit board in CLAUDE.md has no Change board button', async ($, on) => {

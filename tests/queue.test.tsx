@@ -81,17 +81,23 @@ async function toClaude(ui: BoardUi, key: string) {
 
 const text = async (ui: BoardUi, key: string) =>
   (await row(ui, key))?.text ?? ''
-// Whether a card's row is drawn dim: the Client dims its Text, the Buttons themselves.
-async function isDim(ui: BoardUi, key: string, number: number) {
+// Claude's header as `<label> <count> | <meta>`: the rule between them is only filler.
+const claude = async (ui: BoardUi) =>
+  (await text(ui, 'hdr:claude'))
+    .trim()
+    .replace(/\s*─+\s*/, ' | ')
+    .replace(/ \| $/, '')
+// Whether a card's row is drawn dim: the Client dims its title's Text (the number is dim in every row), the Buttons themselves.
+async function isDim(ui: BoardUi, key: string, title: string) {
   if (!(await hasClient(ui))) return (await rowStyle(ui, key)).dimColor === true
 
-  const lefts = await ui.findAll({
+  const shown = await ui.find({
     type: 'Text',
-    text: new RegExp(`^ {2}#${number} `),
+    text: new RegExp(`^${title}$`),
     in: 'board',
   })
 
-  return lefts.some(left => left.props.dimColor === true)
+  return shown?.props.dimColor === true
 }
 const held = (store: Map<string, string>) =>
   Object.keys(JSON.parse(store.get(KEY) ?? '{"held":{}}').held)
@@ -120,11 +126,11 @@ for (const surface of SURFACES) {
     await clock.advance(2500)
     expect(prompts).toHaveLength(1)
 
-    expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+    expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
     expect(await text(ui, BETA)).toContain('queued 1')
     expect(await text(ui, ALPHA)).not.toContain('queued')
-    expect(await isDim(ui, BETA, 2)).toBe(true)
-    expect(await isDim(ui, ALPHA, 1)).toBe(false)
+    expect(await isDim(ui, BETA, 'Beta')).toBe(true)
+    expect(await isDim(ui, ALPHA, 'Alpha')).toBe(false)
     expect(held(store)).toEqual(['md:0002-beta'])
     await ui.unmount()
   })
@@ -137,7 +143,7 @@ test('the card that hands off starts the queued one with exactly one prompt', as
   await toClaude(ui, GAMMA)
   await clock.advance(2500)
   expect(prompts).toHaveLength(1)
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 2 queued')
+  expect(await claude(ui)).toBe('Claude 3 | limit 1 · 2 queued')
   expect(await text(ui, GAMMA)).toContain('queued 2')
 
   await $.tool.call({ ...MOVE, card: 1, to: 'human' })
@@ -149,7 +155,7 @@ test('the card that hands off starts the queued one with exactly one prompt', as
     expect.stringMatching(/^Work on kanban card #1 "Alpha"/),
     expect.stringMatching(/^Work on kanban card #2 "Beta"/),
   ])
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
   expect(await text(ui, BETA)).not.toContain('queued')
   expect(await text(ui, GAMMA)).toContain('queued 1')
   expect(held(store)).toEqual(['md:0003-gamma'])
@@ -194,7 +200,7 @@ test(
     await clock.advance(2500)
 
     expect(prompts).toHaveLength(3)
-    expect(await text(ui, 'hdr:claude')).toBe('▾ Claude 3')
+    expect(await claude(ui)).toBe('Claude 3')
     expect(await text(ui, GAMMA)).not.toContain('queued')
     await ui.unmount()
   },
@@ -213,7 +219,7 @@ test(
     await clock.advance(2500)
 
     expect(prompts).toHaveLength(2)
-    expect(await text(ui, 'hdr:claude')).toContain('Claude 2/2 · 1 queued')
+    expect(await claude(ui)).toBe('Claude 3 | limit 2 · 1 queued')
     expect(await text(ui, GAMMA)).toContain('queued 1')
     await ui.unmount()
   },
@@ -243,7 +249,7 @@ test('the queue is read back after a reload and the card starts when the one ahe
     saved({ 'md:0002-beta': 'work' }),
   )
 
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
   expect(await text(ui, BETA)).toContain('queued 1')
   expect(prompts).toEqual([])
 
@@ -266,7 +272,7 @@ test('a session start in the same session keeps the queue', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
   expect(prompts).toHaveLength(1)
   await ui.unmount()
 })
@@ -292,8 +298,7 @@ test(
       expect.stringMatching(/^Work on kanban card #2 "Beta"/),
     ])
     expect(held(store)).toEqual([])
-    expect(await text(ui, 'hdr:claude')).toContain('Claude 2/2')
-    expect(await text(ui, 'hdr:claude')).not.toContain('queued')
+    expect(await claude(ui)).toBe('Claude 2 | limit 2')
     await clock.advance(2500)
     await ui.unmount()
   },
@@ -310,11 +315,11 @@ test(
     const { clock, ui, prompts } = await open($, on, files)
 
     // Two cards in Claude already, over the limit of 1: nothing is stopped.
-    expect(await text(ui, 'hdr:claude')).toContain('Claude 2/1')
+    expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 over')
     await toClaude(ui, GAMMA)
     await clock.advance(SYNC_PAUSE)
     expect(prompts).toEqual([])
-    expect(await text(ui, 'hdr:claude')).toContain('Claude 2/1 · 1 queued')
+    expect(await claude(ui)).toBe('Claude 3 | limit 1 · 1 queued · 1 over')
 
     await $.tool.call({ ...MOVE, card: 1, to: 'human' })
     await clock.advance(SYNC_PAUSE)
@@ -357,7 +362,7 @@ test('a saved queue of another shape or with bad entries is ignored', async ($, 
     [KEY]: { shape: 'queue-0', held: { 'md:0002-beta': 'work' } },
   })
 
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 2/1')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 over')
   expect(await text(ui, BETA)).not.toContain('queued')
   expect(prompts).toEqual([])
   await clock.advance(2500)
@@ -422,7 +427,7 @@ test('a queued card the person moves out of Claude leaves the queue and is never
   await clock.advance(SYNC_PAUSE)
   await clock.advance(2500)
 
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
   expect(await text(ui, GAMMA)).toContain('queued 1')
   expect(held(store)).toEqual(['md:0003-gamma'])
 
@@ -459,7 +464,7 @@ test('a queued card put in a new place in Claude stays queued, and the queue fol
 
   expect(await text(ui, GAMMA)).toContain('queued 1')
   expect(await text(ui, BETA)).toContain('queued 2')
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 2 queued')
+  expect(await claude(ui)).toBe('Claude 3 | limit 1 · 2 queued')
   expect(held(store).sort()).toEqual(['md:0002-beta', 'md:0003-gamma'])
   // A reorder sends no prompt.
   expect(prompts).toHaveLength(1)
@@ -514,8 +519,7 @@ test('a card that left Claude behind our back is dropped from the queue at the n
   await ui.press({ key: 'refresh' })
   await clock.settle()
 
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1')
-  expect(await text(ui, 'hdr:claude')).not.toContain('queued')
+  expect(await claude(ui)).toBe('Claude 1 | limit 1')
   expect(held(store)).toEqual([])
 
   await $.tool.call({ ...MOVE, card: 1, to: 'human' })
@@ -588,7 +592,7 @@ test('a card whose move to Claude is given up frees its slot for the queue', asy
   await clock.advance(SYNC_PAUSE)
   await toClaude(ui, BETA)
   await clock.advance(SYNC_PAUSE)
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
 
   // Alpha is tried again until the card goes back; Beta, still waiting, goes on.
   for (let tries = 0; tries < 3; tries += 1) {
@@ -601,8 +605,7 @@ test('a card whose move to Claude is given up frees its slot for the queue', asy
   expect(toasts[0]).toMatch(
     /^Could not move #1 to Claude, so it is back in Backlog/,
   )
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1')
-  expect(await text(ui, 'hdr:claude')).not.toContain('queued')
+  expect(await claude(ui)).toBe('Claude 1 | limit 1')
 
   // Beta's own move is not confirmed yet, so its prompt goes out when it is.
   expect(prompts).toEqual([])
@@ -632,13 +635,79 @@ test('the queue waits for the backend to confirm a card leaving Claude', async (
   await $.tool.call({ ...MOVE, card: 1, to: 'human' })
   await clock.advance(SYNC_PAUSE)
   // Alpha shows in Human already, but the backend has not said so.
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 1 | limit 1 · 1 queued')
   expect(prompts).toHaveLength(1)
 
   release()
   await clock.settle()
   expect(prompts).toHaveLength(2)
   expect(prompts[1]).toMatch(/^Work on kanban card #2 "Beta"/)
+  await clock.advance(2500)
+  await ui.unmount()
+})
+
+test('a running card the person cancels or suspends keeps its slot until the backend confirms, then the next queued card starts', async ($, on) => {
+  const { clock, calls, ui, prompts } = await open($, on, backlog())
+  await toClaude(ui, ALPHA)
+  await toClaude(ui, BETA)
+  await toClaude(ui, GAMMA)
+  await clock.advance(SYNC_PAUSE)
+  await clock.advance(2500)
+  let release = () => {}
+  calls.hold = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  await click(ui, ALPHA)
+  await ui.press({ key: 'move:cancelled' })
+  await ui.press({ key: 'back' })
+  await clock.advance(SYNC_PAUSE)
+  // Alpha shows as cancelled already, but the backend has not said so.
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 2 queued')
+  expect(prompts).toHaveLength(1)
+
+  release()
+  await clock.settle()
+  expect(prompts).toHaveLength(2)
+  expect(prompts[1]).toMatch(/^Work on kanban card #2 "Beta"/)
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
+  await clock.advance(2500)
+
+  // Beta now holds the slot; suspending it hands the slot to Gamma the same way.
+  await click(ui, BETA)
+  await ui.press({ key: 'move:suspended' })
+  await ui.press({ key: 'back' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.settle()
+  expect(prompts).toHaveLength(3)
+  expect(prompts[2]).toMatch(/^Work on kanban card #3 "Gamma"/)
+  await clock.advance(2500)
+  await ui.unmount()
+})
+
+test('a queued card moved to Suspended leaves the queue and is never asked', async ($, on) => {
+  const { clock, ui, prompts, saved: store } = await open($, on, backlog())
+  await toClaude(ui, ALPHA)
+  await toClaude(ui, BETA)
+  await toClaude(ui, GAMMA)
+  await clock.advance(SYNC_PAUSE)
+  await clock.advance(2500)
+  expect(held(store)).toEqual(['md:0002-beta', 'md:0003-gamma'])
+
+  await click(ui, BETA)
+  await ui.press({ key: 'move:suspended' })
+  await ui.press({ key: 'back' })
+  await clock.advance(SYNC_PAUSE)
+  await clock.advance(2500)
+
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
+  expect(await text(ui, GAMMA)).toContain('queued 1')
+  expect(held(store)).toEqual(['md:0003-gamma'])
+
+  await $.tool.call({ ...MOVE, card: 1, to: 'human' })
+  await clock.advance(SYNC_PAUSE)
+  expect(prompts).toHaveLength(2)
+  expect(prompts[1]).toMatch(/^Work on kanban card #3 "Gamma"/)
   await clock.advance(2500)
   await ui.unmount()
 })
@@ -657,7 +726,7 @@ test('a card moved to Claude as another leaves goes behind the ones already wait
 
   expect(prompts).toHaveLength(2)
   expect(prompts[1]).toMatch(/^Work on kanban card #2 "Beta"/)
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
   expect(await text(ui, GAMMA)).toContain('queued 1')
   await ui.unmount()
 })
@@ -804,7 +873,7 @@ test('a refused move out of Claude keeps its slot: the queued card does not star
 
   // Refused once: Alpha shows in Human but may still snap back to Claude.
   expect(await text(ui, ALPHA)).toContain('✕')
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 1 | limit 1 · 1 queued')
   expect(prompts).toEqual([])
 
   // Tried again until the card goes back: still the one running.
@@ -818,7 +887,7 @@ test('a refused move out of Claude keeps its slot: the queued card does not star
   expect(toasts[0]).toMatch(
     /^Could not move #1 to Human, so it is back in Claude/,
   )
-  expect(await text(ui, 'hdr:claude')).toContain('Claude 1/1 · 1 queued')
+  expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
   expect(await text(ui, BETA)).toContain('queued 1')
   expect(prompts).toEqual([])
 

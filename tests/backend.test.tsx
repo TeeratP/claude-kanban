@@ -92,7 +92,7 @@ test('with no setting, GitHub is used when it is available and the label says au
   const shown = await board($)
 
   expect(shown.toolbar).toContain('GitHub (auto)')
-  expect(shown.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+  expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
 })
 
 test('with no setting and no GitHub, the local cards show and the label says auto', async ($, on) => {
@@ -113,7 +113,7 @@ test(
     const shown = await board($)
 
     expect(shown.toolbar).toContain('GitHub (auto)')
-    expect(shown.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+    expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
   },
 )
 
@@ -137,7 +137,7 @@ test(
 
     expect(shown.toolbar).toContain('GitHub · updated')
     expect(shown.toolbar).not.toContain('auto')
-    expect(shown.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+    expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
   },
 )
 
@@ -397,7 +397,7 @@ test(
     )
 
     expect(whileLoading.cards).toEqual(['card:gh:9'])
-    expect(loaded.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+    expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
   },
 )
 
@@ -429,7 +429,7 @@ test(
     )
 
     expect(whileLoading.cards).toEqual([])
-    expect(loaded.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+    expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
   },
 )
 
@@ -596,9 +596,9 @@ test('an empty local board under auto says how to point the mod at GitHub', asyn
 
   expect(shown.cards).toEqual([])
   expect(shown.notes).toEqual(['note', 'hint:0', 'hint:1'])
-  expect(shown.hints[0]).toContain('.kanban/0001-title.md')
-  expect(shown.hints[1]).toContain('CLAUDE.md or AGENTS.md')
-  expect(shown.hints[2]).toContain('backend: github')
+  expect(shown.hints[0]).toContain('Cards live in .kanban/*.md here.')
+  expect(shown.hints[1]).toContain('Link a Project to the repo')
+  expect(shown.hints[2]).toContain('set backend: github')
 })
 
 test(
@@ -632,7 +632,7 @@ test('AGENTS.md behind a CLAUDE.md import loads the GitHub cards (punn)', async 
   const shown = await board($, 120)
 
   expect(shown.toolbar).toContain('GitHub (auto)')
-  expect(shown.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+  expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
   expect(await listed($)).toMatchObject({
     result: expect.stringContaining('#1 [claude]'),
   })
@@ -645,7 +645,7 @@ test('a lone AGENTS.md loads the GitHub cards (lotto)', async ($, on) => {
     'AGENTS.md': LOTTO,
   })
 
-  expect((await board($, 120)).cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+  expect((await board($, 120)).cards).toEqual(['card:gh:2', GITHUB_CARD])
 })
 
 test('a local backend saved by an earlier start is detected again, so a config fixed since shows its board', async ($, on) => {
@@ -658,5 +658,5 @@ test('a local backend saved by an earlier start is detected again, so a config f
 
   expect(whileLoading.cards).toEqual(['card:gh:9'])
   expect(loaded.toolbar).toContain('GitHub (auto)')
-  expect(loaded.cards).toEqual([GITHUB_CARD, 'card:gh:2'])
+  expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
 })

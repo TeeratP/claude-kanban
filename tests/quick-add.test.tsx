@@ -2,8 +2,19 @@ import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
-import { click, keys, marks, row, rowIndex, rowKeys } from './board-ui'
+import {
+  click,
+  group,
+  header,
+  keys,
+  marks,
+  row,
+  rowIndex,
+  rowKeys,
+  under,
+} from './board-ui'
 import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
+import { overflow, renderPane } from './render'
 import type { Route } from './fake-gh'
 import {
   ISSUE_CREATE,
@@ -54,15 +65,6 @@ for (const surface of SURFACES) {
 }
 
 const TITLE = 'add:title'
-
-// The keys of the rows under a header, up to the next one.
-async function under(ui: Parameters<typeof rowKeys>[0], header: string) {
-  const all = await rowKeys(ui)
-  const rest = all.slice(all.indexOf(header) + 1)
-  const next = rest.findIndex(key => key.startsWith('hdr:'))
-
-  return next < 0 ? rest : rest.slice(0, next)
-}
 
 for (const surface of SURFACES) {
   test(`Enter adds a card to Backlog at once, marked syncing until its file is written, on the ${surface}`, async ($, on) => {
@@ -292,7 +294,7 @@ for (const surface of SURFACES) {
   })
 }
 
-test('the new card is brought into view in a long or collapsed Backlog', async ($, on) => {
+test('the new card is brought into view in a long Backlog, or with Inactive open', async ($, on) => {
   const files: Record<string, string> = {}
   for (let n = 1; n <= 7; n += 1) {
     files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
@@ -309,8 +311,9 @@ test('the new card is brought into view in a long or collapsed Backlog', async (
   await world.clock.settle()
   expect(await under(ui, 'hdr:backlog')).toContain('card:md:0008-new')
 
-  await click(ui, 'hdr:backlog')
-  expect(await under(ui, 'hdr:backlog')).toEqual([])
+  // With Inactive open Backlog is folded away: adding a card opens Active again.
+  await group(ui, 'inactive')
+  expect(await header(ui, 'backlog')).toBeUndefined()
   await ui.press({ key: 'add' })
   await ui.input({ key: TITLE, text: 'Newer' })
   await world.clock.settle()
@@ -657,5 +660,138 @@ test('the board view gives r to refresh, n to the add button, f to the filter bu
   // The keys the board's list takes when it has the keyboard.
   const clientKeys = ['j', 'k', 'm', 'h', 'c', 'b', 'd', '1', '2', '3', '4']
   expect(hotkeys.filter(key => clientKeys.includes(key))).toEqual([])
+  await ui.unmount()
+})
+
+// The form under the toolbar, drawn as text at a width (see render.ts).
+async function openAt(
+  $: Engine,
+  on: On,
+  columns: number,
+  surface: (typeof SURFACES)[number] = 'terminal',
+) {
+  const files: Record<string, string> = cards()
+  const world = boot(on, files)
+  await $.session.start({ cwd: '/', surface, isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, bodyColumns: columns },
+  })
+  await ui.press({ key: 'add' })
+
+  return { ...world, files, ui }
+}
+
+// The form's rows: from the title field down to the first group.
+async function formRows(ui: Parameters<typeof renderPane>[0], columns: number) {
+  const lines = await renderPane(ui, columns)
+  const start = lines.findIndex(line => line.startsWith('[New card'))
+
+  return lines.slice(
+    start,
+    lines.findIndex(line => /^[▾▸] /.test(line)),
+  )
+}
+
+// What the second row says, longest that fits first: with details closed, then open.
+const WORDINGS = [
+  [80, '⏎ adds to Backlog · Add details · Cancel'],
+  [44, '⏎ adds to Backlog · Add details · Cancel'],
+  [30, '⏎ add · Details · Cancel'],
+  [24, '⏎ · Details · Cancel'],
+] as const
+const WORDINGS_OPEN = [
+  [80, '⏎ adds to Backlog · Hide details · Cancel'],
+  [44, '⏎ adds to Backlog · Hide details · Cancel'],
+  [34, '⏎ adds · Hide details · Cancel'],
+  [30, '⏎ add · Hide · Cancel'],
+  [24, '⏎ add · Hide · Cancel'],
+  [21, '⏎ · Hide · Cancel'],
+] as const
+
+for (const [columns, line] of WORDINGS) {
+  test(`the form's second row reads ${line} at ${columns} columns`, async ($, on) => {
+    const { ui } = await openAt($, on, columns)
+
+    const rows = await formRows(ui, columns)
+    expect(rows).toHaveLength(2)
+    expect(rows[1]).toBe(` ${line}`)
+    await ui.unmount()
+  })
+}
+
+for (const [columns, line] of WORDINGS_OPEN) {
+  test(`with details open it reads ${line} at ${columns} columns, and still takes one row`, async ($, on) => {
+    const { ui } = await openAt($, on, columns)
+    await ui.press({ key: 'add:details' })
+
+    const rows = await formRows(ui, columns)
+    // The title, the three rows of details, then the hint.
+    expect(rows).toHaveLength(5)
+    expect(rows[4]).toBe(` ${line}`)
+    await ui.unmount()
+  })
+}
+
+for (const columns of [21, 24, 30, 44, 80]) {
+  test(`the form fits ${columns} columns, closed and with details`, async ($, on) => {
+    const { ui } = await openAt($, on, columns)
+
+    expect(overflow(await renderPane(ui, columns), columns)).toEqual([])
+    await ui.press({ key: 'add:details' })
+    expect(overflow(await renderPane(ui, columns), columns)).toEqual([])
+    await ui.unmount()
+  })
+}
+
+for (const surface of SURFACES) {
+  test(`the hint is dim and the two actions are plain links in the suggestion color on the ${surface}`, async ($, on) => {
+    const { ui } = await openAt($, on, 44, surface)
+
+    expect(
+      (await ui.find({ type: 'Text', text: /^⏎ adds to Backlog$/ }))?.props
+        .dimColor,
+    ).toBe(true)
+    for (const key of ['add:details', 'add:cancel']) {
+      const button = await ui.find({ key })
+      expect(button?.props.plain).toBe(true)
+      expect(button?.children).toEqual([
+        {
+          type: 'Text',
+          props: { color: 'suggestion' },
+          children: [String(button?.props.label)],
+        },
+      ])
+    }
+    // Dots on the terminal, where the Buttons are text; a gap where they are native.
+    expect((await ui.findAll({ type: 'Text', text: /^ · $/ })).length).toBe(
+      surface === 'terminal' ? 2 : 0,
+    )
+    await ui.unmount()
+  })
+}
+
+test('Hide details folds the field away, keeps what was typed in it, and does not add it', async ($, on) => {
+  const { clock, files, ui } = await openAt($, on, 44)
+
+  await ui.press({ key: 'add:details' })
+  await ui.input({ key: 'add:spec', text: 'Not now', kind: 'change' })
+  await ui.press({ key: 'add:hide' })
+  expect(await ui.find({ key: 'add:spec' })).toBeUndefined()
+  expect(await ui.find({ key: 'add:hide' })).toBeUndefined()
+  expect(await ui.find({ key: 'add:details' })).toBeDefined()
+
+  await ui.press({ key: 'add:details' })
+  expect((await ui.find({ key: 'add:spec' }))?.props.value).toBe('Not now')
+  await ui.press({ key: 'add:hide' })
+
+  await ui.input({ key: TITLE, text: 'Fix it' })
+  await clock.settle()
+  const text = files[path(4, 'fix-it')] ?? ''
+  expect(text).toContain('title: Fix it\n')
+  expect(text).not.toContain('Not now')
   await ui.unmount()
 })

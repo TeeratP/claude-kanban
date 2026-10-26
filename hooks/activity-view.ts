@@ -12,7 +12,6 @@ import { ageLabel, cellWidth, truncate } from './model'
 import { S } from './strings'
 
 // Drawn on a card's second row, which sits under the title and is indented to it.
-const INDENT = '    '
 const MAX_DOTS = 4
 const NAME_MAX = 14
 const MIN_ACTIVITY = 6
@@ -20,11 +19,11 @@ const MIN_ACTIVITY = 6
 const IDLE_AFTER_MS = 60_000
 const TARGET_MAX = 200
 
-// Colours for the agents' dots, none of them the sync marks' (success, warning, error).
+// Colours for the subagents' dots: not the sync marks' (success, warning, error),
+// nor Claude's own, nor the one that means "needs you", so a dot never reads as
+// a section's colour.
 const PALETTE: readonly ThemeKey[] = [
-  'claude',
   'suggestion',
-  'permission',
   'planMode',
   'autoAccept',
   'bashBorder',
@@ -49,15 +48,17 @@ const seg = (text: string, style: Partial<Omit<Seg, 'text'>> = {}): Seg => ({
   ...style,
 })
 
-/** The palette colour of an agent: the same name always gets the same one. */
+/** The colour of an agent's dot: Claude's own for the main session, else the same palette colour for a name every time. */
 export function colorOf(name: string): ThemeKey {
+  if (name === S.mainAgent) return 'claude'
+
   // FNV-1a, so a name's colour does not depend on the others on the card.
   let hash = 0x811c9dc5
   for (const char of name.toLowerCase()) {
     hash = Math.imul(hash ^ (char.codePointAt(0) ?? 0), 0x01000193) >>> 0
   }
 
-  return PALETTE[hash % PALETTE.length] ?? 'claude'
+  return PALETTE[hash % PALETTE.length] ?? 'suggestion'
 }
 
 /** A time spent as `45s`, `12m`, `1h15m` or `2d3h`. */
@@ -113,6 +114,13 @@ export function statsLabel({ ms, tokens }: Totals): string {
     .join(S.statsSep)
 }
 
+/** `12m · 48k` for a card's second row, where there is no room to say `tok`. */
+export function rowStats({ ms, tokens }: Totals): string {
+  return [ms > 0 ? durationLabel(ms) : '', tokens > 0 ? tokenLabel(tokens) : '']
+    .filter(part => part !== '')
+    .join(S.statsSep)
+}
+
 /** The agents of one round: names in the order they joined, or just Claude. */
 export function agentsOfRound(round: KanbanRound | undefined): string[] {
   return round === undefined || round.agents.length === 0
@@ -127,29 +135,6 @@ export function agentsOf(one: KanbanCardActivity): string[] {
   return names.length === 0
     ? [S.mainAgent]
     : names.filter((name, index) => names.indexOf(name) === index)
-}
-
-/** A round on its own line: its number, time and tokens, cache reads and agents. */
-export function roundLabel(n: number, round: KanbanRound): string {
-  const stats = statsLabel(totalsOf([round]))
-
-  return [
-    S.roundHeading(n),
-    stats === '' ? '-' : stats,
-    ...(round.cacheRead > 0 ? [S.cached(tokenLabel(round.cacheRead))] : []),
-    agentsOfRound(round).join(', '),
-  ].join(S.statsSep)
-}
-
-/** The card's totals on one line, led by `Total`: time, tokens, cache reads. */
-export function totalLabel(totals: Totals): string {
-  const stats = statsLabel(totals)
-
-  return [
-    S.totalHeading,
-    stats === '' ? '-' : stats,
-    ...(totals.cacheRead > 0 ? [S.cached(tokenLabel(totals.cacheRead))] : []),
-  ].join(S.statsSep)
 }
 
 /**
@@ -226,8 +211,10 @@ function activityText(
   // A subagent can work for a card the main turn has moved on from.
   const isRunning = live.isRunning
   const isFresh = one.isToolRunning || now - one.lastAt < IDLE_AFTER_MS
-  if (!isRunning || !isFresh) return S.idle(ageLabel(one.lastAt, now))
-  if (one.tool === '') return S.working
+  if (!isRunning || !isFresh) {
+    return truncate(S.idle(ageLabel(one.lastAt, now)), room)
+  }
+  if (one.tool === '') return truncate(S.working, room)
 
   const head = S.toolRunning(one.tool)
   const left = room - cellWidth(head) - 1
@@ -254,17 +241,24 @@ function clip(segs: Seg[], width: number): Seg[] {
   return out
 }
 
+// The parts of the second row after the dots, each led by a separator: the first
+// by a space, the rest by ` · `.
+const joined = (parts: readonly string[]) =>
+  parts.length === 0 ? '' : ` ${parts.join(S.statsSep)}`
+
 /**
- * The second row of a Claude card: the agents' dots and the one that acted last,
- * what Claude is doing now and the stats, fitted to `columns` cells. The stats
- * keep their room first, the activity takes what is left and the name gives way
- * last, so the row is never wider than the pane.
+ * The second row of a Claude card, from cell `indent` (where its title starts):
+ * the agents' dots, then the agent that acted last, what Claude is doing now
+ * and the stats, joined by ` · ` and fitted to `columns` cells. The stats keep
+ * their room; the activity takes what is left, then gives way, then the name,
+ * so the row is never wider than the pane.
  */
 export function detailSegs(
   columns: number,
   one: KanbanCardActivity,
   live: KanbanActivity['live'],
   now: number,
+  indent: number,
 ): Seg[] {
   const names = agentsOfRound(one.rounds.at(-1))
   const dots = names
@@ -272,31 +266,31 @@ export function detailSegs(
     .map(name => seg(S.agentDot, { dim: false, color: colorOf(name) }))
   const more = names.length - MAX_DOTS
   const head = [
-    seg(INDENT),
+    seg(' '.repeat(indent)),
     ...dots,
     ...(more > 0 ? [seg(S.agentsMore(more))] : []),
   ]
-  const stats = statsLabel(liveTotals(one, live, now))
-  const tail = stats === '' ? '' : `${S.statsSep}${stats}`
+  const stats = rowStats(liveTotals(one, live, now))
 
   const used = cellWidth(head.map(part => part.text).join(''))
+  const avail = columns - used
   const primary = one.lastAgent !== '' ? one.lastAgent : (names[0] ?? '')
-  const name = truncate(primary, Math.min(NAME_MAX, columns - used - 1))
-  const nameText = name === '' ? '' : ` ${name}`
-  const afterName = columns - used - cellWidth(nameText)
+  const name = truncate(primary, NAME_MAX)
+  const parts = (...texts: string[]) => texts.filter(text => text !== '')
 
-  const fitsTail = cellWidth(tail) <= afterName
-  const room = afterName - (fitsTail ? cellWidth(tail) : 0) - 1
-  const activity =
-    room >= MIN_ACTIVITY ? ` ${activityText(one, live, now, room)}` : ''
+  // The activity gets what the name and the stats leave, if that is worth showing.
+  const withoutActivity = parts(name, stats)
+  const room =
+    avail - cellWidth(joined(withoutActivity)) - cellWidth(S.statsSep)
+  const chosen =
+    room >= MIN_ACTIVITY
+      ? parts(name, activityText(one, live, now, room), stats)
+      : cellWidth(joined(withoutActivity)) <= avail
+        ? withoutActivity
+        : parts(stats)
 
   return clip(
-    [
-      ...head,
-      seg(nameText),
-      seg(activity),
-      ...(fitsTail ? [seg(tail)] : []),
-    ].filter(part => part.text !== ''),
+    [...head, seg(joined(chosen))].filter(part => part.text !== ''),
     columns,
   )
 }
@@ -306,6 +300,9 @@ export function segProps(part: Seg) {
   return {
     ...(part.bold ? { weight: 'bold' as const } : {}),
     ...(part.dim ? { dimColor: true } : {}),
+    ...(part.italic === true ? { italic: true } : {}),
+    ...(part.strike === true ? { strikethrough: true } : {}),
+    ...(part.underline === true ? { underline: true } : {}),
     ...(part.color === '' ? {} : { color: part.color }),
   }
 }

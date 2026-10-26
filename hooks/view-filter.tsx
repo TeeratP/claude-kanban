@@ -5,16 +5,14 @@ import { readUi, updateUi } from './atoms'
 import { INITIAL_UI } from './model'
 import { S } from './strings'
 
-// New text starts every section from its top again, and drops the header presses made under the old.
-const withText = (ui: KanbanUi, filter: string): KanbanUi =>
-  filter === ui.filter
-    ? ui
-    : {
-        ...ui,
-        filter,
-        offsets: INITIAL_UI.offsets,
-        filterCollapsed: INITIAL_UI.filterCollapsed,
-      }
+// New text starts every section from its top again, and drops the group press made under the old.
+const withText = (ui: KanbanUi, filter: string): KanbanUi => {
+  if (filter === ui.filter) return ui
+
+  const { filterGroup: _dropped, ...rest } = ui
+
+  return { ...rest, filter, offsets: INITIAL_UI.offsets }
+}
 
 /** Shows the filter's text field, or hides it when it is shown; the filter stays. */
 export function toggleFilter($: EngineInterface) {
@@ -57,7 +55,7 @@ export async function renderFilter($: EngineInterface, e: RenderInput<'Pane'>) {
       key="filter:text"
       autoFocus
       label={S.filterLabel}
-      placeholder={S.filterPlaceholder}
+      placeholder={S.filterTerms}
       submitLabel={S.filterSubmit}
       value={ui.filter}
       onInput={value => typeInFilter($, value)}

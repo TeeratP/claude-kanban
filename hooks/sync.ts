@@ -7,7 +7,13 @@ import type {
   KanbanSync,
 } from '../types'
 import { noteCardLeft } from './activity'
-import { readBoard, readSync, updateSync, updateTick } from './atoms'
+import {
+  readBoard,
+  readSync,
+  updateActivity,
+  updateSync,
+  updateTick,
+} from './atoms'
 import { moveRemote } from './backend'
 import {
   announceHandoff,
@@ -21,6 +27,7 @@ import {
   MAX_ATTEMPTS,
   TICK_SHOWN_MS,
   errorMessage,
+  isOrdered,
   isPendingId,
   maxOrder,
 } from './model'
@@ -39,11 +46,23 @@ export type MoveOptions = {
    * own section stays put.
    */
   after?: string | null
+  /**
+   * Columns the card must not be leaving. Checked against the card as the board
+   * has it when the move is made, so a person's move since the caller looked
+   * is not undone; the move is then refused and nothing changes.
+   */
+  unlessFrom?: readonly KanbanColumn[]
 }
 
-/** The options for a move the person makes: Backlog to Claude asks Claude to start work. */
+/**
+ * The options for a move the person makes: taking a card up from Backlog,
+ * Suspended, Cancelled or Done asks Claude to start work. From Human it is
+ * Send back, which has its own prompt.
+ */
 export function moveOptions(from: KanbanColumn, to: KanbanColumn): MoveOptions {
-  return from === 'backlog' && to === 'claude' ? { onConfirm: 'work' } : {}
+  return to === 'claude' && from !== 'human' && from !== 'claude'
+    ? { onConfirm: 'work' }
+    : {}
 }
 
 const DEBOUNCE_MS = 300
@@ -144,30 +163,55 @@ function retarget(
       }
 }
 
+// A turn still running on a card the person sets aside goes on: the mod cannot
+// stop it, so the person is told how.
+async function warnIfRunning(
+  $: EngineInterface,
+  card: KanbanCard | undefined,
+): Promise<void> {
+  if (card === undefined) return
+
+  const { live } = await updateActivity($, state => state)
+  if (live.cardId === card.id && live.isRunning) {
+    $.ui.toast(S.stillWorking(card))
+  }
+}
+
 /**
  * Moves a card at once on the board, then, after a pause for further moves,
  * asks the backend to make it so. A refused move waits for a retry and, once
  * out of tries, puts the card back and says why. A prompt that Claude's limit
  * holds back waits in the queue instead (see queue.ts). With `opts.after` the card
- * is placed in its section, which may be the one it is in.
+ * is placed in its section, which may be the one it is in. Resolves the column
+ * that `opts.unlessFrom` refused, when it did.
  */
 export async function moveCard(
   $: EngineInterface,
   cardId: string,
   to: KanbanColumn,
   opts?: MoveOptions,
-): Promise<void> {
+): Promise<KanbanColumn | undefined> {
   // A card still being made is not on the backend to be moved.
-  if (isPendingId(cardId)) return
+  if (isPendingId(cardId)) return undefined
 
-  // Done lists by update time: it keeps no order to place a card in.
-  const after = to === 'done' ? undefined : opts?.after
+  // Done and Cancelled list by update time: they keep no order to place a card in.
+  const after = isOrdered(to) ? opts?.after : undefined
   // The card is found inside the write: a read here could be an older moment.
-  const seen: { from?: KanbanColumn; entry?: KanbanSync } = {}
+  const seen: {
+    from?: KanbanColumn
+    refused?: KanbanColumn
+    entry?: KanbanSync
+  } = {}
   const moved = await setBoard($, board => {
     const card = board.cards.find(one => one.id === cardId)
     seen.from = undefined
+    seen.refused = undefined
     if (card === undefined) return board
+    if (opts?.unlessFrom?.includes(card.column)) {
+      seen.refused = card.column
+
+      return board
+    }
 
     const placed =
       after === undefined ? undefined : placeIn(board.cards, cardId, to, after)
@@ -188,7 +232,13 @@ export async function moveCard(
     }
   })
   const from = seen.from
-  if (from === undefined) return
+  if (from === undefined) return seen.refused
+  if (from === 'claude' && (to === 'suspended' || to === 'cancelled')) {
+    await warnIfRunning(
+      $,
+      moved.cards.find(one => one.id === cardId),
+    )
+  }
   if (from === 'claude' && to !== 'claude') await noteCardLeft($, cardId)
 
   // Claude at its limit holds the prompt back: the card waits in the queue.
@@ -218,7 +268,7 @@ export async function moveCard(
 
   debounce.get(cardId)?.cancel()
   debounce.delete(cardId)
-  if (seen.entry === undefined) return
+  if (seen.entry === undefined) return undefined
 
   debounce.set(
     cardId,
@@ -228,6 +278,8 @@ export async function moveCard(
     }),
   )
   ensureTicker($)
+
+  return undefined
 }
 
 /** Sends a card's failed move again, at once. */
@@ -355,7 +407,7 @@ function anchorOf(
 ): KanbanCard | null | undefined {
   if (sent.after === null) return null
 
-  const isArrival = isGithub && sent.from !== sent.to && sent.to !== 'done'
+  const isArrival = isGithub && sent.from !== sent.to && isOrdered(sent.to)
   if (sent.after === undefined && !isArrival) return undefined
 
   const others = sectionList(cards, sent.to).filter(

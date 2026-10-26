@@ -32,7 +32,7 @@ kanban/
   hooks/strings.ts                every user-facing string/prompt (centralized strings rule)
   hooks/model.ts                  constants, COLUMNS order, cellWidth/truncate/age, pure helpers
   hooks/atoms.ts                  atom(...) definitions (board, ui, sync, detail, tick)
-  hooks/layout.ts                 PURE: layoutBoard(), capFor(), hitTest(), clampOffset()
+  hooks/layout.ts                 PURE: layoutBoard(), sectionBody(), sectionWindow(), maxOffset(), applyFilter(), hitTest()
   hooks/board.ts                  controller: ensureBoard, refresh, poll loop, cache, status line, merge
   hooks/sync.ts                   optimistic move queue / state machine, ticker
   hooks/handoff.ts                PURE: format/parse Handoff+Feedback sections, isHandoffValid
@@ -56,8 +56,9 @@ Imports between plugin files are ES `import` declarations; a module containing `
 ## 2. PluginState contract (`types/index.d.ts`)
 
 ```ts
-export type KanbanColumn = 'human' | 'claude' | 'backlog' | 'done'
-export type KanbanTag = 'review' | 'human'            // why a GitHub card is in Human
+export type KanbanColumn = 'human' | 'claude' | 'backlog' | 'done' | 'suspended' | 'cancelled'
+export type KanbanGroup = 'active' | 'inactive'       // Active: Backlog, Human, Claude. Inactive: Done, Cancelled, Suspended
+export type KanbanTag = 'review' | 'human' | 'question'   // why a card is in Human; shown in the detail view and kanban_list, never on a row
 export type KanbanCard = {
   id: string            // 'md:0007-fix-login' | 'gh:123'
   number: number        // shown as #N; local = frontmatter id, gh = issue number
@@ -69,11 +70,13 @@ export type KanbanCard = {
   file?: string         // local: '.kanban/0007-fix-login.md'
   itemId?: string; status?: string; labels?: string[]; isClosed?: boolean
   url?: string; prNumbers?: number[]
+  stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'DUPLICATE' | 'REOPENED'   // why a GitHub issue was closed (#35)
 }
 export type KanbanGithub = {
   kind: 'github'; repo: string; owner: string; projectNumber: number; projectId: string
   statusFieldId: string
-  options: { backlog: string; ready?: string; inProgress: string; inReview: string; done: string }
+  options: { backlog: string; ready?: string; inProgress: string; inReview: string; done: string
+             cancelled?: string; suspended?: string }   // Status options the board happens to have, learned from its loads (#35)
 }
 export type KanbanBackendInfo = { kind: 'local' } | KanbanGithub
 export type KanbanBoard = {
@@ -90,7 +93,8 @@ export type KanbanView = { mode: 'board' } | { mode: 'detail'; cardId: string; t
 export type KanbanUi = {
   view: KanbanView
   offsets: Record<KanbanColumn, number>
-  collapsed: Record<KanbanColumn, boolean>   // initial: done=true
+  openGroup: KanbanGroup | 'none'            // the group drawn open; initial 'active' (#35)
+  filterGroup?: KanbanGroup | 'none'         // a group chosen while filtering; dropped when the filter text changes
   draft: string                               // feedback Input text
 }
 export type KanbanSection = {
@@ -117,10 +121,10 @@ declare module 'claude-code' {
 `hooks/atoms.ts`, following `examples/pane.tsx` (`atom`/`read`/`update` d.ts:15675/15700/15709):
 
 ```ts
-export const boardAtom  = atom({ plugin: 'kanban', key: 'board' } as const, EMPTY_BOARD, { shape: 'board-1' })
-export const uiAtom     = atom({ plugin: 'kanban', key: 'ui' } as const, INITIAL_UI, { shape: 'ui-1' })
-export const syncAtom   = atom({ plugin: 'kanban', key: 'sync' } as const, {}, { shape: 'sync-1' })
-export const detailAtom = atom({ plugin: 'kanban', key: 'detail' } as const, null, { shape: 'detail-1' })
+export const boardAtom  = atom({ plugin: 'kanban', key: 'board' } as const, EMPTY_BOARD, { shape: 'board-3' })
+export const uiAtom     = atom({ plugin: 'kanban', key: 'ui' } as const, INITIAL_UI, { shape: 'ui-4' })
+export const syncAtom   = atom({ plugin: 'kanban', key: 'sync' } as const, {}, { shape: 'sync-3' })
+export const detailAtom = atom({ plugin: 'kanban', key: 'detail' } as const, null, { shape: 'detail-2' })
 export const tickAtom   = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
 ```
 
@@ -132,31 +136,37 @@ Bump a shape tag whenever its type changes. Rules:
 
 ## 3. Card model and column mapping
 
-- Order top to bottom: `COLUMNS = ['human','claude','backlog','done']`.
-- Sorting: Human, Claude, Backlog by `order` ascending. Done by `updatedAt` descending, `.slice(0, 10)`; header shows `Done 10 of 57`.
-- Local status values: `human | claude | backlog | done` (the file stores the column directly).
+- Two groups, one open at a time (`ui.openGroup`, initial `'active'`; pressing the open group folds both). Active: Backlog, Human, Claude, top to bottom. Inactive: Done, Cancelled, Suspended. `COLUMNS = ['backlog','human','claude','done','cancelled','suspended']`, which is also the order of the move keys `1`-`6` (`MOVE_KEY`: `b h c d x s`).
+- Sorting: Backlog, Human, Claude and Suspended by `order` ascending (`isOrdered`). Done and Cancelled by `updatedAt` descending, `.slice(0, NEWEST_LIMIT = 10)`; the header says `10 newest` once a section holds more. Suspended lists every card.
+- Local status values: `human | claude | backlog | done | suspended | cancelled` (the file stores the column directly; `canceled` is read as `cancelled`).
 
-GitHub mapping, pure `columnOf(status, labels, isClosed)`, checked in this order:
-1. Status `Done`, or issue closed → `done`.
-2. Status `Backlog`, `Ready` or empty → `backlog`.
-3. Status `In review` → `human`, tag `review`.
-4. Label `human` → `human`, tag `human`.
-5. Status `In progress` → `claude`.
+GitHub mapping, pure `columnOf(status, labels, isClosed, stateReason)`, checked in this order:
+1. Closed, and `stateReason` is `NOT_PLANNED` or `DUPLICATE` or the Status is named like Cancelled → `cancelled`.
+2. Closed any other way → `done`.
+3. Status named like Cancelled (`cancel+ed`, `won't do`, `not planned`, `dropped`, `abandoned`), open → `cancelled`.
+4. Status named like Suspended (`suspended`, `on hold`, `paused`, `icebox`, `someday`, `deferred`), or the label `suspended` (any case) → `suspended`. Not `Blocked`.
+5. Status `Done` → `done`.
+6. Status `Backlog`, `Ready` or empty → `backlog`.
+7. Status `In review` → `human`, tag `review`.
+8. Label `human` → `human`, tag `human`.
+9. Status `In progress` → `claude`.
 
-So a backlog issue labeled `human` stays in Backlog: column = who holds the ball now, not the ownership label.
+So a backlog issue labeled `human` stays in Backlog: column = who holds the ball now, not the ownership label. The board query reads `stateReason` on every issue and, on its first page only, the Status field's `options { id name }` (a list; 3 points a page with or without). `loadGithub` returns them as `statusOptions`; `board.ts` writes the ones named like Cancelled or Suspended into `backend.options.cancelled` / `suspended` and re-caches. The mod never adds a Status option to a board.
 
-GitHub moves: pure `planMove(card, to, cfg): string[][]` returns argv lists. Reopen a closed issue first when target ≠ `done`. The label edit comes before the Status edit, so a failure leaves the Status as it was. The `human` label is matched case-insensitively and removed under the spelling the card has.
+GitHub moves: pure `planMove(card, to, cfg): string[][]` returns argv lists. Reopen a closed issue first when the target is not a closed state, and when it is the other closed state (`gh issue close` on a closed issue changes nothing and exits 0, so Done and Cancelled would never swap). The label edit comes before the Status edit, so a failure leaves the Status as it was. The `human` and `suspended` labels are matched case-insensitively and removed under the spelling the card has.
 
 | to | argv sequence |
 |---|---|
-| backlog | `item-edit`→Backlog (skip if already Backlog or Ready) |
-| claude | `gh issue edit N --repo R --add-label ai`, plus `--remove-label <human, as spelled>` only if the card has it; then `item-edit`→In progress. `moveGithub` first creates the `ai` label (`gh label create ai --color 5319e7 --force`) when a read-only `gh label list` shows the repo lacks it and the card does not carry it |
+| backlog | `item-edit`→Backlog (skip if already Backlog or Ready); `gh issue edit N --remove-label <suspended>` first if the card has it |
+| claude | `gh issue edit N --repo R --add-label ai`, plus `--remove-label <human, as spelled>` only if the card has it (and `<suspended>`); then `item-edit`→In progress. `moveGithub` first creates the `ai` label (`gh label create ai --color 5319e7 --force`) when a read-only `gh label list` shows the repo lacks it and the card does not carry it |
 | human | `item-edit`→In review |
-| done | `item-edit`→Done; `gh issue close N --repo R`; verify `gh issue view N --repo R --json state --jq .state` == `CLOSED` (close can fail silently) |
+| done | reopen if closed as not planned; `item-edit`→Done; `gh issue close N --repo R --reason completed`; verify `gh issue view N --repo R --json state,stateReason --jq '.state + " " + (.stateReason // "")'` == `CLOSED COMPLETED` (or `CLOSED` alone, for an old issue) (close can fail silently) |
+| cancelled | reopen if closed as completed; `item-edit`→the board's Cancelled option, or Done where it has none; `gh issue close N --repo R --reason "not planned"`; verify == `CLOSED NOT_PLANNED` |
+| suspended | reopen if closed; remove the `human` label if present; `item-edit`→the board's Suspended option. Without one: `gh issue edit N --add-label suspended` (created once with `ensureLabel`, never overwritten) and `item-edit`→Backlog unless already parked |
 
 `item-edit` = `gh project item-edit --id ITEM --project-id PID --field-id FID --single-select-option-id OPT`. Reopen = `gh issue reopen N --repo R`.
 
-Execution: each argv via `$.process.run(argv, { timeoutMs: 30000 })` (d.ts:3604, ProcessRunResult d.ts:8230). Non-zero `exitCode` throws `Error(firstLine(stderr) || 'gh exited N')`. On success patch the card's `status`, `labels`, `isClosed` locally so the next plan is correct.
+Execution: each argv via `$.process.run(argv, { timeoutMs: 30000 })` (d.ts:3604, ProcessRunResult d.ts:8230). Non-zero `exitCode` throws `Error(firstLine(stderr) || 'gh exited N')`. On success patch the card's `status`, `labels`, `isClosed`, `stateReason` locally so the next plan is correct.
 
 ## 4. Backend interface (`hooks/backend.ts`)
 
@@ -261,7 +271,7 @@ export const register: Register = on => {
 - `openBoard($)`: `cwd = await $.session.cwd()` (d.ts:2834); `cached = await $.store.get('cache:' + cwd)` (d.ts:3440) → if present `update(boardAtom, …cached, isLoading: true)`; detect backend if none cached; `refresh($)`; `startPolling($)`.
 - `refresh($)`: guarded by module flag `isRefreshing`. `backend.load` → `mergeRemote(remote, local, sync)` → write board + `$.store.set('cache:'+cwd, {backend, cards, fetchedAt})` → `announceHumanChanges` + `updateStatusLine`. On error keep cards, set `error` (shown in toolbar).
 - `mergeRemote` (pure): remote authoritative, except a card with a `pending`/`failed` sync entry keeps its local `column` and `order`. Missing remotely → dropped unless pending.
-- `startPolling($)`: `pollTimer?.cancel(); pollTimer = $.clock.every(45000, () => void pollOnce($))` (d.ts:3553/13491, cancel d.ts:13480). `pollOnce` skips when the pane isn't open (`$.ui.panes()`, d.ts:2563).
+- `startPolling($)`: `pollTimer?.cancel(); pollTimer = $.clock.every(45000, () => void pollOnce($))` (d.ts:3553/13491, cancel d.ts:13480). `pollOnce` skips when the pane isn't open (`$.ui.panes()`, d.ts:2563). A second timer, `ageTimer` (every 30 s), bumps `tickAtom` while the pane is open so `updated 2m ago` and card ages are never a poll behind, and ends itself once the pane is closed (decision 114).
 - `updateStatusLine($, cards)`: `$.ui.status(n ? S.waiting(n) : undefined)` (d.ts:2513), n = Human count. Call after every board write via a `setBoard` helper.
 - `announceHumanChanges(prev, next, causedLocally)`: each card newly in Human not moved by the person's own UI action → `$.ui.toast(S.handedToYou(card))` (d.ts:2483).
 
@@ -298,7 +308,7 @@ resumePendingSyncs($)  → on bootstrap re-dispatch every 'pending' entry (moves
 ensureTicker($)        → if no tickTimer: tickTimer = $.clock.every(400, tick); tick increments tickAtom,
                          cancels itself when no entry is pending or ok
 ```
-Retries are manual: Retry button in detail view; toolbar shows `✕N retry` when any card failed. Render reads `tickAtom` and `$.clock.now()` (d.ts:3522) for pulse, fade and card ages.
+Retries are manual: Retry button in detail view; toolbar shows `✕N retry` when any card failed. Render reads `tickAtom` and `$.clock.now()` (d.ts:3522) for pulse, fade and card ages; the 400 ms ticker above only runs while a move is pending or fading, and the 30 s `ageTimer` in `board.ts` (§5) keeps relative times fresh the rest of the time.
 
 ### `handoff.ts` (pure)
 - `formatHandoff({did, check, changed, need}, date)` → exactly:
@@ -318,10 +328,10 @@ Register each with `isDeferred: false`. Results `{ result: string }` (d.ts:13566
 
 | tool | inputSchema | behaviour |
 |---|---|---|
-| `kanban_list` | `{column?: enum}` | one line per card: `#N [column] title (tag) updated` |
+| `kanban_list` | `{column?: enum}` (all six) | one line per card: `#N [column] title (tag) updated`; Done and Cancelled list their 10 newest |
 | `kanban_show` | `{card: integer}` req | spec + all sections, newest last |
 | `kanban_handoff` | `{card, did?, check, changed?, need}` req card,check,need | `backend.append(formatHandoff…)`, refresh detail |
-| `kanban_move` | `{card, to: enum}` | `to==='human'` && !isHandoffValid → `{deny: S.needHandoff(n)}`. Else `moveCard` (no onConfirm). to human → toast + `$.ui.notify` (d.ts:2501). Result "Moved #N to X (syncing)." |
+| `kanban_move` | `{card, to: enum}` (`human\|claude\|backlog\|done`; Suspended and Cancelled are the person's calls) | a card in Suspended or Cancelled is refused with `S.setAside(card)` (so is `kanban_ask`); `to==='human'` && !isHandoffValid → `{deny: S.needHandoff(n)}`. Else `moveCard` (no onConfirm). to human → toast + `$.ui.notify` (d.ts:2501). Result "Moved #N to X (syncing)." |
 | `kanban_create` | `{title, spec, column?}` | local: a card file; GitHub: `gh issue create --label triage`, `gh project item-add`, Status Backlog (then the usual move for any other column) |
 | `kanban_suggest` | `{title, spec, why?}` req title,spec | creates nothing: adds a suggestion to the `suggestions` atom (kept per cwd in `$.store`), toast once; shown in a strip under the toolbar with Add (quick-add path) and Dismiss (#24) |
 
@@ -333,31 +343,40 @@ Register each with `isDeferred: false`. Results `{ result: string }` (d.ts:13566
 ```ts
 export type Row =
   | { kind: 'toolbar'; line: 'status' | 'actions' }
-  | { kind: 'header'; column: KanbanColumn; shown: number; total: number }
+  | { kind: 'group'; group: KanbanGroup; isOpen: boolean; counts: SectionCount[]; isLoading?: true }
+  | { kind: 'header'; column: KanbanColumn; shown: number; total: number; isLoading?: true }
   | { kind: 'more'; column: KanbanColumn; dir: 'up' | 'down'; n: number }
   | { kind: 'card'; column: KanbanColumn; card: KanbanCard }
+  | { kind: 'detail'; column: KanbanColumn; card: KanbanCard }   // a Claude card's second row
   | { kind: 'empty'; column: KanbanColumn }
-export type LayoutInput = { cards: KanbanCard[]; ui: KanbanUi; bodyRows: number }
-export function capFor(bodyRows: number, openSections: number): number
-export function sectionList(cards: KanbanCard[], col: KanbanColumn): KanbanCard[]
-export function clampOffset(offset: number, len: number, cap: number): number
+  | { kind: 'skeleton'; column: KanbanColumn; index: number; percent: number }   // a bar standing in for a card on the first load
+  | { kind: 'blank'; column?: KanbanColumn; index: number; isPlain?: true }      // filler that keeps a section's height
+  | { kind: 'legend' } | { kind: 'folded' } | { kind: 'note' } | { kind: 'hint'; line: number }
+export type LayoutInput = { cards; ui; bodyRows; details?; hint?; extraRows?; legend?; isLoading? }
+export function sectionList(cards, col): KanbanCard[]
+export function sectionBody({ bodyRows, extraRows, footRows }): { body: number; slack: number }
+export function sectionWindow(list, col, offset, body, details?): { offset; taken; rows: Row[] }
+export function maxOffset(sizes: number[], body: number): number
+export function applyFilter(cards, ui): { cards; ui }          // the group drawn open under a filter
 export function layoutBoard(input: LayoutInput): Row[]
 export function hitTest(rows: Row[], treeRow: number): KanbanColumn | undefined
 ```
-- `capFor`: `clamp(floor((bodyRows - 2 - 4) / k) - 2, 1, 5)` (2 = the toolbar's rows), k = expanded sections, so the tree fits `bodyRows` and the engine window never moves in board view.
-- `sectionList`: sorted list for a column; Done sort+slice(10) here.
-- `clampOffset`: `[0, max(0, len - cap)]`.
-- `layoutBoard`: two `toolbar` rows (status, actions), then per column a `header`; if expanded: `empty`, or `more↑` (offset>0), up to `cap` `card`s, `more↓` (rows remain). No blank rows; every Row = exactly one terminal row.
-- `hitTest`: `rows[treeRow]?.column` for header/card/more/empty; `undefined` for the toolbar rows / out of range.
+- `sectionBody`: every section of the open group gets `B = max(2, floor(avail / 3))` rows under its header, `avail = bodyRows - 2 (toolbar) - 2 (group rows) - 3 (headers) - extraRows - footRows`; the 0-2 left over go below everything, the first as the key legend. A pane too short for B = 2 leaves the tree taller than the pane. `B` does not depend on the cards, so nothing moves when a card does.
+- `sectionList`: sorted list for a column; Done and Cancelled sort by update time and `.slice(0, 10)` here.
+- `sectionWindow`: exactly `B` rows from card `offset` (cut to `maxOffset`): the cards (a Claude card with activity takes two rows; a second row that does not fit is given up, never the card), `↑ N more` / `↓ N more` rows where cards lie beyond, then `blank` filler. A section with cards marks its spare rows (`blank`, no `isPlain`) with a dim `·` under the number column, the way an editor marks lines past the end of a file (decision 126). An empty section is `empty` plus plain filler. While the first load runs (nothing loaded yet: no cards, no error, no picker; decision 127) `layoutBoard` puts up to three `skeleton` bars per section in place of the cards and the headers carry no counts.
+- `layoutBoard`: two `toolbar` rows (status, actions), then a `group` row for Active, its three sections if it is open (each `header` + window), then a `group` row for Inactive, its sections if open. Both folded: the two group rows and a `folded` row saying to press one. No other blank rows; every Row = exactly one terminal row. Under a filter `applyFilter` picks the group drawn: `filterGroup`, else the open one if it has a match, else the first with one; the stored `openGroup` never changes.
+- `hitTest`: `rows[treeRow]?.column` for header/card/detail/more/empty/blank; `undefined` for the toolbar rows, the group rows, the legend and out of range.
 
-One-row guarantee: each row is a single `Button plain`, or a row `Box` with a Button and Text. Pre-truncate strings to `bodyColumns` via `truncate(str, width)` + `cellWidth()` (CJK/emoji = 2). Every Text `wrap="truncate-end"`. Card row: `left = '  #' + n + ' ' + (tag ? tagShort + ' ' : '')`, `right = ' ' + glyph + ' ' + age`, `title = truncate(title, bodyColumns - w(left) - w(right))`, padded so age aligns right; if title width < 4, drop age.
+One-row guarantee: each row is a single `Button plain`, or a row `Box` with a Button and Text. Pre-truncate strings to `bodyColumns` via `truncate(str, width)` + `cellWidth()` (CJK/emoji = 2). Every Text `wrap="truncate-end"`. Card row (`cardLine` in `layout.ts`): a 2-cell indent, the number right-aligned in one board-wide column, a space, the title, a gap, the sync mark and the age in 3 cells flush right. The column (`numberColumn`) is as wide as the widest `numberLabel` on the board, so every title in every section starts at one cell (`titleColumn`, also where `more`, empty-state and skeleton rows start); the `#` is dropped when the numbers would take over a quarter of the row. `numberLabel(card)` is `#12`, `?12` on a question card, `new` on a card still being made. The mark takes room only while it shows. The title is `truncate`d to what is left of `bodyColumns`; if it would get fewer than `MIN_TITLE` (8) cells the age is dropped. A row shows no tag: `rev`/`hum` left the row because both mean "your turn", which the section already says (decision 112); the tag stays in the detail view and `kanban_list`.
 
 `renderBoard` reads boardAtom, uiAtom, syncAtom, tickAtom, plus `e.props.bodyColumns` and `e.props.scroll` (Pane props d.ts:10877, SiteScroll d.ts:12562). Records `lastBody = { rows, offset, columns }` in a module variable (hit-test cache only, default `{rows: 24, offset: 0}`). Rows map 1:1 to elements:
 - toolbar, row 1 (status): `<Text dimColor wrap="truncate-end"> {backendLabel} · {ago}{error ? ' · ' + error : ''}</Text>` (a `Button key="source"` around it when the board was detected, #33). Row 2 (actions, `hooks/toolbar.ts`): `<Box flexDirection="row">` of plain Buttons `r: Refresh`, `n: New`, `f: Find` (the engine draws a plain Button's hotkey as `key: label`), 3 spaces of Text apart; a filter makes it `f: Find "query…"` + `✕`; failed moves add `✕N retry` last. Too narrow: the query is cut, then the spacing tightens, then Refresh and New are dropped. On mobile only `r: Refresh` (and the retry).
-- header: `<Button key={'hdr:' + col} plain onPress={toggleCollapse}>{collapsed ? '▸' : '▾'} <Text bold>{S.col[col]}</Text> <Text dimColor>{countLabel}</Text></Button>`
-- more: `<Button key={'more:' + col + ':' + dir} plain onPress={() => shift(col, ±cap)}><Text dimColor>  {dir === 'up' ? '↑' : '↓'} {n} more</Text></Button>`
-- card: `<Button key={'card:' + card.id} plain onPress={() => openDetail($, card.id)}>{left}{title}<Text color={glyphColor} dimColor={dim}>{glyph}</Text><Text dimColor> {age}</Text></Button>` (Buttons hold strings and Text only; unique `key` each).
-- empty: `<Text dimColor>  (empty)</Text>`; empty local board: explanatory line (S.noCards).
+- group: `<Button key={'grp:' + group} plain onPress={() => toggleGroup($, group)}>`: `▾ Active` when open; `▸ Inactive` with a summary flush right (`12 Done · 2 Cancelled · 1 Suspended`, cut to `12D 2C 1S`, then to the total; `empty` for none, `3 matches` under a filter, nothing on the first load) when closed. Human's count is drawn in `permission`, the inactive sections dim. On vscode and mobile this is a Button; the section headers are Texts there.
+- header: `<Text key={'hdr:' + col} wrap="truncate-end">  Human 2 ────── meta</Text>`: the label (Human `permission`, Claude `claude`, the inactive sections dim), the count (`shown/total` under a filter), a dim rule to the right edge and, when it leaves a rule, the meta flush right (Claude's `limit 1 · 1 queued`, and `1 over` in a warning; Done's and Cancelled's `10 newest`). Not pressable.
+- more: `<Button key={'more:' + col + ':' + dir} plain onPress={() => page(col, ±taken)}><Text dimColor>{lead}{dir === 'up' ? '↑' : '↓'} {n} more</Text></Button>`, `lead` = spaces up to the title column.
+- card: `<Button key={'card:' + card.id} plain onPress={() => openDetail($, card.id)}>` holding styled Texts, in order: indent, number, space, title, gap, mark, the space between mark and age, age (Buttons hold strings and Text only; unique `key` each; `cardLine` in `layout.ts` cuts them, `board-rows.ts` styles them). The number is dim (a Suspended card's is plain), bold in `permission` on a question, red on a failed move; the title is dim in Done, Cancelled, Suspended and for a queued card, and struck through in Cancelled; the mark has the glyph colour; the age is dim. A queued card says `queued N` (`qN` under 36 columns) where its age goes.
+- empty: `<Text dimColor>` of `lead` plus `emptyCopy(column)` in the longest form that fits (`fit`): Human `✓ All clear, nothing needs you` (the tick in `success`), Claude `Idle · drag a card here` (`Idle · open a card to move it` where nothing can drag), Backlog `Nothing yet · n adds a card` (`Nothing parked` where nothing can type), Done `Nothing finished yet`, Suspended `Nothing on hold`, Cancelled `Nothing dropped`; under a filter every section says `No matches`. An empty board adds a `note` row after the groups: `S.noCards` on the local backend, `S.noIssues` on a GitHub board, then the `hint` lines for an `auto` board on local cards.
+- skeleton: `lead` plus a dim `─` bar of 60, 40 or 75 % of the title room, staggered by section, in the first load's place of the cards (decision 127). blank: a single space, or `·` (`S.slot`) under the number column in a section that holds cards.
 
 Glyph colours (ThemeKey d.ts:13455): pending ⟳ `warning` pulsing on tick parity; ok ✓ `success`, +dimColor after 1 s; failed ✕ `error`.
 
@@ -366,29 +385,32 @@ Glyph colours (ThemeKey d.ts:13455): pending ⟳ `warning` pulsing on tick parit
 const ui = await read($, uiAtom)
 if (ui.view.mode !== 'board' || e.pointer === undefined) return next(e)
 const { cards } = await read($, boardAtom)
-const rows = layoutBoard({ cards, ui, bodyRows: lastBody.rows })
+const rows = layoutBoard({ cards, ui, bodyRows: lastBody.rows, extraRows })
 const col = hitTest(rows, e.pointer.row + lastBody.offset)               // d.ts:15349-15353
-if (col === undefined || ui.collapsed[col]) return next(e)
+if (col === undefined) return next(e)      // the toolbar, a group row, the legend, or a section of a folded group
 const step = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by)))
-const len = sectionList(cards, col).length, cap = capFor(lastBody.rows, openCount(ui))
-const nextOffset = clampOffset(ui.offsets[col] + step, len, cap)
+const list = sectionList(applyFilter(cards, ui).cards, col)         // the window moves over what the filter lets through
+const shown = sectionWindow(list, col, ui.offsets[col], body, details)  // body = B from sectionBody
+const nextOffset = clamp(shown.offset + step, 0, maxOffset(blocksOf(list, col, details), body))
 if (nextOffset !== ui.offsets[col]) await update($, uiAtom, u => ({ ...u, offsets: { ...u.offsets, [col]: nextOffset } }))
 return {}
 ```
 
 ## 7. Detail view (`view-detail.tsx`) + Phase 4 drag
 `renderDetail($, e, view)` reads detailAtom, boardAtom, syncAtom, uiAtom, tickAtom. Free height; engine scrolls it. `els = $.ui.resolve(e)`; Input only when `'Input' in els`.
-1. `<Button key="back" hotkey="b" label="← Board" …/>`, then `<Text bold>#N title</Text>`.
-2. Meta line: column · tag · updated age · sync text (`⟳ syncing to Claude` / `✓ saved` / `✕ <error> (attempt 2/4)`). Failed adds `<Button key="retry" variant="primary" label="Retry"/>`. GitHub adds a `Link` to url.
-3. If column is human: `<Button key="approve" hotkey="a" variant="primary" label="Approve"/>`, `<Button key="sendback" hotkey="s" label="Send back"/>`, `<Button key="park" hotkey="p" label="Park"/>`; `<Input key="feedback" label="Feedback" placeholder={S.feedbackPlaceholder} rows={3} value={ui.draft} onInput={v => update($, uiAtom, u => ({...u, draft: v}))} onSubmit={v => sendBack($, id, v)}/>` (InputProps d.ts:5627).
-4. `Move to:` + `move:<col>` Buttons for each other column.
-5. Tabs `tab:card` / `tab:diff` (diff only for GitHub cards with `prNumbers`; pressing loads diff into detailAtom).
-6. Body: card tab `<Markdown key="spec" text={body}/>` (d.ts:5879) then one Markdown per section, newest last; diff tab `<Code source={diff} format="diff"/>`; loading `<Text dimColor>Loading…</Text>`.
+Blocks in this order, one `gap` apart:
+1. Nav. `<Button key="back" plain hotkey="b" label="← Board"/>` alone; for a Human card with other Human cards, a row with `back` at the left and `Prev` (`k`), the place `2/5` and `Next` (`n`) at the right, walking the Human queue and wrapping. Under width the nav gives up its arrows first, then the place, then the words (`navLevel`).
+2. Head. The title line is `numberLabel(card)` dim (`#12`, `?12` on a question, `new` on a card still being made, the same as its board row) then the bold title, wrapping. The meta line, joined by dim dots: the section name in its colour (Human `permission`, Claude `claude`, Done, Cancelled and Suspended dim), the tag in words (`in review`, `labelled human`, `question`), `updated 5m ago`, the sync text (`⟳ syncing to Claude` / `✓ saved` / `✕ <error> (attempt 2/4)`), and for GitHub a `Link` to the issue. A card Claude has worked on adds `Agents: ● Claude ● Explore` and a two-column list of `Total` and one `Round N` per round (figures, cache reads, the round's agents); the label box is as wide as the widest label plus a space, never under 9 cells (8 under 40 columns), so `Round 10` keeps a space before its figures. Failed adds `<Button key="retry" variant="primary" label="Retry"/>`.
+3. Actions, Human only: `<Button key="approve" hotkey="a" variant="primary" label="Approve"/>`, `<Button key="sendback" hotkey="s" label="Send back"/>` (`Answer` on a question), `<Button key="park" hotkey="p" label="Park"/>`; then `<Input key="feedback" label="Feedback" placeholder={S.feedbackPlaceholder} rows={3} value={ui.draft} onInput={v => update($, uiAtom, u => ({...u, draft: v}))} onSubmit={v => sendBack($, id, v)}/>` (InputProps d.ts:5627) and the link `f: Write feedback` that focuses it. Where the surface has no field (mobile) Send back is left out and a dim line says so.
+4. The pinned section, Human only: the open question (`Claude asks · Oct 25`), else Claude's newest counted handoff when no feedback or answer came after it (`Claude's handoff · Oct 25`), as a short list of Did, Check, Changed and Need (any other text as Markdown). The Check (`renderCheck`) follows it directly.
+5. Moves. `Move to`: a `move:<col>` link for each Active section but the card's own (Backlog, Human, Claude). `Set aside` (`Aside` under 40 columns): `Done`, `Cancel`, `Suspend`, in the Inactive group's order, without the card's own (`S.setAsideTo`). Links wrap to the width. Where the board has no Client (vscode, mobile) a `Reorder` row of ↑/↓ links follows, for the sections that keep an order.
+6. Tabs `tab:card` / `tab:diff` (diff only for GitHub cards with `prNumbers`; pressing loads diff into detailAtom).
+7. Body. Card tab: `<Markdown key="spec" text={body}/>` (d.ts:5879, `(no description)` when empty), then a `History` heading over every other section, oldest first, each with its name and date coloured by who wrote it (Claude or the person) and `from @login, not counted` on a comment by someone else; the pinned section is not repeated. With nothing pinned the Check comes last. Diff tab: `<Code source={diff} format="diff"/>`; loading `<Text dimColor>Loading…</Text>`.
 
 `openDetail($, id)`: set view, detailAtom `{isLoading:true}`, then fill from `backend.detail` + `parseSections`.
-Actions: Approve → `moveCard(id,'done')`. Park → `moveCard(id,'backlog')`. Send back → empty draft: toast `S.feedbackFirst`; else `await backend.append('feedback', formatFeedback(draft, today))` (failure → toast, stop), clear draft, `moveCard(id,'claude',{onConfirm:'resume'})`, back to board. Move buttons → `moveCard(id, col, from === 'backlog' && col === 'claude' ? {onConfirm:'work'} : undefined)`.
+Actions: Approve → `decide(id,'done')`, Park → `decide(id,'backlog')`; `decide` is `moveCard`, then the next Human card opens (the board when none is left), and the card it opens ignores a decision for `SETTLE_MS` (0.6 s) so a key pressed twice decides one card. Send back → empty draft: toast `S.feedbackFirst`; else `await backend.append('feedback', formatFeedback(draft, today))` (failure → toast, stop), clear draft, `moveCard(id,'claude',{onConfirm:'resume'})`, then the next Human card as above. On a question the same path appends an Answer section and prompts with `'answer'`. Move buttons → `moveCard(id, col, moveOptions(from, col))`: `{onConfirm:'work'}` for a move to Claude from Backlog, Suspended, Cancelled or Done (from Human it is Send back). A card leaving Claude for Suspended or Cancelled while its turn is running gets the toast `S.stillWorking`; the turn is not stopped.
 
-Phase 4 drag: on terminal/desktop, `renderBoard` replaces the list rows (below toolbar) with `<Client key="board" module="./board-client.tsx" props={{ rows: RowView[], columns }} width="100%"/>` (`module` must be a string literal, d.ts:3936-3943). `RowView` = pre-truncated text + colour per `layoutBoard` row; the Client module is self-contained (no imports of other plugin files). In it, `surface.onPointer`: `down` on card row → `setState({drag:{cardId,y}})`; `move` → highlight hovered header with `inverse`; `up` on same row without move → `post({type:'open',cardId})`; `up` on header → `post({type:'drop',cardId,column})`; click on header/more → `post({type:'toggle'|'page',…})`. Hooks module adds `on('ui.message', ($, e, next) => e.element === 'board' ? handleBoardMessage($, e.data) : next(e))` calling `moveCard`/`openDetail`. vscode/mobile keep Button rows. Test with `ui.pointer` / `ui.post` (Mounted d.ts:16678/16691). Verify wheel-over-Client still raises pane `ui.scroll` with a pointer; if not, handle scroll inside the Client if the API offers it, else report.
+Phase 4 drag: on terminal/desktop, `renderBoard` replaces the list rows (below toolbar) with `<Client key="board" module="./board-client.tsx" props={{ rows: RowView[], columns }} width="100%"/>` (`module` must be a string literal, d.ts:3936-3943). `RowView` = pre-truncated text + colour per `layoutBoard` row; the Client module is self-contained (no imports of other plugin files). In it, `surface.onPointer`: `down` on card row → `setState({drag:{cardId,y}})`; `move` → highlight hovered header with `inverse`; `up` on same row without move → `post({type:'open',cardId})`; `up` on header → `post({type:'drop',cardId,column})`; click on a group header or a more row → `post({type:'toggleGroup',group}|{type:'page',column,dir})`; a closed group's header takes a drop on its chips (`dropTarget(…, x)`). Hooks module adds `on('ui.message', ($, e, next) => e.element === 'board' ? handleBoardMessage($, e.data) : next(e))` calling `moveCard`/`openDetail`. vscode/mobile keep Button rows. Test with `ui.pointer` / `ui.post` (Mounted d.ts:16678/16691). Verify wheel-over-Client still raises pane `ui.scroll` with a pointer; if not, handle scroll inside the Client if the API offers it, else report.
 
 ## 8. Prompts
 `onConfirm` fires only after backend confirms:
@@ -407,9 +429,9 @@ Test-kit facts: tests get engine `$` and `on` whose hooks are the bottom. No rea
 
 | Phase | File | Cases |
 |---|---|---|
-| 1 | layout.test.ts | column order; Done collapsed → header only; cap 5 + `↓ N more`; offset 3 → `↑ 3 more`; clampOffset bounds; Done = 10 newest; capFor shrinks for small bodyRows; every row's text width ≤ bodyColumns (CJK title); hitTest toolbar→undefined, card/more/header→column |
+| 1 | layout.test.ts | groups and column order; B equal for the three sections at 30, 31, 32 rows with the slack at the bottom; B = 2 at 10 rows; extraRows shrink B; empty section = `empty` + blanks; overflow gives `↑`/`↓` rows inside B; a second row that does not fit is dropped, never its card; maxOffset; Done and Cancelled = 10 newest, Suspended all; `openGroup` none; the filter picks the group; every row's text width ≤ bodyColumns (CJK title); hitTest toolbar/group/legend→undefined, card/more/header/blank→column |
 | 1 | local.test.ts | parse/serialize round-trip (colon in title, quotes); bad status → backlog; move rewrites status/updated/order, body intact; parseSections splits Handoff/Feedback with fields |
-| 1 | pane.test.tsx | fake fs with 3 cards → `/kanban` → mount → find `#1`; press `hdr:done` expands; press card → detail; press `move:claude` → file has `status: claude`; back → card under Claude |
+| 1 | pane.test.tsx | fake fs with 3 cards → `/kanban` → mount → find `#1`; press `grp:inactive` opens Inactive and folds Active; press card → detail; press `move:claude` → file has `status: claude`; back → card under Claude |
 | 1 | scroll.test.tsx | 8 backlog cards, bodyRows 30: pointer on backlog card row → `{}`, `↑ 1 more` shown, Human offset unchanged; pointer on toolbar → passed to next; no pointer → passed; detail view → passed; press `more:backlog:down` pages |
 | 2 | github.test.ts | parseClaudeMd on carcast/offr/horo fixtures → exact ids; columnOf precedence; planMove argv per target incl. reopen/close/verify, `--remove-label human` only when present; load pages one GraphQL query per 100 items and filters other repos, cost fixture, rate-limit backoff and recovery, `ai` label ensured once, handoff author rule |
 | 2 | sync.test.tsx | success ⟳ → ✓ → gone after 2000 ms; failure ✕ + Retry; 3 retries fail → card back + toast with reason; debounce: 3 moves in 300 ms → one sequence for final target; in-flight: deferred first call, move again → exactly one more sequence; move back to origin before dispatch → no call |

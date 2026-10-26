@@ -1,8 +1,10 @@
 import type { Mounted } from 'claude-code/testing'
 
 // The board's list rows are a Client's Text on the terminal and the desktop and
-// Buttons elsewhere. These reach a row by its key (`hdr:human`, `card:<id>`,
-// `more:<column>:<dir>`) on either, so a test body can run on every surface.
+// Buttons elsewhere. These reach a row by its key (`grp:inactive`, `hdr:human`,
+// `card:<id>`, `more:<column>:<dir>`) on either, so a test body can run on every
+// surface. The section headers (`hdr:`) are labels: Texts where the list is not
+// a Client's, and never Buttons.
 
 /** What the helpers use of a mounted Pane; any surface's handle fits. */
 export type BoardUi = Pick<Mounted, 'find' | 'findAll' | 'press' | 'drawn'>
@@ -17,11 +19,15 @@ export async function hasClient(ui: BoardUi): Promise<boolean> {
   return (await ui.find({ type: 'Client', key: CLIENT })) !== undefined
 }
 
-/** A list row by key, drawn as a Button or by the Client. */
+/** A list row by key, drawn as a Button or by the Client; a section header, a Text, by its label. */
 export async function row(ui: BoardUi, key: string) {
-  return (await hasClient(ui))
-    ? ui.find({ key, in: CLIENT })
-    : ui.find({ type: 'Button', key })
+  if (await hasClient(ui)) return ui.find({ key, in: CLIENT })
+  if (!key.startsWith('hdr:')) return ui.find({ type: 'Button', key })
+
+  const column = key.slice('hdr:'.length)
+  const label = column.charAt(0).toUpperCase() + column.slice(1)
+
+  return ui.find({ type: 'Text', text: new RegExp(`^ {2}${label} \\S`) })
 }
 
 /** The props a row's text is drawn with (a Client row's Text, a Button's own). */
@@ -50,7 +56,8 @@ export async function marks(ui: BoardUi, mark: string) {
     : ui.findAll({ type: 'Text', text })
 }
 
-const ROW_KEY = /^(hdr|card|act|more|empty|note|hint)\b/
+const ROW_KEY =
+  /^(grp|hdr|card|act|more|empty|skeleton|blank|legend|folded|note|hint)\b/
 
 /** The list rows, top to bottom: the Client's keyed Boxes, or the Buttons. */
 export async function listRows(ui: BoardUi) {
@@ -61,16 +68,53 @@ export async function listRows(ui: BoardUi) {
   return found.filter(one => one.key !== undefined && ROW_KEY.test(one.key))
 }
 
-/** The keys of the list rows, top to bottom. */
-export async function rowKeys(ui: BoardUi): Promise<string[]> {
-  return (await listRows(ui)).flatMap(one =>
-    one.key === undefined ? [] : [one.key],
-  )
+const FILLER = /^(blank|skeleton|legend)\b/
+const HEADER_TEXT = /^ {2}(Backlog|Human|Claude|Done|Cancelled|Suspended) \S/
+
+// The keys of the rows below a drawn element, in order: a Button's own key, and a
+// section header's `hdr:` key, which a Text draws without.
+function drawnKeys(node: unknown, found: string[]): string[] {
+  if (typeof node !== 'object' || node === null) return found
+
+  const { type, props, children } = node as Drawn
+  const key = props?.key
+  if (typeof key === 'string' && ROW_KEY.test(key)) {
+    found.push(key)
+  } else if (type === 'Text') {
+    const label = HEADER_TEXT.exec(plainText(node))?.[1]
+    if (label !== undefined) found.push(`hdr:${label.toLowerCase()}`)
+  } else {
+    for (const child of children ?? []) drawnKeys(child, found)
+  }
+
+  return found
 }
 
-/** The Client's row index of a key; its y in the Client's region. */
+/** The keys of the list rows, top to bottom, without the blank filler, the loading bars and the legend that only keep heights. */
+export async function rowKeys(ui: BoardUi): Promise<string[]> {
+  const found = (await hasClient(ui))
+    ? (await listRows(ui)).flatMap(one =>
+        one.key === undefined ? [] : [one.key],
+      )
+    : drawnKeys(await ui.drawn(), [])
+
+  return found.filter(key => !FILLER.test(key))
+}
+
+/** The keys of the rows under a section's header, up to the next header or group row. */
+export async function under(ui: BoardUi, header: string): Promise<string[]> {
+  const found = await rowKeys(ui)
+  if (!found.includes(header)) throw new Error(`no board row keyed ${header}`)
+
+  const rest = found.slice(found.indexOf(header) + 1)
+  const end = rest.findIndex(key => /^(hdr|grp):/.test(key))
+
+  return end < 0 ? rest : rest.slice(0, end)
+}
+
+/** The Client's row index of a key; its y in the Client's region, filler rows counted. */
 export async function rowIndex(ui: BoardUi, key: string): Promise<number> {
-  const keys = await rowKeys(ui)
+  const keys = (await listRows(ui)).map(one => one.key)
   const index = keys.indexOf(key)
   if (index < 0) throw new Error(`no board row keyed ${key}`)
 
@@ -92,6 +136,23 @@ export async function click(ui: BoardUi, key: string): Promise<void> {
   await pointer({ type: 'down', x: 2, y, button: 'left' })
   await pointer({ type: 'up', x: 2, y, button: 'left' })
 }
+
+/**
+ * A section header's label and count (`Human 2`), without its rule and meta;
+ * undefined when its group is folded.
+ */
+export async function header(
+  ui: BoardUi,
+  column: string,
+): Promise<string | undefined> {
+  const found = await row(ui, `hdr:${column}`)
+
+  return found?.text.replace(/\s+─.*$/, '').trim()
+}
+
+/** Presses a group's header: opens it, which folds the other, or folds it when open. */
+export const group = (ui: BoardUi, name: 'active' | 'inactive') =>
+  click(ui, `grp:${name}`)
 
 type Key = Mounted<'terminal'>['key']
 

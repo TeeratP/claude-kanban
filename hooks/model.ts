@@ -3,6 +3,7 @@ import type {
   KanbanBoard,
   KanbanCard,
   KanbanColumn,
+  KanbanGroup,
   KanbanQueue,
   KanbanQuickAdd,
   KanbanUi,
@@ -10,7 +11,8 @@ import type {
 
 export const PANE = 'kanban'
 export const KANBAN_DIR = '.kanban'
-export const DONE_LIMIT = 10
+// Done and Cancelled list their newest cards only.
+export const NEWEST_LIMIT = 10
 export const DIFF_LIMIT = 90_000
 
 // A move is tried once and retried by hand up to three times before it is undone.
@@ -22,13 +24,39 @@ export const TICK_SHOWN_MS = 2000
 // key pressed twice, or held, decides one card and not two.
 export const SETTLE_MS = 600
 
-// Top to bottom on the board.
+// The sections of each group, top to bottom.
+export const GROUPS: Record<KanbanGroup, readonly KanbanColumn[]> = {
+  active: ['backlog', 'human', 'claude'],
+  inactive: ['done', 'cancelled', 'suspended'],
+}
+export const GROUP_ORDER: readonly KanbanGroup[] = ['active', 'inactive']
+export const SECTIONS_PER_GROUP = 3
+// Rows under a section's header, at the least: a card and a `more` row.
+export const MIN_SECTION_BODY = 2
+
+// Top to bottom on the board; also the 1-6 keys that move a card.
 export const COLUMNS: readonly KanbanColumn[] = [
-  'human',
-  'claude',
-  'backlog',
-  'done',
+  ...GROUPS.active,
+  ...GROUPS.inactive,
 ]
+
+/** The group a section belongs to. */
+export const groupOf = (column: KanbanColumn): KanbanGroup =>
+  GROUPS.active.includes(column) ? 'active' : 'inactive'
+
+/** Whether a section keeps its cards in the order they were put in; Done and Cancelled list by update time. */
+export const isOrdered = (column: KanbanColumn) =>
+  column !== 'done' && column !== 'cancelled'
+
+// The key after `m` that sends a card to a section, besides its digit.
+export const MOVE_KEY: Record<KanbanColumn, string> = {
+  human: 'h',
+  claude: 'c',
+  backlog: 'b',
+  done: 'd',
+  suspended: 's',
+  cancelled: 'x',
+}
 
 export const EMPTY_BOARD: KanbanBoard = {
   mode: 'auto',
@@ -54,12 +82,18 @@ export const EMPTY_QUEUE: KanbanQueue = {
 
 export const INITIAL_UI: KanbanUi = {
   view: { mode: 'board' },
-  offsets: { human: 0, claude: 0, backlog: 0, done: 0 },
-  collapsed: { human: false, claude: false, backlog: false, done: true },
+  offsets: {
+    backlog: 0,
+    human: 0,
+    claude: 0,
+    done: 0,
+    cancelled: 0,
+    suspended: 0,
+  },
+  openGroup: 'active',
   draft: '',
   filter: '',
   isFilterOpen: false,
-  filterCollapsed: {},
 }
 
 export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
@@ -77,6 +111,15 @@ export const isPendingId = (cardId: string) => cardId.startsWith(PENDING_PREFIX)
 
 export function isColumn(value: unknown): value is KanbanColumn {
   return COLUMNS.some(column => column === value)
+}
+
+/** The section a name stands for, in any case; `canceled` reads as `cancelled`. Undefined for none. */
+export function parseColumn(value: unknown): KanbanColumn | undefined {
+  const name = typeof value === 'string' ? value.trim().toLowerCase() : ''
+
+  return COLUMNS.find(
+    column => column === (name === 'canceled' ? 'cancelled' : name),
+  )
 }
 
 const WIDE: readonly (readonly [number, number])[] = [
@@ -139,7 +182,22 @@ export function padEnd(text: string, width: number): string {
   return text + ' '.repeat(Math.max(0, width - cellWidth(text)))
 }
 
-/** A short relative age: `now`, `5m`, `3h`, `2d`; empty for a bad date. */
+/** Pads a string with spaces on the left to exactly `width` cells. */
+export function padStart(text: string, width: number): string {
+  return ' '.repeat(Math.max(0, width - cellWidth(text))) + text
+}
+
+/** Copy written in full and again for a narrow pane. */
+export type Copy = { long: string; short: string }
+
+/** `copy` whole when it fits `room` cells, else its short form, cut if that is too wide as well. */
+export function fit(copy: Copy, room: number): string {
+  if (cellWidth(copy.long) <= room) return copy.long
+
+  return truncate(copy.short, room)
+}
+
+/** A short relative age of at most 3 cells: `now`, `5m`, `3h`, `13d`, `8w`, `2y`; empty for a bad date. */
 export function ageLabel(since: string | number, now: number): string {
   const then = typeof since === 'number' ? since : Date.parse(since)
   if (Number.isNaN(then)) return ''
@@ -149,7 +207,12 @@ export function ageLabel(since: string | number, now: number): string {
   if (minutes < 60) return `${minutes}m`
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h`
 
-  return `${Math.floor(minutes / (60 * 24))}d`
+  const days = Math.floor(minutes / (60 * 24))
+  if (days < 14) return `${days}d`
+  if (days < 365) return `${Math.floor(days / 7)}w`
+
+  // Past 99 years the label would outgrow its 3 cells.
+  return `${Math.min(99, Math.floor(days / 365))}y`
 }
 
 /**
