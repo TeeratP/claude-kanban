@@ -1,13 +1,6 @@
 import type { Register } from 'claude-code'
 
-import {
-  restoreActivity,
-  watchSpawn,
-  watchStep,
-  watchTool,
-  watchTurnEnd,
-  watchTurnStart,
-} from './activity'
+import { restoreActivity, watchSpawn, watchStep } from './activity'
 import { readUi } from './atoms'
 import { backendMode } from './backend'
 import {
@@ -18,8 +11,15 @@ import {
   refreshAfter,
 } from './board'
 import { guardEdit, guardWrite } from './guard'
+import { backlogSection } from './guide'
 import { applyQueue, claudeLimit } from './queue'
 import { dropUnfinishedAdds } from './quick-add'
+import {
+  reconcileOn,
+  reconcileToolCall,
+  reconcileTurnEnd,
+  reconcileTurnStart,
+} from './reconcile'
 import { S } from './strings'
 import { restoreSuggestions, withSuggestSection } from './suggest'
 import { resumePendingSyncs } from './sync'
@@ -34,16 +34,23 @@ import { renderDetail } from './view-detail'
 export const register: Register = (on, options) => {
   const mode = backendMode(options.backend)
   const limit = claudeLimit(options.claudeLimit)
+  const isReconciling = reconcileOn(options.reconcile)
 
   // Watching Claude work on a card never alters what it watches. These stand
   // first, so they wrap the tools below and see their results.
-  on('tool.call', watchTool).catch(($, e, next) => next(e))
+  on('tool.call', ($, e, next) =>
+    reconcileToolCall($, e, next, isReconciling),
+  ).catch(($, e, next) => next(e))
   on('agent.spawn', watchSpawn).catch(($, e, next) => next(e))
-  on('turn.start', watchTurnStart).catch(($, e, next) => next(e))
+  on('turn.start', ($, e, next) =>
+    reconcileTurnStart($, e, next, isReconciling),
+  ).catch(($, e, next) => next(e))
   on('turn.step', watchStep).catch(async function* ($, e, next) {
     return yield* next(e)
   })
-  on('turn.complete', watchTurnEnd).catch(($, e, next) => next(e))
+  on('turn.complete', ($, e, next) =>
+    reconcileTurnEnd($, e, next, isReconciling),
+  ).catch(($, e, next) => next(e))
 
   on('session.start', async ($, e, next) => {
     await applyMode($, mode)
@@ -129,11 +136,13 @@ export const register: Register = (on, options) => {
     next.called ? next(e) : { deny: S.toolFailed('kanban_suggest') },
   )
 
-  // Asks Claude to suggest follow-ups as cards, in one short section.
+  // Tells Claude the board is the backlog and asks it to suggest follow-ups as
+  // cards, in two short sections.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
+    const sections = withSuggestSection(composed.sections, e.traits)
 
-    return { sections: withSuggestSection(composed.sections, e.traits) }
+    return { sections: await backlogSection($, sections, e.traits) }
   }).catch(($, e, next) => next(e))
 
   // A card file Claude wrote or edited shows on the board at once, unless the

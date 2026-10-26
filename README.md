@@ -29,7 +29,7 @@ At the prompt of a terminal session:
 /plugin install kanban --marketplace TeeratP/claude-kanban
 ```
 
-Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)) and the `claudeLimit` option (see [How many cards Claude works on at once](#how-many-cards-claude-works-on-at-once)).
+Answer `y` to `Add marketplace?`, then choose a scope. The install flow then shows a settings screen with the `backend` option (see [Backends](#backends)), the `claudeLimit` option (see [How many cards Claude works on at once](#how-many-cards-claude-works-on-at-once)) and the `reconcile` option (see [How Claude keeps the board current](#how-claude-keeps-the-board-current)).
 
 From a shell:
 
@@ -99,6 +99,23 @@ The filter only changes what is drawn. Everything you do acts on the cards you c
 ### Suggestions from Claude
 
 When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
+
+### How Claude keeps the board current
+
+A session with the plugin knows the board is the project's backlog without a line in CLAUDE.md or AGENTS.md. The plugin adds one short section to Claude's system prompt (to every request but a `--bare` one) that names the backlog and states the rules:
+
+- On a GitHub board: `This project's backlog is GitHub Issues on board <owner>/#<n>.`
+- On local cards: `This project's backlog is the .kanban/*.md cards.`
+- While the backend is not known yet: `This project's backlog is a kanban board.` The backend is found when the pane first opens or a kanban tool first runs, so a request before that says only this.
+
+The rules are the same for all three. Asked to work the backlog, or given no task, Claude takes the top Backlog card (`kanban_list`) and moves it to Claude before writing code. When the work a card tracks is done it records `kanban_handoff` and moves the card to Human; it never moves a card to Done, which you approve. Blocked on a decision only you can make, it calls `kanban_ask`. For follow-ups it calls `kanban_suggest`, and it creates a card with `kanban_create` only when asked. It never moves a card into or out of Suspended or Cancelled, and it uses the kanban tools, not `gh issue` or `gh project` edits or hand edits of `.kanban` files, so the board stays in sync.
+
+Claude can forget the last step, so the plugin checks when a turn ends. The `reconcile` setting (on by default; off turns off only what follows, not the section above) covers a turn of the main session that Claude answered: not one you interrupted, one that ended in an error or a refusal, a subagent's, nor one the check itself started.
+
+- **A card still in Claude.** The turn worked on a card if it began with that card's work, resume or answer prompt, or called `kanban_show`, `kanban_handoff`, `kanban_move` or `kanban_ask` on it. If the card is still in Claude and the turn left it no handoff, no question and no move out of Claude (a move into Claude says nothing about the work), the plugin sends one prompt: `Card #12 is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.` A card waiting in the queue is not asked about.
+- **Work with no card.** If the turn changed files (`Edit`, `Write` or `NotebookEdit`, other than a `.kanban/*.md` card file), touched no card and no card is in Claude, a toast says `This turn changed files with no card in Claude. If it is backlog work, move or create its card.` once a session. It is a toast, not a prompt, so it costs no turn and Claude creates no card you did not ask for.
+
+The check cannot loop. A turn that a check prompt started is never checked; a card is asked about once per round (a round ends when the card leaves Claude, and a new one starts when it is worked on again), however many turns it takes; nothing is sent while a prompt that starts work is on its way (a card moved to Claude whose move the backend has not yet confirmed); a card waiting in the queue is no reason to wait, since it starts the moment a slot is free; and the work-with-no-card toast shows once a session.
 
 ## Backends
 

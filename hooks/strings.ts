@@ -538,4 +538,30 @@ export const S = {
     long: '↑↓ walk · ⏎ open · m+key move',
     short: '↑↓ ⏎ open · m move',
   },
+
+  // #42
+  // The system prompt's section on the backlog: what it is, which depends on the backend, then the rules.
+  backlogIs: {
+    github: (owner: string, project: number) =>
+      `This project's backlog is GitHub Issues on board ${owner}/#${project}.`,
+    local: "This project's backlog is the .kanban/*.md cards.",
+    unknown: "This project's backlog is a kanban board.",
+  },
+  backlogRules: [
+    'Keep it current with the kanban tools:',
+    '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
+    '- When the work a card tracks is done, record kanban_handoff, then kanban_move it to human. Never move a card to done: the person approves it.',
+    '- Blocked on a decision only the person can make: kanban_ask.',
+    '- Follow-ups: kanban_suggest. Use kanban_create only when asked.',
+    '- Never move cards into or out of Suspended or Cancelled.',
+    '- Use the kanban tools, not raw gh issue/gh project edits or hand edits of .kanban files, so the board stays in sync.',
+  ].join('\n'),
+  // Submitted when a turn ends with a card still in Claude and no handoff, question or move.
+  reconcilePrompt: (n: number) =>
+    `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.`,
+  // Toasted once a session when a turn changed files and no card was in play.
+  untrackedWork:
+    'This turn changed files with no card in Claude. If it is backlog work, move or create its card.',
+  reconcileFailed: (reason: string) =>
+    `kanban: could not check the turn's cards: ${reason}`,
 }

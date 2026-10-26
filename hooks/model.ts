@@ -6,6 +6,7 @@ import type {
   KanbanGroup,
   KanbanQueue,
   KanbanQuickAdd,
+  KanbanReconcile,
   KanbanUi,
 } from '../types'
 
@@ -101,6 +102,19 @@ export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
   hasDetails: false,
   title: '',
   spec: '',
+}
+
+export const EMPTY_TURN: KanbanReconcile['turn'] = {
+  isReconcile: false,
+  hasEdits: false,
+  cards: {},
+}
+
+export const EMPTY_RECONCILE: KanbanReconcile = {
+  turn: EMPTY_TURN,
+  sent: {},
+  waiting: [],
+  isNudged: false,
 }
 
 // A card shown before its backend has made it carries this prefix in its id.

@@ -19,6 +19,12 @@
       "title": "Claude limit",
       "description": "How many cards Claude works on at once. Cards moved to Claude beyond that wait in a queue and start, in order, as cards leave Claude. 0 means no limit.",
       "default": 1
+    },
+    "reconcile": {
+      "type": "boolean",
+      "title": "Reconcile cards",
+      "description": "At the end of a turn, ask Claude about a card it worked on that is still in Claude with no handoff, question or move, and note once a session when files changed with no card in play. Off stops these; the backlog rules in Claude's system prompt stay.",
+      "default": true
     }
   }
 }

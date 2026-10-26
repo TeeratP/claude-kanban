@@ -288,7 +288,9 @@ async function observe($: EngineInterface, work: Promise<unknown>) {
 }
 
 // The latest state: a read here would be the moment the dispatch first read.
-const current = ($: EngineInterface) => updateActivity($, state => state)
+function current($: EngineInterface) {
+  return updateActivity($, state => state)
+}
 
 const storeKey = (cwd: string, cardId: string) => `activity:${cwd}:${cardId}`
 

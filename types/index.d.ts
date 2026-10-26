@@ -178,6 +178,21 @@ export type KanbanActivity = {
   /** Each subagent seen, by its id: its name and the card it inherited. */
   agents: Record<string, { name: string; cardId: string }>
 }
+/** What the turn-end check keeps: the running main turn, and what it has already said this session. */
+export type KanbanReconcile = {
+  /** The turn's cards, each true once it got a handoff, a question or a move out of Claude; and whether it changed files. */
+  turn: {
+    isReconcile: boolean
+    hasEdits: boolean
+    cards: Record<string, boolean>
+  }
+  /** Per card, how many rounds it had when its reconcile prompt was sent. */
+  sent: Record<string, number>
+  /** Reconcile prompts submitted whose turn has not begun. */
+  waiting: string[]
+  /** Whether the once-a-session toast for work with no card has been shown. */
+  isNudged: boolean
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -194,6 +209,7 @@ declare module 'claude-code' {
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
       suggestions: Shaped<KanbanSuggestion[]>
+      reconcile: Shaped<KanbanReconcile>
     }
   }
 }
