@@ -94,17 +94,23 @@ export async function readDetail(
   return detailGithub($, info, card, await viewerLogin($))
 }
 
-/** Creates a card and returns it: a card file, or on GitHub an issue labeled `triage` on the board. */
+/**
+ * Creates a card and returns it: a card file, or on GitHub an issue labeled
+ * `triage` on the board. On GitHub a card made outside Backlog goes after the
+ * card `after` in its section (first when null); a card file takes the next
+ * order on its own.
+ */
 export async function createCard(
   $: EngineInterface,
   info: KanbanBackendInfo,
   title: string,
   spec: string,
   column: KanbanColumn,
+  after?: KanbanCard | null,
 ): Promise<KanbanCard> {
   if (info.kind === 'local') return createLocal($, title, spec, column)
 
-  return createGithub($, info, title, spec, column)
+  return createGithub($, info, title, spec, column, after)
 }
 
 /** The card's pull request diff; undefined when the backend has none. */

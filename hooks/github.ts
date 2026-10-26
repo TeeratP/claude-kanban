@@ -1167,8 +1167,10 @@ async function addToBoard(
 
 /**
  * Creates an issue labeled `triage`, puts it on the board in Backlog and, for any
- * other column, moves it there. Throws on the first failing command; an issue
- * already created stays, and the error names it.
+ * other column, moves it there, after the card `after` (first when null) when
+ * one is given; that place is only the default, so one GitHub refuses is logged
+ * and the card stays. Throws on the first failing command; an issue already
+ * created stays, and the error names it.
  */
 export async function createGithub(
   $: EngineInterface,
@@ -1176,6 +1178,7 @@ export async function createGithub(
   title: string,
   spec: string,
   column: KanbanColumn,
+  after?: KanbanCard | null,
 ): Promise<KanbanCard> {
   const triage = await ensureLabel($, info, TRIAGE)
   const out = await runCommand(
@@ -1220,7 +1223,9 @@ export async function createGithub(
     }
     if (column === 'backlog') return card
 
-    return { ...card, ...(await moveGithub($, info, card, column)), column }
+    const moved = await moveGithub($, info, card, column, after, false)
+
+    return { ...card, ...moved, column }
   } catch (error) {
     throw new Error(S.createdPartly(url, errorMessage(error)))
   }
