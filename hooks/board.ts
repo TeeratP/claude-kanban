@@ -52,6 +52,9 @@ let loading: Promise<KanbanBoard> | undefined
 let isStale = false
 let pollTimer: Timer | undefined
 let ageTimer: Timer | undefined
+// Counts the starts of the polling: a tick that began before a restart must not
+// end the timers the restart made.
+let pollingRun = 0
 // The Human count the pane's title follows; undefined until the pane opens.
 let titledFor: number | undefined
 // Cards whose move the backend confirmed while a load was reading: it may have read them
@@ -87,6 +90,13 @@ async function retitle($: EngineInterface): Promise<void> {
 
     const title = waiting === 0 ? S.paneTitle : S.paneTitleCount(waiting)
     if (pane.title === title) return
+
+    // The list above may be older than this open, which would bring back a pane
+    // closed since: ask again right before it.
+    const isOpen = (await $.ui.panes()).some(
+      one => one.id === PANE && one.isPlaced,
+    )
+    if (!isOpen) return
 
     await $.ui.open({
       id: 'kanban',
@@ -484,16 +494,19 @@ export function refresh($: EngineInterface): Promise<KanbanBoard> {
  * restarts both counts.
  */
 export function startPolling($: EngineInterface): void {
+  pollingRun += 1
+  const run = pollingRun
   pollTimer?.cancel()
-  pollTimer = $.clock.every(POLL_MS, () => inBackground($, pollOnce($)))
+  pollTimer = $.clock.every(POLL_MS, () => inBackground($, pollOnce($, run)))
   ageTimer?.cancel()
-  ageTimer = $.clock.every(AGE_MS, () => inBackground($, ageOnce($)))
+  ageTimer = $.clock.every(AGE_MS, () => inBackground($, ageOnce($, run)))
 }
 
 // A tick reloads while the pane is open and ends the polling once it is not;
 // opening the pane again starts it. While the GitHub rate limit pauses polling,
-// or boards wait for the person's pick, ticks pass without a load.
-async function pollOnce($: EngineInterface): Promise<void> {
+// or boards wait for the person's pick, ticks pass without a load. A tick of an
+// older run leaves the timer alone: it belongs to the run that replaced it.
+async function pollOnce($: EngineInterface, run: number): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) {
     const { backend, pick } = await readBoard($)
@@ -502,20 +515,23 @@ async function pollOnce($: EngineInterface): Promise<void> {
 
     return
   }
+  if (run !== pollingRun) return
 
   pollTimer?.cancel()
   pollTimer = undefined
 }
 
 // A tick bumps the tick atom, which the open board reads, so the `updated` age and
-// the card ages move without a load. Once the pane is not open it ends the ticking.
-async function ageOnce($: EngineInterface): Promise<void> {
+// the card ages move without a load. Once the pane is not open it ends the ticking,
+// unless the tick is of an older run than the timer.
+async function ageOnce($: EngineInterface, run: number): Promise<void> {
   const panes = await $.ui.panes()
   if (panes.some(pane => pane.id === PANE)) {
     await updateTick($, count => count + 1)
 
     return
   }
+  if (run !== pollingRun) return
 
   ageTimer?.cancel()
   ageTimer = undefined

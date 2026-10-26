@@ -170,6 +170,9 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
     // False: the listed panes wait undrawn, as on a terminal too narrow for them.
     isPlaced: true,
     opened: [] as string[],
+    // The next `ui.panes` answers with the panes as they stood when asked, but only
+    // once this settles: a pane closed meanwhile is still listed.
+    holdPanes: undefined as Promise<void> | undefined,
     // Every open as the engine got it, and the title each pane carries now.
     opens: [] as PaneOpenArgs[],
     titles: {} as Record<string, string>,
@@ -218,15 +221,20 @@ export function boot(on: On, files: Files, store?: Record<string, unknown>) {
 
     return { value: { isPlaced: true } }
   })
-  on('ui.panes', () => ({
-    value: world.panes.map(id => ({
+  on('ui.panes', async () => {
+    const listed = world.panes.map(id => ({
       id,
       title: world.titles[id] ?? 'Kanban',
       isShown: true,
       isFocused: false,
       isPlaced: world.isPlaced,
-    })),
-  }))
+    }))
+    const late = world.holdPanes
+    world.holdPanes = undefined
+    await late
+
+    return { value: listed }
+  })
   on('ui.toast', (_, e) => {
     toasts.push(e.text)
 

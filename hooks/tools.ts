@@ -43,8 +43,9 @@ type ToolName =
 const MOVE_TO: readonly KanbanColumn[] = ['human', 'claude', 'backlog', 'done']
 const CREATE_IN: readonly KanbanColumn[] = ['claude', 'backlog', 'done']
 
-const isSetAside = (card: KanbanCard) =>
-  card.column === 'suspended' || card.column === 'cancelled'
+const SET_ASIDE: readonly KanbanColumn[] = ['suspended', 'cancelled']
+
+const isSetAside = (card: KanbanCard) => SET_ASIDE.includes(card.column)
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -295,13 +296,15 @@ async function ask(
   }
   inBackground($, refreshDetail($, found))
 
-  // The card is announced as a question once the backend confirms the move.
-  await moveCard(
-    $,
-    card.id,
-    'human',
-    card.column === 'human' ? undefined : { announce: true },
-  )
+  // The card is announced as a question once the backend confirms the move. The
+  // person may have set it aside during the write above: the move is then refused.
+  const refused = await moveCard($, card.id, 'human', {
+    unlessFrom: SET_ASIDE,
+    ...(card.column === 'human' ? {} : { announce: true }),
+  })
+  if (refused !== undefined)
+    return { deny: S.setAside({ ...card, column: refused }) }
+
   await setBoard($, board => ({
     ...board,
     cards: board.cards.map(one =>
@@ -338,12 +341,13 @@ async function move(
   }
 
   // Announced only once the backend confirms: a refused move never reaches the person.
-  await moveCard(
-    $,
-    card.id,
-    to,
-    to === 'human' && card.column !== 'human' ? { announce: true } : undefined,
-  )
+  // The person may have set the card aside during the read above: also refused.
+  const refused = await moveCard($, card.id, to, {
+    unlessFrom: SET_ASIDE,
+    ...(to === 'human' && card.column !== 'human' ? { announce: true } : {}),
+  })
+  if (refused !== undefined)
+    return { deny: S.setAside({ ...card, column: refused }) }
 
   return { result: S.moved(card, to) }
 }

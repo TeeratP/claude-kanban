@@ -531,6 +531,42 @@ test('Claude cannot move a card the person set aside, nor ask about it, but can 
   expect(files[path(1, 'a')]).toContain('## Handoff (')
 })
 
+for (const to of ['suspended', 'cancelled'] as const) {
+  test(`a card the person ${to === 'suspended' ? 'suspends' : 'cancels'} while kanban_move reads its handoff stays ${to}`, async ($, on) => {
+    const files = { [path(1, 'a')]: withBody(`The spec.\n\n${HANDOFF}`) }
+    const { clock, calls, toasts } = boot(on, files)
+    await $.session.start({
+      cwd: '/',
+      surface: 'terminal',
+      isInteractive: true,
+    })
+    await $.command.run({ ...RUN })
+    await clock.settle()
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await click(ui, 'card:md:0001-a')
+    let release = () => {}
+    calls.lateRead = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    const moving = moveToHuman($)
+    await ui.press({ key: `move:${to}` })
+    release()
+
+    expect(await moving).toEqual({
+      deny: `Card #1 is ${to} by the person; leave it unless they move it back.`,
+    })
+    await clock.advance(SYNC_PAUSE)
+    await clock.settle()
+    expect(files[path(1, 'a')]).toContain(`status: ${to}`)
+    expect(await $.tool.call({ tool: tool('kanban_list') })).toMatchObject({
+      result: expect.stringContaining(`#1 [${to}] Fix login`),
+    })
+    expect(toasts).toEqual([])
+    await ui.unmount()
+  })
+}
+
 test('Claude cannot move a card to Suspended or Cancelled, and the tool says it can not', async ($, on) => {
   const files = { [path(1, 'a')]: card(1, { status: 'claude' }) }
   boot(on, files)
