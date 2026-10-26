@@ -95,3 +95,9 @@ Decisions made while building v1, newest last. Each entry: what was decided, why
 89. **A default "go last" GitHub placement is best-effort**: if only the position call fails, the move stays confirmed (✓, slot freed, prompt/announcement sent) and the failure goes to the debug log. A place the person asked for (drop, reorder) still fails the move. (#31)
 90. **Header presses under a filter use a filter-only override** (`filterCollapsed`), cleared whenever the filter text changes; the stored collapsed flags only change without a filter. Quick add opening Backlog under such an override is folded into #29. (#31)
 91. **Released to `main` on 2026-10-26** after three independent Opus reviews (findings fixed in #16, #28, #31) and 776 passing tests. Not verified in a live pane by anyone: wheel over the Client, desktop row heights, real `gh` writes (mutations ran against fakes only), `$.ui.focus`, `turn.start` prompt matching. Open follow-ups: #27, #29, #30.
+
+## 2026-10-26 (hotfix)
+
+92. **Board config is read from `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md`, following `@path` imports one level deep** (project-relative only, each file once, capped). Projects like punn keep their config in `AGENTS.md` behind a `CLAUDE.md` that is just `@AGENTS.md`. (#32)
+93. **Project number accepts `projects/N` URLs, `Project[ board]: #N`, `project number N`, `project **N**`, `project N`, and `#N` near "project"/"board"**, tried in that order; the repo rule stays strict because moves write to that repo. (#32)
+94. **When `auto` sees board config it can't parse, it says so**: toolbar `Local (auto) · board config not understood`, plus hint rows on an empty board. Only a saved GitHub backend is reused from the cache, so a project that fell back to local once re-detects next session. (#32)
