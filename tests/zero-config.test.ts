@@ -279,7 +279,7 @@ test('gh not installed: auto goes local quietly, github says to install it', asy
   ])
   expect(lines(quiet.calls)).not.toContain('gh auth status')
   await expect(detectBackend(detect(routes).$, 'github')).rejects.toThrow(
-    'gh is not installed: install it from https://cli.github.com (gh: command not found)',
+    'gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (gh: command not found)',
   )
 })
 

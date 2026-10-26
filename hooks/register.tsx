@@ -10,6 +10,7 @@ import {
 } from './activity'
 import { readUi } from './atoms'
 import { backendMode } from './backend'
+import { describeBackend, guardBackend } from './backend-config'
 import {
   applyMode,
   bootstrap,
@@ -143,6 +144,14 @@ export const register: Register = (on, options) => {
 
     return { sections: withSuggestSection(composed.sections, e.traits) }
   }).catch(($, e, next) => next(e))
+
+  // The GitHub backend cannot be chosen in /config while gh is missing or signed out.
+  on('config.set', { key: 'kanban.backend' }, guardBackend).catch(
+    ($, e, next) => next(e),
+  )
+  on('config.describe', { key: 'kanban.backend' }, describeBackend).catch(
+    ($, e, next) => next(e),
+  )
 
   // A card file Claude wrote or edited shows on the board at once, unless the
   // edit would put a card in Human without a handoff; a guard that breaks lets
