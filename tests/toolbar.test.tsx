@@ -10,7 +10,7 @@ import { fakeProcess } from './fake-gh'
 import { HANDED_OFF, PANE, RUN, boot, card, path } from './fakes'
 import type { Files } from './fakes'
 import { KANBAN, github } from './github-board'
-import { SIGNED_OUT, remote } from './zero'
+import { GH_VERSION, SIGNED_OUT, remote } from './zero'
 
 // Row 1 of the toolbar is the status, row 2 the buttons. The engine draws a
 // plain Button that has a hotkey as `<hotkey>: <label>`, so these tests read the
@@ -318,6 +318,7 @@ test(
   async ($, on) => {
     const world = boot(on, { 'CLAUDE.md': KANBAN })
     fakeProcess(on, [
+      GH_VERSION,
       SIGNED_OUT,
       remote('git@github.com:TeeratP/claude-kanban.git'),
     ])

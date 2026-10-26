@@ -9,7 +9,7 @@ import type {
   KanbanGithub,
 } from '../types'
 import { readConfigText } from './config'
-import { NAMED, PLAIN, check, choicesOf, detectZero } from './detect'
+import { NAMED, PLAIN, check, checkGh, choicesOf, detectZero } from './detect'
 import type { Explain } from './detect'
 import {
   appendGithub,
@@ -154,6 +154,7 @@ async function checkGithub(
   found: ParsedClaudeMd,
   explain: Explainer,
 ): Promise<KanbanGithub> {
+  await checkGh($, explain)
   await check(
     () => runCommand($, ['gh', 'auth', 'status'], { timeoutMs: 10000 }),
     explain.auth,

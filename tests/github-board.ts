@@ -2,6 +2,7 @@ import type { On } from 'claude-code'
 
 import { boardReply, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
+import { GH_VERSION } from './zero'
 
 // A GitHub board: the project the repo's CLAUDE.md names, two issues on it, and
 // `gh` answering the commands that make a new one.
@@ -86,6 +87,7 @@ export function github(
     on,
     [
       ...overrides,
+      GH_VERSION,
       { match: ['gh', 'auth', 'status'], reply: {} },
       {
         match: ['git', 'remote', 'get-url', 'origin'],

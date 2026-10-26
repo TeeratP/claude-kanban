@@ -409,6 +409,7 @@ test('on GitHub Enter creates the issue with the triage label, puts it on the bo
   await clock.settle()
 
   expect(writes(calls)).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
     LABEL_LIST,
@@ -471,7 +472,7 @@ test('on GitHub a refused create snaps the card out with a toast, runs nothing m
   expect(toasts).toEqual([
     'Could not add the card: HTTP 403: Resource not accessible',
   ])
-  expect(writes(calls).slice(2)).toEqual([LABEL_LIST, ISSUE_CREATE])
+  expect(writes(calls).slice(3)).toEqual([LABEL_LIST, ISSUE_CREATE])
   expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:4'])
   expect(await marks(ui, '⟳')).toHaveLength(0)
   expect((await ui.find({ key: TITLE }))?.props.value).toBe(
@@ -497,7 +498,7 @@ test('on GitHub an issue made but not put on the board is named in the toast, an
   expect(toasts).toEqual([
     `Could not add the card: Created ${ISSUE_URL} but could not finish adding it: GraphQL: insufficient scopes`,
   ])
-  expect(writes(calls).slice(2)).toEqual([LABEL_LIST, ISSUE_CREATE, ITEM_ADD])
+  expect(writes(calls).slice(3)).toEqual([LABEL_LIST, ISSUE_CREATE, ITEM_ADD])
   expect(loads()).toBeGreaterThan(before)
   expect(
     (await under(ui, 'hdr:backlog')).some(key => key.startsWith('card:new:')),
@@ -534,6 +535,7 @@ test('kanban_create on a GitHub board makes a triage issue on the board in Backl
     result: `Created #30 [backlog] Fix the login loop in ${ISSUE_URL}.`,
   })
   expect(writes(calls)).toEqual([
+    ['gh', '--version'],
     ['gh', 'auth', 'status'],
     ['git', 'remote', 'get-url', 'origin'],
     LABEL_LIST,
@@ -583,7 +585,7 @@ test('kanban_create still refuses an empty title and a start in Human on a GitHu
 
   expect(await create($, { title: '  ' })).toHaveProperty('deny')
   expect(await create($, { column: 'human' })).toHaveProperty('deny')
-  expect(writes(calls).slice(2)).toEqual([])
+  expect(writes(calls).slice(3)).toEqual([])
 })
 
 const CLIENT_SURFACES = ['terminal', 'desktop'] as const
