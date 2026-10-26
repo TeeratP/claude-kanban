@@ -333,7 +333,7 @@ Register each with `isDeferred: false`. Results `{ result: string }` (d.ts:13566
 | `kanban_handoff` | `{card, did?, check, changed?, need}` req card,check,need | `backend.append(formatHandoff…)`, refresh detail |
 | `kanban_move` | `{card, to: enum}` (`human\|claude\|backlog\|done`; Suspended and Cancelled are the person's calls) | a card in Suspended or Cancelled is refused with `S.setAside(card)` (so is `kanban_ask`); `to==='human'` && !isHandoffValid → `{deny: S.needHandoff(n)}`. Else `moveCard` (no onConfirm). to human → toast + `$.ui.notify` (d.ts:2501). Result "Moved #N to X (syncing)." |
 | `kanban_create` | `{title, spec, column?}` | local: a card file; GitHub: `gh issue create --label triage`, `gh project item-add`, Status Backlog (then the usual move for any other column) |
-| `kanban_suggest` | `{title, spec, why?}` req title,spec | creates nothing: adds a suggestion to the `suggestions` atom (kept per cwd in `$.store`), toast once; shown in a strip under the toolbar with Add (quick-add path) and Dismiss (#24) |
+| `kanban_suggest` | `{title, spec, why?}` req title,spec | creates nothing: adds a suggestion to the `suggestions` atom (kept per cwd in `$.store`), toast once; shown in a strip under the toolbar with Add (quick-add path) and Dismiss (#24); a dismissed one is kept (`dismissed` atom, last 200, store `suggestions-2`) and a repeat is turned away with no toast, restorable from a `Show dismissed` toggle (#27) |
 
 ### `kanbanFileWatch` (tool.call on Write/Edit)
 - Phase 1: `const ran = await next(e); if (/(^|\/)\.kanban\/[^/]+\.md$/.test(e.file_path)) void refresh($); return ran`.

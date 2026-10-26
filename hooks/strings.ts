@@ -545,4 +545,11 @@ export const S = {
     [`Added #${number}`, ...notes].join(' · '),
   hiddenByFilter: 'hidden by the filter',
   groupFolded: (group: string) => `${group} is folded`,
+
+  // #27
+  dismissedShow: (n: number) => `Show dismissed (${n})`,
+  dismissedHide: (n: number) => `Hide dismissed (${n})`,
+  dismissedRestore: 'Restore',
+  suggestDismissed: (title: string) =>
+    `"${title}" was suggested before and the person dismissed it; nothing was added. Do not suggest it again.`,
 }

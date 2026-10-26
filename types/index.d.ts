@@ -117,6 +117,12 @@ export type KanbanSuggestion = {
   spec: string
   why?: string
 }
+export type KanbanDismissed = {
+  /** The suggestions the person dismissed, oldest first. */
+  items: KanbanSuggestion[]
+  /** Whether the strip lists them (this session only). */
+  isShown: boolean
+}
 export type KanbanSection = {
   kind: 'handoff' | 'feedback' | 'question' | 'answer' | 'check'
   date: string
@@ -194,6 +200,7 @@ declare module 'claude-code' {
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
       suggestions: Shaped<KanbanSuggestion[]>
+      dismissed: Shaped<KanbanDismissed>
     }
   }
 }

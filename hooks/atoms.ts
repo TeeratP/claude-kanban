@@ -6,6 +6,7 @@ import type {
   KanbanBoard,
   KanbanCheckRun,
   KanbanDetail,
+  KanbanDismissed,
   KanbanQueue,
   KanbanQuickAdd,
   KanbanSuggestion,
@@ -15,6 +16,7 @@ import type {
 import {
   EMPTY_ACTIVITY,
   EMPTY_BOARD,
+  EMPTY_DISMISSED,
   EMPTY_QUEUE,
   EMPTY_QUICK_ADD,
   INITIAL_UI,
@@ -73,6 +75,12 @@ const suggestions = atom(
   {
     shape: 'suggestions-1',
   },
+)
+// The suggestions the person dismissed, kept so Claude is not let repeat them.
+const dismissed = atom(
+  { plugin: 'kanban', key: 'dismissed' } as const,
+  EMPTY_DISMISSED,
+  { shape: 'dismissed-1' },
 )
 
 export function readBoard($: EngineInterface): Promise<KanbanBoard> {
@@ -215,4 +223,15 @@ export function updateSuggestions(
   change: (value: KanbanSuggestion[]) => KanbanSuggestion[],
 ): Promise<KanbanSuggestion[]> {
   return update($, suggestions, change)
+}
+
+export function readDismissed($: EngineInterface): Promise<KanbanDismissed> {
+  return read($, dismissed)
+}
+
+export function updateDismissed(
+  $: EngineInterface,
+  change: (value: KanbanDismissed) => KanbanDismissed,
+): Promise<KanbanDismissed> {
+  return update($, dismissed, change)
 }
