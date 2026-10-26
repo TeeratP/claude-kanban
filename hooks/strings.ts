@@ -4,6 +4,7 @@ import type {
   KanbanColumn,
   KanbanGroup,
   KanbanSection,
+  KanbanTag,
 } from '../types'
 import type { Copy } from './model'
 
