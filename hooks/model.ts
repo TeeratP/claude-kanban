@@ -29,7 +29,7 @@ export const SETTLE_MS = 600
 
 // The sections of each group, top to bottom.
 export const GROUPS: Record<KanbanGroup, readonly KanbanColumn[]> = {
-  active: ['backlog', 'human', 'claude'],
+  active: ['backlog', 'claude', 'human'],
   inactive: ['done', 'cancelled', 'suspended'],
 }
 export const GROUP_ORDER: readonly KanbanGroup[] = ['active', 'inactive']

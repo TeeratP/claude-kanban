@@ -57,7 +57,7 @@ Imports between plugin files are ES `import` declarations; a module containing `
 
 ```ts
 export type KanbanColumn = 'human' | 'claude' | 'backlog' | 'done' | 'suspended' | 'cancelled'
-export type KanbanGroup = 'active' | 'inactive'       // Active: Backlog, Human, Claude. Inactive: Done, Cancelled, Suspended
+export type KanbanGroup = 'active' | 'inactive'       // Active: Backlog, Claude, Human. Inactive: Done, Cancelled, Suspended
 export type KanbanTag = 'review' | 'human' | 'question'   // why a card is in Human; shown in the detail view and kanban_list, never on a row
 export type KanbanCard = {
   id: string            // 'md:0007-fix-login' | 'gh:123'
@@ -136,8 +136,8 @@ Bump a shape tag whenever its type changes. Rules:
 
 ## 3. Card model and column mapping
 
-- Two groups, one open at a time (`ui.openGroup`, initial `'active'`; pressing the open group folds both). Active: Backlog, Human, Claude, top to bottom. Inactive: Done, Cancelled, Suspended. `COLUMNS = ['backlog','human','claude','done','cancelled','suspended']`, which is also the order of the move keys `1`-`6` (`MOVE_KEY`: `b h c d x s`).
-- Sorting: Backlog, Human, Claude and Suspended by `order` ascending (`isOrdered`). Done and Cancelled by `updatedAt` descending, `.slice(0, NEWEST_LIMIT = 10)`; the header says `10 newest` once a section holds more. Suspended lists every card.
+- Two groups, one open at a time (`ui.openGroup`, initial `'active'`; pressing the open group folds both). Active: Backlog, Claude, Human, top to bottom (decision 145). Inactive: Done, Cancelled, Suspended. `COLUMNS = ['backlog','claude','human','done','cancelled','suspended']`, which is also the order of the move keys `1`-`6` (`MOVE_KEY`: `b c h d x s`).
+- Sorting: Backlog, Claude, Human and Suspended by `order` ascending (`isOrdered`). Done and Cancelled by `updatedAt` descending, `.slice(0, NEWEST_LIMIT = 10)`; the header says `10 newest` once a section holds more. Suspended lists every card.
 - Local status values: `human | claude | backlog | done | suspended | cancelled` (the file stores the column directly; `canceled` is read as `cancelled`).
 
 GitHub mapping, pure `columnOf(status, labels, isClosed, stateReason)`, checked in this order:
@@ -403,7 +403,7 @@ Blocks in this order, one `gap` apart:
 2. Head. The title line is `numberLabel(card)` dim (`#12`, `?12` on a question, `new` on a card still being made, the same as its board row) then the bold title, wrapping. The meta line, joined by dim dots: the section name in its colour (Human `permission`, Claude `claude`, Done, Cancelled and Suspended dim), the tag in words (`in review`, `labelled human`, `question`), `updated 5m ago`, the sync text (`⟳ syncing to Claude` / `✓ saved` / `✕ <error> (attempt 2/4)`), and for GitHub a `Link` to the issue. A card Claude has worked on adds `Agents: ● Claude ● Explore` and a two-column list of `Total` and one `Round N` per round (figures, cache reads, the round's agents); the label box is as wide as the widest label plus a space, never under 9 cells (8 under 40 columns), so `Round 10` keeps a space before its figures. Failed adds `<Button key="retry" variant="primary" label="Retry"/>`.
 3. Actions, Human only: `<Button key="approve" hotkey="a" variant="primary" label="Approve"/>`, `<Button key="sendback" hotkey="s" label="Send back"/>` (`Answer` on a question), `<Button key="park" hotkey="p" label="Park"/>`; then `<Input key="feedback" label="Feedback" placeholder={S.feedbackPlaceholder} rows={3} value={ui.draft} onInput={v => update($, uiAtom, u => ({...u, draft: v}))} onSubmit={v => sendBack($, id, v)}/>` (InputProps d.ts:5627) and the link `f: Write feedback` that focuses it. Where the surface has no field (mobile) Send back is left out and a dim line says so.
 4. The pinned section, Human only: the open question (`Claude asks · Oct 25`), else Claude's newest counted handoff when no feedback or answer came after it (`Claude's handoff · Oct 25`), as a short list of Did, Check, Changed and Need (any other text as Markdown). The Check (`renderCheck`) follows it directly.
-5. Moves. `Move to`: a `move:<col>` link for each Active section but the card's own (Backlog, Human, Claude). `Set aside` (`Aside` under 40 columns): `Done`, `Cancel`, `Suspend`, in the Inactive group's order, without the card's own (`S.setAsideTo`). Links wrap to the width. Where the board has no Client (vscode, mobile) a `Reorder` row of ↑/↓ links follows, for the sections that keep an order.
+5. Moves. `Move to`: a `move:<col>` link for each Active section but the card's own (Backlog, Claude, Human). `Set aside` (`Aside` under 40 columns): `Done`, `Cancel`, `Suspend`, in the Inactive group's order, without the card's own (`S.setAsideTo`). Links wrap to the width. Where the board has no Client (vscode, mobile) a `Reorder` row of ↑/↓ links follows, for the sections that keep an order.
 6. Tabs `tab:card` / `tab:diff` (diff only for GitHub cards with `prNumbers`; pressing loads diff into detailAtom).
 7. Body. Card tab: `<Markdown key="spec" text={body}/>` (d.ts:5879, `(no description)` when empty), then a `History` heading over every other section, oldest first, each with its name and date coloured by who wrote it (Claude or the person) and `from @login, not counted` on a comment by someone else; the pinned section is not repeated. With nothing pinned the Check comes last. Diff tab: `<Code source={diff} format="diff"/>`; loading `<Text dimColor>Loading…</Text>`.
 

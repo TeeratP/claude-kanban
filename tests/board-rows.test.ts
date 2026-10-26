@@ -225,8 +225,8 @@ test('a closed group carries the keys of its sections, and a section header the 
     { column: 'suspended', moveKeys: ['6', 's'] },
   ])
   expect(textOf(inactive?.carrySegs ?? [])).toContain('4/d 5/x 6/s')
-  expect(human?.moveKeys).toEqual(['2', 'h'])
-  expect(textOf(human?.carrySegs ?? [])).toMatch(/Human 1 ─+ 2\/h$/)
+  expect(human?.moveKeys).toEqual(['3', 'h'])
+  expect(textOf(human?.carrySegs ?? [])).toMatch(/Human 1 ─+ 3\/h$/)
   // The move keys follow the order of the columns.
   expect(COLUMNS.map((_, index) => String(index + 1))).toEqual([
     '1',
@@ -248,10 +248,10 @@ test('a closed group summarises its sections, whole then cut to initials, then t
     )
 
   expect(summary(44, 'inactive')).toMatch(
-    /^▸ Active +1 Backlog · 1 Human · 1 Claude$/,
+    /^▸ Active +1 Backlog · 1 Claude · 1 Human$/,
   )
-  expect(summary(30, 'inactive')).toMatch(/^▸ Active +1B 1H 1C$/)
-  expect(summary(24, 'inactive')).toMatch(/^▸ Active +(1B 1H 1C|3)$/)
+  expect(summary(30, 'inactive')).toMatch(/^▸ Active +1B 1C 1H$/)
+  expect(summary(24, 'inactive')).toMatch(/^▸ Active +(1B 1C 1H|3)$/)
 })
 
 test('a closed group with nothing in it says empty, and under a filter how many cards match', () => {

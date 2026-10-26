@@ -423,7 +423,7 @@ export const S = {
   setAsideTo: { done: 'Done', suspended: 'Suspend', cancelled: 'Cancel' },
   suspendedLabelDescription: 'on hold (kanban Suspended)',
   badSection: (to: unknown) =>
-    `"${String(to)}" is not a column; use backlog, human, claude, done, cancelled or suspended.`,
+    `"${String(to)}" is not a column; use backlog, claude, human, done, cancelled or suspended.`,
 
   // #39
   paneTitleCount: (waiting: number) => `Kanban · ${waiting}`,

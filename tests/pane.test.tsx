@@ -89,7 +89,7 @@ for (const surface of EVERY_SURFACE) {
     await group(ui, 'inactive')
     expect((await row(ui, 'grp:inactive'))?.text).toBe('▾ Inactive')
     expect((await row(ui, 'grp:active'))?.text).toMatch(
-      /^▸ Active\s+1 Backlog · 1 Human · 1 Claude$/,
+      /^▸ Active\s+1 Backlog · 1 Claude · 1 Human$/,
     )
     expect((await row(ui, 'card:md:0004-old'))?.text).toContain('#4 Old thing')
     expect(await row(ui, 'card:md:0003-docs')).toBeUndefined()
@@ -119,10 +119,7 @@ for (const surface of EVERY_SURFACE) {
     await ui.press({ key: 'back' })
     const keys = await rowKeys(ui)
     expect(
-      keys.slice(
-        keys.indexOf('card:md:0002-api'),
-        keys.indexOf('grp:inactive'),
-      ),
+      keys.slice(keys.indexOf('card:md:0002-api'), keys.indexOf('hdr:human')),
     ).toEqual(['card:md:0002-api', 'card:md:0003-docs'])
     await ui.unmount()
   })
@@ -154,7 +151,7 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  // The rows from a header to the next (Claude is the last section of Active).
+  // The rows from a header to the next (Human follows Claude).
   const under = async (header: string, next: string) => {
     const keys = await rowKeys(ui)
 
@@ -173,14 +170,14 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
   await clock.advance(300)
 
   expect(moved).toMatchObject({ result: 'Moved #3 to Claude (syncing).' })
-  expect(await under('hdr:claude', 'grp:inactive')).toEqual([
+  expect(await under('hdr:claude', 'hdr:human')).toEqual([
     'card:md:0002-api',
     'card:md:0003-docs',
   ])
   expect((await row(ui, 'card:md:0003-docs'))?.text).toContain('⟳')
 
   await ui.press({ key: 'refresh' })
-  expect(await under('hdr:claude', 'grp:inactive')).toEqual([
+  expect(await under('hdr:claude', 'hdr:human')).toEqual([
     'card:md:0002-api',
     'card:md:0003-docs',
   ])
@@ -188,7 +185,7 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
   release()
   await clock.settle()
   expect((await row(ui, 'card:md:0003-docs'))?.text).toContain('✓')
-  expect(await under('hdr:claude', 'grp:inactive')).toEqual([
+  expect(await under('hdr:claude', 'hdr:human')).toEqual([
     'card:md:0002-api',
     'card:md:0003-docs',
   ])
@@ -227,7 +224,7 @@ test('a refused move waits for a retry and, out of retries, goes back with the r
   await ui.press({ key: 'back' })
   const keys = await rowKeys(ui)
   expect(
-    keys.slice(keys.indexOf('hdr:backlog'), keys.indexOf('hdr:human')),
+    keys.slice(keys.indexOf('hdr:backlog'), keys.indexOf('hdr:claude')),
   ).toEqual(['hdr:backlog', 'card:md:0003-docs'])
   await ui.unmount()
 })
