@@ -35,6 +35,11 @@ export function showQuickAddDetails($: EngineInterface) {
   return updateQuickAdd($, form => ({ ...form, hasDetails: true }))
 }
 
+/** Hides the details field. What was typed in it stays, but is not added until it is shown again. */
+export function hideQuickAddDetails($: EngineInterface) {
+  return updateQuickAdd($, form => ({ ...form, hasDetails: false }))
+}
+
 /** Keeps what has been typed, so a redraw does not lose it. */
 export function typeInQuickAdd(
   $: EngineInterface,
@@ -62,7 +67,8 @@ export async function submitQuickAdd(
     const typed = { title: form.title, spec: form.spec, [field]: value }
     seen.isOpen = form.isOpen
     seen.title = oneLine(typed.title)
-    seen.spec = typed.spec.trim()
+    // Details that are hidden are not part of the card.
+    seen.spec = form.hasDetails ? typed.spec.trim() : ''
 
     return form.isOpen && seen.title !== '' ? EMPTY_QUICK_ADD : form
   })

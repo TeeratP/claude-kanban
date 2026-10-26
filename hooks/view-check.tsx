@@ -13,8 +13,13 @@ import {
   startCheck,
   summary,
 } from './check'
-import { ageLabel } from './model'
+import { ageLabel, cellWidth, truncate } from './model'
 import { S } from './strings'
+
+// The result and the Buttons sit under the heading, set in this far.
+const INDENT = 2
+// The `[ ` and ` ]` a Button is drawn with on the terminal.
+const CHROME = 4
 
 /**
  * The Check block of a card's detail: a Run button per command in the newest handoff's
@@ -36,56 +41,63 @@ export async function renderCheck(
   const run = (await readCheck($))[card.id]
   const isLostRun = run !== undefined && isLost(run, now)
   const isRunning = run?.outcome === 'running' && !isLostRun
+  // A button is one row: the command on it is cut to the width, and shown whole above it.
+  const room = e.props.bodyColumns - INDENT - CHROME - cellWidth(S.runCheck(''))
+  const named = (command: string) => truncate(summary(command), room)
 
   return (
     <Box key="check" flexDirection="column">
       <Text weight="bold">{S.checkHeading}</Text>
-      {isRunning ? (
-        <Text color="warning">
-          {S.checkRunning(
-            summary(run.command),
-            durationLabel(now - run.startedAt),
-          )}
-        </Text>
-      ) : (
-        commands.map((command, index) => (
-          <Box key={`check:cmd:${index}`} flexDirection="column">
-            {summary(command) !== command && (
-              <Code source={command} language="sh" />
+      <Box flexDirection="column" paddingLeft={INDENT}>
+        {isRunning ? (
+          <Text color="warning">
+            {S.checkRunning(
+              summary(run.command),
+              durationLabel(now - run.startedAt),
             )}
-            <Button
-              key={`check:run:${index}`}
-              label={S.runCheck(summary(command))}
-              onPress={() => startCheck($, card, command)}
-            />
-          </Box>
-        ))
-      )}
-      {run !== undefined && run.outcome !== 'running' && (
-        <Box flexDirection="column">
-          <Text color={run.outcome === 'passed' ? 'success' : 'error'}>
-            {`${resultLine(run)} · ${S.checkRan(ageLabel(run.startedAt, now))}`}
           </Text>
-          {run.omitted > 0 && (
-            <Text dimColor>{S.checkEarlier(run.omitted)}</Text>
-          )}
-          {run.output !== '' && <Code key="check:output" source={run.output} />}
-          {run.isCut && <Text dimColor>{S.checkCapped}</Text>}
-          {run.record === 'saving' && <Text dimColor>{S.checkSaving}</Text>}
-          {run.record === 'saved' && <Text dimColor>{S.checkSaved}</Text>}
-          {run.record === 'failed' && (
-            <Text color="error">{S.checkSaveFailed(run.error)}</Text>
-          )}
-          {canAttach(run) && (
-            <Button
-              key="check:attach"
-              label={S.attachToCard}
-              onPress={() => attachRun($, card)}
-            />
-          )}
-        </Box>
-      )}
-      {isLostRun && <Text color="error">{S.checkLost}</Text>}
+        ) : (
+          commands.map((command, index) => (
+            <Box key={`check:cmd:${index}`} flexDirection="column">
+              {named(command) !== command && (
+                <Code source={command} language="sh" />
+              )}
+              <Button
+                key={`check:run:${index}`}
+                label={S.runCheck(named(command))}
+                onPress={() => startCheck($, card, command)}
+              />
+            </Box>
+          ))
+        )}
+        {run !== undefined && run.outcome !== 'running' && (
+          <Box flexDirection="column">
+            <Text color={run.outcome === 'passed' ? 'success' : 'error'}>
+              {`${resultLine(run)} · ${S.checkRan(ageLabel(run.startedAt, now))}`}
+            </Text>
+            {run.omitted > 0 && (
+              <Text dimColor>{S.checkEarlier(run.omitted)}</Text>
+            )}
+            {run.output !== '' && (
+              <Code key="check:output" source={run.output} />
+            )}
+            {run.isCut && <Text dimColor>{S.checkCapped}</Text>}
+            {run.record === 'saving' && <Text dimColor>{S.checkSaving}</Text>}
+            {run.record === 'saved' && <Text dimColor>{S.checkSaved}</Text>}
+            {run.record === 'failed' && (
+              <Text color="error">{S.checkSaveFailed(run.error)}</Text>
+            )}
+            {canAttach(run) && (
+              <Button
+                key="check:attach"
+                label={S.attachToCard}
+                onPress={() => attachRun($, card)}
+              />
+            )}
+          </Box>
+        )}
+        {isLostRun && <Text color="error">{S.checkLost}</Text>}
+      </Box>
     </Box>
   )
 }

@@ -269,7 +269,7 @@ test('kanban_handoff shows in a detail view that is open on the card', async ($,
   await clock.settle()
 
   expect((await ui.find({ key: 'section:0' }))?.text).toContain(
-    'Handoff (2026-10-25)',
+    'Handoff · Oct 25',
   )
   await ui.unmount()
 })

@@ -429,4 +429,64 @@ export const S = {
 
   // #34
   filterQuery: (query: string) => `Find "${query}"`,
+
+  // #38
+  dot: ' · ',
+  // The nav's Prev and Next, whole to bare: the arrows go first, then the place, then the words.
+  navPrev: ['‹ Prev', 'Prev', 'Prev', '‹'],
+  navNext: ['Next ›', 'Next', 'Next', '›'],
+  position: (at: number, total: number) => `${at}/${total}`,
+  tagWords: {
+    review: 'in review',
+    human: 'labelled human',
+    question: 'question',
+  } satisfies Record<KanbanTag, string>,
+  detailUpdated: (age: string) =>
+    age === 'now' ? 'updated just now' : `updated ${age} ago`,
+  githubLink: 'GitHub',
+  shortDate: (iso: string) => {
+    const [, month, day] = /^\d{4}-(\d{2})-(\d{2})$/.exec(iso) ?? []
+    const name = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ][Number(month) - 1]
+
+    return name === undefined ? iso : `${name} ${Number(day)}`
+  },
+  pinnedHandoff: { who: "Claude's", rest: ' handoff' },
+  pinnedAsk: { who: 'Claude', rest: ' asks' },
+  sectionName: SECTION_NAME,
+  notCounted: (login: string) => ` from @${login}, not counted`,
+  historyHeading: 'History',
+  handoffField: {
+    did: 'Did',
+    check: 'Check',
+    changed: 'Changed',
+    need: 'Need',
+  },
+  moveRowLabel: 'Move to',
+  reorderRowLabel: 'Reorder',
+  // Quick add's hint and details button, the longest that fits first.
+  addRowClosed: [
+    { hint: '⏎ adds to Backlog', details: 'Add details' },
+    { hint: '⏎ add', details: 'Details' },
+    { hint: '⏎', details: 'Details' },
+  ],
+  addRowOpen: [
+    { hint: '⏎ adds to Backlog', details: 'Hide details' },
+    { hint: '⏎ adds', details: 'Hide details' },
+    { hint: '⏎ add', details: 'Hide' },
+    { hint: '⏎', details: 'Hide' },
+  ],
+  filterTerms: 'words, #12, label:ai, @done',
 }

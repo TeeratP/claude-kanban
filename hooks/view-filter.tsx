@@ -57,7 +57,7 @@ export async function renderFilter($: EngineInterface, e: RenderInput<'Pane'>) {
       key="filter:text"
       autoFocus
       label={S.filterLabel}
-      placeholder={S.filterPlaceholder}
+      placeholder={S.filterTerms}
       submitLabel={S.filterSubmit}
       value={ui.filter}
       onInput={value => typeInFilter($, value)}

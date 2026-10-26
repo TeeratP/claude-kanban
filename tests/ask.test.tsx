@@ -480,10 +480,10 @@ for (const surface of SURFACES) {
     await click(ui, 'card:md:0001-login')
     expect(await ui.find({ key: 'question' })).toBeUndefined()
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
-      'Question (2026-10-25)',
+      'Question · Oct 25',
     )
     expect((await ui.find({ key: 'section:1' }))?.text).toContain(
-      'Answer (2026-10-25)',
+      'Answer · Oct 25',
     )
     expect((await ui.find({ key: 'section:1' }))?.text).toContain(
       'Use the staging one',
