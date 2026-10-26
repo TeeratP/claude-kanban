@@ -49,15 +49,16 @@ export const path = (id: number, slug = 'card') =>
   `.kanban/${String(id).padStart(4, '0')}-${slug}.md`
 
 // The engine resolves a relative path against the session's directory before
-// `fs.*` is raised, so the fake maps it back to the path the plugin spelled.
-const relative = (file: string) => {
-  const config = /(\.claude\/)?CLAUDE\.md$/.exec(file)
+// `fs.*` is raised, so the fake maps it back to the path the plugin spelled:
+// the longest listed path it ends with.
+const relative = (file: string, files: Files) => {
+  if (file.includes('.kanban')) return file.slice(file.indexOf('.kanban'))
 
-  return config !== null
-    ? config[0]
-    : file.includes('.kanban')
-      ? file.slice(file.indexOf('.kanban'))
-      : file
+  const spelled = Object.keys(files)
+    .filter(one => file === one || file.endsWith(`/${one}`))
+    .sort((a, b) => b.length - a.length)[0]
+
+  return spelled ?? file
 }
 
 /** Answers `fs.*` from a map of path to text; a write bumps the file's mtime. */
@@ -67,6 +68,9 @@ export function fakeFs(on: On, files: Files) {
   for (const file of Object.keys(files)) touch(file)
   const calls = {
     lists: 0,
+    // The paths asked about and read, as the engine raised them.
+    exists: [] as string[],
+    reads: [] as string[],
     writes: [] as string[],
     denyWrite: undefined as string | undefined,
     denyRead: undefined as string | undefined,
@@ -92,12 +96,13 @@ export function fakeFs(on: On, files: Files) {
     )
 
   on('fs.exists', (_, e) => {
-    const file = relative(e.path)
+    calls.exists.push(e.path)
+    const file = relative(e.path, files)
 
     return { value: file in files || under(file).length > 0 }
   })
   on('fs.list', async (_, e) => {
-    const dir = relative(e.path)
+    const dir = relative(e.path, files)
     calls.lists += 1
     await calls.holdList
 
@@ -112,9 +117,10 @@ export function fakeFs(on: On, files: Files) {
     }
   })
   on('fs.read', async (_, e) => {
+    calls.reads.push(e.path)
     if (calls.denyRead !== undefined) return { deny: calls.denyRead }
 
-    const text = files[relative(e.path)]
+    const text = files[relative(e.path, files)]
     const late = calls.lateRead
     calls.lateRead = undefined
     await late
@@ -130,7 +136,7 @@ export function fakeFs(on: On, files: Files) {
     )
       return { deny: 'EIO: disk error' }
 
-    const file = relative(e.path)
+    const file = relative(e.path, files)
     files[file] = e.text
     touch(file)
     calls.writes.push(file)

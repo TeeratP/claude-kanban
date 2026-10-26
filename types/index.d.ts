@@ -33,7 +33,9 @@ export type KanbanGithub = {
     done: string
   }
 }
-export type KanbanBackendInfo = { kind: 'local' } | KanbanGithub
+// `isConfigUnclear`: under `auto`, a CLAUDE.md or AGENTS.md mentions a board that could not be read.
+export type KanbanBackendInfo =
+  { kind: 'local'; isConfigUnclear?: true } | KanbanGithub
 export type KanbanBackendMode = 'auto' | 'github' | 'local'
 export type KanbanBoard = {
   mode: KanbanBackendMode

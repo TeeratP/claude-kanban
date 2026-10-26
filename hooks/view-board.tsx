@@ -249,6 +249,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     ui,
     bodyRows: scroll.bodyRows,
     details: detailIds(board.cards, activity, queued.held),
+    hint: board.mode === 'auto' && board.backend?.kind === 'local',
   })
   const detailOf = (card: KanbanCard) => {
     const one = activity.cards[card.id]
@@ -259,7 +260,13 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const draw = (row: Row) => {
     switch (row.kind) {
       case 'toolbar': {
-        const label = S.backendLabel(board.mode, board.backend?.kind)
+        const backendName = S.backendLabel(board.mode, board.backend?.kind)
+        const isUnclear =
+          board.backend?.kind === 'local' &&
+          board.backend.isConfigUnclear === true
+        const label = isUnclear
+          ? `${backendName} · ${S.configUnclear}`
+          : backendName
         const status =
           board.error ??
           (board.isLoading
@@ -286,13 +293,15 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           ` ${parts.filter(part => part !== '').join(' · ')}`
         // The key hint shows whole or not at all: a cut hint is noise.
         const withHint = join([label, status, S.keyHint])
-        // A status that fits only without the backend's name is shown whole, not cut.
+        // A status that fits only without the backend's name is shown whole, not cut;
+        // the note that the board config was not understood is never dropped for it.
         const whole = join([label, status])
         const bare = join([status])
         const text =
           hasClient && board.error === undefined && cellWidth(withHint) <= room
             ? withHint
             : cellWidth(whole) > room &&
+                !isUnclear &&
                 status !== '' &&
                 cellWidth(bare) <= room
               ? bare
@@ -439,6 +448,13 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         return (
           <Text dimColor wrap="truncate-end">
             {truncate(S.noCards, columns)}
+          </Text>
+        )
+
+      case 'hint':
+        return (
+          <Text dimColor wrap="truncate-end">
+            {truncate(S.githubHint[row.line] ?? '', columns)}
           </Text>
         )
     }

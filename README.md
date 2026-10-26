@@ -108,17 +108,17 @@ The `backend` setting picks which. You choose it on the settings screen at insta
 
 | `backend` | Behaviour |
 |---|---|
-| `auto` (default) | GitHub when [CLAUDE.md names a repo and a project board](#how-github-is-detected), `gh` is signed in and the repo has a git remote; otherwise local. |
-| `github` | GitHub only. If a check fails there is no silent fallback: the toolbar shows the failing check and how to fix it (for example `gh auth login`, or add the board IDs to CLAUDE.md). |
+| `auto` (default) | GitHub when [CLAUDE.md or AGENTS.md names a repo and a project board](#how-github-is-detected), `gh` is signed in and the repo has a git remote; otherwise local. |
+| `github` | GitHub only. If a check fails there is no silent fallback: the toolbar shows the failing check and how to fix it (for example `gh auth login`, or add the board IDs to CLAUDE.md or AGENTS.md). |
 | `local` | Always `.kanban/*.md`, even when GitHub is available. |
 
-The toolbar names the active backend and, when `auto` chose it, says so: `GitHub (auto)`, `Local (auto)`, or just `GitHub` / `Local` when you set it.
+The toolbar names the active backend and, when `auto` chose it, says so: `GitHub (auto)`, `Local (auto)`, or just `GitHub` / `Local` when you set it. When `auto` fell back to local because a CLAUDE.md or AGENTS.md mentions a project board that could not be read, it says `Local (auto) · board config not understood`; an empty local board under `auto` also says how to point the mod at GitHub. Setting `backend` to `github` shows the exact check that fails.
 
 **Switching backends does not migrate cards.** Cards created on GitHub stay on GitHub and `.kanban/` files stay on disk; the board shows only the active backend's cards. When the backend changes, the board and the saved copy of it from the old setting are set aside, so cards from the old one never show.
 
 ### How GitHub is detected
 
-The board reads `CLAUDE.md` in the working directory (falling back to `.claude/CLAUDE.md`) and looks for the repo and the Projects board. This repo's own `CLAUDE.md` is an example:
+The board reads `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md` in the working directory, plus the files they import with Claude Code's `@path` syntax (so a `CLAUDE.md` that is only `@AGENTS.md` works). Imports are followed one level deep, each file is read once, and only project-relative paths count: an import of an absolute path, a home path or a file outside the project is ignored. The texts are joined (at most 1,000,000 characters) and read as one. This repo's own `CLAUDE.md` is an example:
 
 ```markdown
 - Repo: `TeeratP/claude-kanban` (public).
@@ -129,14 +129,14 @@ The board reads `CLAUDE.md` in the working directory (falling back to `.claude/C
 | Read from the line | As |
 |---|---|
 | A line containing `repo` with a backticked `owner/name` | The repo. The board's owner is the repo's owner. |
-| `Project board: #7` (or `Project: #7`, bold allowed) | The project number. |
+| `Project board: #7` (or `Project: #7`, bold allowed), `project number 2` or `project 2` (the number may be in backticks or bold), a `github.com/users/<owner>/projects/2` (or `orgs`) URL, or a `#N` right after the word project or board (case does not matter; when several appear, a URL wins, then `Project board: #N`, then the others) | The project number. |
 | The first `PVT_…` ID | The project ID. |
-| A `PVTSSF_…` ID on a line mentioning `Status field` | The Status field ID. |
-| `Backlog` / `Ready` / `In progress` / `In review` / `Done`, each followed by a backticked ID, on the status line or the two after it | The Status option IDs. |
+| A `PVTSSF_…` ID on a line mentioning `Status field` (backticks around `Status` are fine) | The Status field ID. |
+| `Backlog` / `Ready` / `In progress` / `In review` / `Done`, each followed by a backticked ID (a label like `Ready (To Do) option` is fine), on the status line or the two after it | The Status option IDs. |
 
-The repo and the project number are required; without both, `auto` uses local. Missing IDs are looked up with `gh project field-list` and `gh project view`, so the minimal CLAUDE.md is just those two lines. The matching is tolerant of wording and formatting, not of missing pieces.
+The repo and the project number are required; without both, `auto` uses local. Missing IDs are looked up with `gh project field-list` and `gh project view`, so the minimal CLAUDE.md is just those two lines. The matching is tolerant of wording and formatting, not of missing pieces; the repo line stays strict (a backticked `owner/name` after a `Repo:` label), because a move writes to that repo.
 
-Besides CLAUDE.md, `auto` needs `gh auth status` to succeed and `git remote get-url origin` to succeed. Any failure means local.
+Besides the config, `auto` needs `gh auth status` to succeed and `git remote get-url origin` to succeed. Any failure means local.
 
 ### GitHub mapping
 

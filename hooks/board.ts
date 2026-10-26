@@ -253,7 +253,10 @@ async function showCached($: EngineInterface) {
       board.mode === cached.mode
         ? {
             ...board,
-            backend: board.backend ?? cached.backend,
+            // A saved local backend is not kept: the config may name a board by now.
+            backend:
+              board.backend ??
+              (cached.backend.kind === 'github' ? cached.backend : null),
             cards: cached.cards,
             isLoading: true,
           }
