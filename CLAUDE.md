@@ -8,7 +8,7 @@ Design and API notes: `docs/plan.md` (authoritative spec; cites line numbers in 
 - Repo: `TeeratP/claude-kanban` (public).
 - Project board: #7 "claude-kanban" (owner `TeeratP`, project ID `PVT_kwHOAcCsLc4BorgL`).
 - Status field `PVTSSF_lAHOAcCsLc4BorgLzhnKcpg` options: Backlog `1a1cd0bb` · Ready `61b99878` · In progress `b15c285e` · In review `5f34c9ff` · Done `201b4a64`.
-- Issue prefix: `KANB` (e.g. `[KANB-UIX] ...`).
+- Issue titles: plain task name, no prefix.
 
 ## Layout
 - `.claude-plugin/plugin.json`, `hooks/hooks.json`, `hooks/*.ts(x)`, `types/index.d.ts`, `tests/`.
