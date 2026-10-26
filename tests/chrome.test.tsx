@@ -72,6 +72,42 @@ test('the ticker ends with the pane and does not start again by itself', async (
   await ui.unmount()
 })
 
+test('a tick that was asking for the panes when the pane opened again does not end the new ticker', async ($, on) => {
+  // Card 1 turns an hour old 45 s after the board opens, between the two ticks.
+  const files = {
+    ...cards(),
+    [path(1, 'login')]: card(1, {
+      status: 'human',
+      title: 'Fix login',
+      updated: new Date(NOW - 59 * 60_000 - 15_000).toISOString(),
+    }),
+  }
+  const { clock, world } = boot(on, files)
+  await open($)
+  await clock.settle()
+  world.panes = ['kanban']
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  let release = () => {}
+  world.holdPanes = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  // The tick asks while the pane is shut; the pane opens, restarting the ticker,
+  // before the answer comes.
+  world.panes = []
+  await clock.advance(AGE)
+  world.panes = ['kanban']
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  release()
+  await clock.settle()
+  expect((await row(ui, LOGIN))?.text).toContain('59m')
+
+  await clock.advance(AGE)
+  expect((await row(ui, LOGIN))?.text).toContain('1h')
+  await ui.unmount()
+})
+
 test('a pane left open across a reload keeps redrawing its ages', async ($, on) => {
   const { clock, world } = boot(on, cards())
   world.panes = ['kanban']
@@ -156,4 +192,23 @@ test('the title is left alone while the pane is closed or waits undrawn', async 
   await $.tool.call({ ...MOVE, card: 4, to: 'done' })
   await clock.settle()
   expect(titles(world.opens)).toEqual(['Kanban · 2'])
+})
+
+test('a pane that closes while the retitle waits for the panes is not opened again', async ($, on) => {
+  const { clock, world } = boot(on, cards())
+  world.panes = ['kanban']
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  let release = () => {}
+  world.holdPanes = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  // The retitle for Human 2 is told the pane is open; the pane closes before it opens.
+  await $.tool.call({ ...MOVE, card: 3, to: 'human' })
+  world.panes = []
+  release()
+  await clock.settle()
+
+  expect(titles(world.opens)).toEqual(['Kanban · 1'])
 })

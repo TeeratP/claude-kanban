@@ -445,6 +445,34 @@ test('withStatusOptions adds the options found, and is the same object when noth
   ).toEqual({ ...CFG.options, cancelled: 'x-canc' })
 })
 
+test('withStatusOptions also keeps the names the board spells the options with', () => {
+  const options = [
+    { id: 'x-susp', name: 'On hold' },
+    { id: 'x-canc', name: "Won't do" },
+  ]
+  const added = withStatusOptions(CFG, options)
+
+  expect(added.optionNames).toEqual({
+    cancelled: "Won't do",
+    suspended: 'On hold',
+  })
+  expect(withStatusOptions(added, options)).toBe(added)
+  // The same option renamed on the board is noticed.
+  expect(
+    withStatusOptions(added, [
+      { id: 'x-susp', name: 'On hold' },
+      { id: 'x-canc', name: 'Dropped' },
+    ]).optionNames,
+  ).toEqual({ cancelled: 'Dropped', suspended: 'On hold' })
+  // An option taken off the board takes its name too.
+  expect(
+    withStatusOptions(added, [{ id: 'x-canc', name: "Won't do" }]).optionNames,
+  ).toEqual({ cancelled: "Won't do" })
+  expect(
+    withStatusOptions(added, [{ id: 'a', name: 'Backlog' }]).optionNames,
+  ).toBeUndefined()
+})
+
 function ghCard(fields: Partial<KanbanCard> = {}): KanbanCard {
   return {
     id: 'gh:12',
@@ -1141,6 +1169,78 @@ test('a close that did not take is an error, not a quiet success', async () => {
   )
 })
 
+// What an older `gh` prints for a JSON field it does not know.
+const NO_STATE_REASON = {
+  exitCode: 1,
+  stderr:
+    'Unknown JSON field: "stateReason"\nAvailable fields:\n  state\n  title\n',
+}
+const VERIFY_STATE = [...VERIFY.slice(0, -3), 'state', '--jq', '.state']
+
+test('a gh that does not know stateReason is read back by the state alone, and a closed issue is taken as closed', async () => {
+  for (const [config, to] of [
+    [CFG, 'done'],
+    [CFG_FULL, 'cancelled'],
+  ] as const) {
+    const { $, calls } = fakeEngine([
+      { match: ['gh', 'project', 'item-edit'], reply: {} },
+      { match: ['gh', 'issue', 'close'], reply: {} },
+      {
+        match: ['gh', 'issue', 'view'],
+        reply: argv =>
+          argv.includes('state,stateReason')
+            ? NO_STATE_REASON
+            : { stdout: 'CLOSED\n' },
+      },
+    ])
+
+    const patch = await moveGithub($, config, ghCard(), to)
+
+    expect(calls.map(call => call.argv.slice(0, 3).join(' '))).toEqual([
+      'gh project item-edit',
+      'gh issue close',
+      'gh issue view',
+      'gh issue view',
+    ])
+    expect(calls[3]?.argv).toEqual(VERIFY_STATE)
+    expect(patch).toMatchObject({ isClosed: true })
+  }
+})
+
+test('a gh that does not know stateReason still fails a close that did not take', async () => {
+  const { $ } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: argv =>
+        argv.includes('state,stateReason')
+          ? NO_STATE_REASON
+          : { stdout: 'OPEN\n' },
+    },
+  ])
+
+  await expect(moveGithub($, CFG, ghCard(), 'done')).rejects.toThrow(
+    '#12 is not closed as expected after gh issue close.',
+  )
+})
+
+test('a read-back that fails for another reason is still an error', async () => {
+  const { $, calls } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { exitCode: 1, stderr: 'HTTP 502: Bad Gateway\n' },
+    },
+  ])
+
+  await expect(moveGithub($, CFG, ghCard(), 'done')).rejects.toThrow(
+    'HTTP 502: Bad Gateway',
+  )
+  expect(calls).toHaveLength(3)
+})
+
 test('moving to Done accepts a close the old API reports with no reason, and refuses one closed as not planned', async () => {
   const closed = (readBack: string) =>
     fakeEngine([
@@ -1234,6 +1334,28 @@ test('moving to Suspended on a board with the option sets it and reports the car
 
   expect(calls.map(call => call.argv)).toEqual([itemEdit('o-suspended')])
   expect(patch).toEqual({ status: 'Suspended', isClosed: false })
+})
+
+test("moving to Cancelled or Suspended reports the board's own name for the option", async () => {
+  const named: KanbanGithub = {
+    ...CFG_FULL,
+    optionNames: { cancelled: "Won't do", suspended: 'On hold' },
+  }
+  const { $ } = fakeEngine([
+    { match: ['gh', 'project', 'item-edit'], reply: {} },
+    { match: ['gh', 'issue', 'close'], reply: {} },
+    {
+      match: ['gh', 'issue', 'view'],
+      reply: { stdout: 'CLOSED NOT_PLANNED\n' },
+    },
+  ])
+
+  expect(await moveGithub($, named, ghCard(), 'cancelled')).toMatchObject({
+    status: "Won't do",
+  })
+  expect(
+    await moveGithub($, named, ghCard({ status: 'In progress' }), 'suspended'),
+  ).toMatchObject({ status: 'On hold' })
 })
 
 test('moving to Suspended with no such option makes the suspended label once, labels the issue and rests it in Backlog', async () => {

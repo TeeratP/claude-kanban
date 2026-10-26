@@ -167,13 +167,18 @@ const nameOf = (status: string | undefined) =>
 /** A Status option the board has, by id and name. */
 export type StatusOption = { id: string; name: string }
 
+const cancelledOf = (options: readonly StatusOption[]) =>
+  options.find(one => CANCELLED_NAME.test(nameOf(one.name)))
+const suspendedOf = (options: readonly StatusOption[]) =>
+  options.find(one => SUSPENDED_NAME.test(nameOf(one.name)))
+
 /** Cancelled and Suspended among a board's Status options, found by name; the first of each. */
 export function extraOptions(options: readonly StatusOption[]): {
   cancelled?: string
   suspended?: string
 } {
-  const cancelled = options.find(one => CANCELLED_NAME.test(nameOf(one.name)))
-  const suspended = options.find(one => SUSPENDED_NAME.test(nameOf(one.name)))
+  const cancelled = cancelledOf(options)
+  const suspended = suspendedOf(options)
 
   return {
     ...(cancelled === undefined ? {} : { cancelled: cancelled.id }),
@@ -181,10 +186,24 @@ export function extraOptions(options: readonly StatusOption[]): {
   }
 }
 
+// The names `extraOptions`' options go by on the board, as the board spells them.
+function extraNames(options: readonly StatusOption[]): {
+  cancelled?: string
+  suspended?: string
+} {
+  const cancelled = cancelledOf(options)
+  const suspended = suspendedOf(options)
+
+  return {
+    ...(cancelled === undefined ? {} : { cancelled: cancelled.name }),
+    ...(suspended === undefined ? {} : { suspended: suspended.name }),
+  }
+}
+
 /**
- * The board's info with its Cancelled and Suspended options as `options` lists
- * them; the same object when nothing changed, and when `options` is empty (a
- * load that did not report them says nothing).
+ * The board's info with its Cancelled and Suspended options, and the names they
+ * go by, as `options` lists them; the same object when nothing changed, and when
+ * `options` is empty (a load that did not report them says nothing).
  */
 export function withStatusOptions(
   info: KanbanGithub,
@@ -193,15 +212,23 @@ export function withStatusOptions(
   if (options.length === 0) return info
 
   const { cancelled: _cancelled, suspended: _suspended, ...rest } = info.options
+  const { optionNames: known, ...bare } = info
   const found = extraOptions(options)
+  const names = extraNames(options)
   if (
     found.cancelled === info.options.cancelled &&
-    found.suspended === info.options.suspended
+    found.suspended === info.options.suspended &&
+    names.cancelled === known?.cancelled &&
+    names.suspended === known?.suspended
   ) {
     return info
   }
 
-  return { ...info, options: { ...rest, ...found } }
+  return {
+    ...bare,
+    options: { ...rest, ...found },
+    ...(Object.keys(names).length === 0 ? {} : { optionNames: names }),
+  }
 }
 
 // Closed as not planned (or as a duplicate): the way GitHub says cancelled.
@@ -256,8 +283,9 @@ const isInProgress = (card: KanbanCard) =>
   KEY_OF_NAME[(card.status ?? '').trim().toLowerCase()] === 'inProgress'
 
 // Read back after `gh issue close`, which can fail without an error: the state
-// and the reason the issue was closed for, as `CLOSED NOT_PLANNED`.
-const verifyClosed = (issue: string, repo: string) => [
+// and the reason the issue was closed for, as `CLOSED NOT_PLANNED`. An older gh
+// does not know the reason and can be asked for the state alone, as `CLOSED`.
+const verifyClosed = (issue: string, repo: string, isReasonKnown = true) => [
   'gh',
   'issue',
   'view',
@@ -265,9 +293,9 @@ const verifyClosed = (issue: string, repo: string) => [
   '--repo',
   repo,
   '--json',
-  'state,stateReason',
+  isReasonKnown ? 'state,stateReason' : 'state',
   '--jq',
-  '.state + " " + (.stateReason // "")',
+  isReasonKnown ? '.state + " " + (.stateReason // "")' : '.state',
 ]
 
 // Whether the read-back says the issue is closed the way `to` closes it. Done
@@ -447,6 +475,9 @@ export function planPosition(
 
 const isVerify = (argv: readonly string[]) =>
   argv[1] === 'issue' && argv[2] === 'view'
+
+// What an older gh says of a JSON field it has not got.
+const NO_STATE_REASON = /unknown json field.*stateReason/i
 
 const firstLine = (text: string) => text.split('\n')[0]?.trim() ?? ''
 
@@ -959,6 +990,30 @@ function labelsAfter(
   }
 }
 
+// Reads the issue back after its close; resolves whether it is closed the way `to`
+// closes it. An older gh rejects the `stateReason` field though the close took:
+// the state is all it can then say, and a closed issue is taken as closed as asked.
+async function isCloseVerified(
+  $: EngineInterface,
+  argv: readonly string[],
+  card: KanbanCard,
+  to: KanbanColumn,
+  info: KanbanGithub,
+): Promise<boolean> {
+  try {
+    return isClosedAs(await runCommand($, argv), to)
+  } catch (error) {
+    if (!NO_STATE_REASON.test(errorMessage(error))) throw error
+
+    const state = await runCommand(
+      $,
+      verifyClosed(String(card.number), info.repo, false),
+    )
+
+    return state.trim() === 'CLOSED'
+  }
+}
+
 /**
  * Moves the card on GitHub, and puts it after the card `after` (first when
  * null) when one is given; resolves the fields that changed, throws on the
@@ -997,8 +1052,9 @@ export async function moveGithub(
   }
 
   for (const argv of isReorder ? [] : planMove(card, to, info)) {
-    const out = await runCommand($, argv)
-    if (isVerify(argv) && !isClosedAs(out, to)) {
+    if (!isVerify(argv)) {
+      await runCommand($, argv)
+    } else if (!(await isCloseVerified($, argv, card, to, info))) {
       throw new Error(S.closeNotVerified(card))
     }
   }
@@ -1059,9 +1115,11 @@ function statusAfter(
     case 'cancelled':
       return info.options.cancelled === undefined
         ? STATUS_NAME.done
-        : S.col.cancelled
+        : (info.optionNames?.cancelled ?? S.col.cancelled)
     case 'suspended':
-      if (info.options.suspended !== undefined) return S.col.suspended
+      if (info.options.suspended !== undefined) {
+        return info.optionNames?.suspended ?? S.col.suspended
+      }
 
       return isParked(card) ? undefined : STATUS_NAME.backlog
   }

@@ -42,6 +42,8 @@ export type KanbanGithub = {
     cancelled?: string
     suspended?: string
   }
+  // The names the board gives its `cancelled` and `suspended` options, learned from its loads.
+  optionNames?: { cancelled?: string; suspended?: string }
   title?: string
   isDetected?: true
 }

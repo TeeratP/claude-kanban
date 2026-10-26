@@ -46,6 +46,12 @@ export type MoveOptions = {
    * own section stays put.
    */
   after?: string | null
+  /**
+   * Columns the card must not be leaving. Checked against the card as the board
+   * has it when the move is made, so a person's move since the caller looked
+   * is not undone; the move is then refused and nothing changes.
+   */
+  unlessFrom?: readonly KanbanColumn[]
 }
 
 /**
@@ -176,25 +182,36 @@ async function warnIfRunning(
  * asks the backend to make it so. A refused move waits for a retry and, once
  * out of tries, puts the card back and says why. A prompt that Claude's limit
  * holds back waits in the queue instead (see queue.ts). With `opts.after` the card
- * is placed in its section, which may be the one it is in.
+ * is placed in its section, which may be the one it is in. Resolves the column
+ * that `opts.unlessFrom` refused, when it did.
  */
 export async function moveCard(
   $: EngineInterface,
   cardId: string,
   to: KanbanColumn,
   opts?: MoveOptions,
-): Promise<void> {
+): Promise<KanbanColumn | undefined> {
   // A card still being made is not on the backend to be moved.
-  if (isPendingId(cardId)) return
+  if (isPendingId(cardId)) return undefined
 
   // Done and Cancelled list by update time: they keep no order to place a card in.
   const after = isOrdered(to) ? opts?.after : undefined
   // The card is found inside the write: a read here could be an older moment.
-  const seen: { from?: KanbanColumn; entry?: KanbanSync } = {}
+  const seen: {
+    from?: KanbanColumn
+    refused?: KanbanColumn
+    entry?: KanbanSync
+  } = {}
   const moved = await setBoard($, board => {
     const card = board.cards.find(one => one.id === cardId)
     seen.from = undefined
+    seen.refused = undefined
     if (card === undefined) return board
+    if (opts?.unlessFrom?.includes(card.column)) {
+      seen.refused = card.column
+
+      return board
+    }
 
     const placed =
       after === undefined ? undefined : placeIn(board.cards, cardId, to, after)
@@ -215,7 +232,7 @@ export async function moveCard(
     }
   })
   const from = seen.from
-  if (from === undefined) return
+  if (from === undefined) return seen.refused
   if (from === 'claude' && (to === 'suspended' || to === 'cancelled')) {
     await warnIfRunning(
       $,
@@ -251,7 +268,7 @@ export async function moveCard(
 
   debounce.get(cardId)?.cancel()
   debounce.delete(cardId)
-  if (seen.entry === undefined) return
+  if (seen.entry === undefined) return undefined
 
   debounce.set(
     cardId,
@@ -261,6 +278,8 @@ export async function moveCard(
     }),
   )
   ensureTicker($)
+
+  return undefined
 }
 
 /** Sends a card's failed move again, at once. */

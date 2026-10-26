@@ -16,6 +16,7 @@ import {
 } from './fakes'
 
 const POLL = 45_000
+const AGE = 30_000
 const NONE = new Set<string>()
 
 const cards = () => ({
@@ -229,6 +230,34 @@ test('polling ends once the pane is closed and starts again when it reopens', as
   expect(calls.lists).toBe(3)
   await clock.advance(POLL)
   expect(calls.lists).toBe(4)
+})
+
+test('a poll that was asking for the panes when the pane opened again does not end the new polling', async ($, on) => {
+  const { clock, calls, world } = boot(on, cards())
+  await open($)
+  await clock.settle()
+  world.panes = ['kanban']
+  // The ages tick at 30 s, the poll at 45 s.
+  await clock.advance(AGE)
+  expect(calls.lists).toBe(1)
+  let release = () => {}
+  world.holdPanes = new Promise<void>(resolve => {
+    release = resolve
+  })
+
+  // The poll asks while the pane is shut; the pane opens, restarting the polling,
+  // before the answer comes.
+  world.panes = []
+  await clock.advance(POLL - AGE)
+  world.panes = ['kanban']
+  await $.command.run({ ...RUN })
+  await clock.settle()
+  expect(calls.lists).toBe(2)
+  release()
+  await clock.settle()
+
+  await clock.advance(POLL)
+  expect(calls.lists).toBe(3)
 })
 
 test('a reload at the session start restarts the polling instead of doubling it', async ($, on) => {
