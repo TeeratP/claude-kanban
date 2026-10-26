@@ -247,7 +247,7 @@ for (const surface of SURFACES) {
     expect(await rowKeys(ui)).not.toContain('note')
     if (surface !== 'vscode') {
       expect(await under(ui, 'hdr:backlog')).toEqual(['empty:backlog'])
-      expect(await textOf(ui, 'empty:backlog')).toBe('  (no matches)')
+      expect(await textOf(ui, 'empty:backlog')).toMatch(/^ +No matches$/)
     }
 
     await ui.press({ key: 'filter:clear' })
@@ -379,7 +379,7 @@ for (const surface of WITH_CLIENT) {
     await typeFilter(ui, 'backlog')
     expect(await header(ui, 'backlog')).toBe('Backlog 8/8')
     expect(await header(ui, 'human')).toBe('Human 0/9')
-    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 2 more')
+    expect(await textOf(ui, 'more:backlog:down')).toMatch(/^ +↓ 2 more$/)
 
     // While the field is open the list sits lower than the layout knows.
     await wheel(1)
@@ -389,7 +389,7 @@ for (const surface of WITH_CLIENT) {
     await ui.input({ key: FIELD, text: 'backlog' })
     await wheel(2)
     expect(scrolls).toHaveLength(1)
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
+    expect(await textOf(ui, 'more:backlog:up')).toMatch(/^ +↑ 2 more$/)
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     expect(await row(ui, 'more:human:up')).toBeUndefined()
     expect(await row(ui, 'more:human:down')).toBeUndefined()
@@ -397,19 +397,19 @@ for (const surface of WITH_CLIENT) {
     // The same text again changes nothing; other text starts every section over.
     await ui.press({ key: 'filter' })
     await ui.input({ key: FIELD, text: 'backlog' })
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
+    expect(await textOf(ui, 'more:backlog:up')).toMatch(/^ +↑ 2 more$/)
     await ui.press({ key: 'filter' })
     await ui.input({ key: FIELD, text: 'backlog ', kind: 'change' })
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
-    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 2 more')
+    expect(await textOf(ui, 'more:backlog:down')).toMatch(/^ +↓ 2 more$/)
 
     // And so does clearing it.
     await ui.input({ key: FIELD, text: 'backlog' })
     await wheel(40)
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
+    expect(await textOf(ui, 'more:backlog:up')).toMatch(/^ +↑ 2 more$/)
     await ui.press({ key: 'filter:clear' })
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
-    expect(await textOf(ui, 'more:human:down')).toBe('  ↓ 3 more')
+    expect(await textOf(ui, 'more:human:down')).toMatch(/^ +↓ 3 more$/)
     await ui.unmount()
   })
 
@@ -419,7 +419,7 @@ for (const surface of WITH_CLIENT) {
     // Six of Backlog's eight cards, so four show and two are below.
     await applyFilter(ui, '#11 #12 #13 #14 #15 #16')
     expect(await header(ui, 'backlog')).toBe('Backlog 6/8')
-    expect(await textOf(ui, 'more:backlog:down')).toBe('  ↓ 2 more')
+    expect(await textOf(ui, 'more:backlog:down')).toMatch(/^ +↓ 2 more$/)
 
     await $.ui.scroll({
       ...SCROLL,
@@ -430,7 +430,7 @@ for (const surface of WITH_CLIENT) {
         row: (await rowIndex(ui, 'hdr:backlog')) + TOOLBAR_ROWS,
       },
     })
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
+    expect(await textOf(ui, 'more:backlog:up')).toMatch(/^ +↑ 2 more$/)
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     // Two back is all the way back: the window never went past the matches.
     await $.ui.scroll({
@@ -447,7 +447,7 @@ for (const surface of WITH_CLIENT) {
     // The last card in sight goes a place down, past the edge: the window follows.
     await walkTo(ui, 'card:md:0014-b')
     await keys(ui, 'J')
-    expect(await textOf(ui, 'more:backlog:up')).toBe('  ↑ 2 more')
+    expect(await textOf(ui, 'more:backlog:up')).toMatch(/^ +↑ 2 more$/)
     expect(await litRows(ui)).toEqual(['card:md:0014-b'])
     await ui.unmount()
   })
@@ -469,7 +469,7 @@ for (const surface of WITH_CLIENT) {
     await applyFilter(ui, 'old')
     // Done lists its ten newest: six show, and four are below.
     expect(await header(ui, 'done')).toBe('Done 12/12')
-    expect(await textOf(ui, 'more:done:down')).toBe('  ↓ 4 more')
+    expect(await textOf(ui, 'more:done:down')).toMatch(/^ +↓ 4 more$/)
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
@@ -480,7 +480,7 @@ for (const surface of WITH_CLIENT) {
     })
 
     expect(scrolls).toHaveLength(0)
-    expect(await textOf(ui, 'more:done:up')).toBe('  ↑ 1 more')
+    expect(await textOf(ui, 'more:done:up')).toMatch(/^ +↑ 1 more$/)
     await ui.unmount()
   })
 }

@@ -153,9 +153,9 @@ test('in a narrow pane the board name is cut, not the backend or the status', as
 test('the board name is cut to the status row at 30, 44 and 80 columns, with the buttons on the row below', async ($, on) => {
   await open($, on, ready({ linked: [SHARED] }))
   const expected = {
-    30: ' GitHub (auto) · updated now',
-    44: " GitHub (auto) · #2 @TeeratP'… · updated now",
-    80: " GitHub (auto) · #2 @TeeratP's Kanban · updated now · ↑↓ ⏎ open · m move",
+    30: ' GitHub · updated just now',
+    44: ' GitHub (auto) · #2 @Tee… · updated just now',
+    80: " GitHub (auto) · #2 @TeeratP's Kanban · updated just now · ↑↓ ⏎ open · m move",
   }
 
   for (const width of [30, 44, 80] as const) {

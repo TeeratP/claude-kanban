@@ -1,10 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { KanbanCard, KanbanColumn, KanbanUi } from '../types'
+import type { KanbanCard, KanbanColumn, KanbanTag, KanbanUi } from '../types'
 import type { RowView, Seg } from '../hooks/board-client'
 import { parseBoardMessage, toRowViews } from '../hooks/board-rows'
 import type { RowViewInput } from '../hooks/board-rows'
 import { layoutBoard } from '../hooks/layout'
+import type { Row } from '../hooks/layout'
 import { COLUMNS, INITIAL_UI, cellWidth } from '../hooks/model'
 
 const WIDTHS = [24, 30, 44, 80] as const
@@ -13,6 +14,7 @@ function cardOf(
   number: number,
   column: KanbanColumn,
   title = `Card ${number}`,
+  tag?: KanbanTag,
 ): KanbanCard {
   return {
     id: `md:${number}`,
@@ -22,6 +24,7 @@ function cardOf(
     order: number,
     createdAt: '2026-10-25T10:00:00Z',
     updatedAt: '2026-10-25T10:00:00Z',
+    ...(tag === undefined ? {} : { tag }),
   }
 }
 
@@ -47,6 +50,10 @@ const input = (
   ageOf: () => '2h',
   detailOf: () => [],
   queue: { limit: 1, running: 1, waiting: ['md:99'] },
+  cards: CARDS,
+  canDrag: true,
+  canType: true,
+  isGithub: false,
   ...extra,
 })
 
@@ -285,18 +292,336 @@ test('both groups folded add the line that says to press one, left out of a pane
   expect(folded(24)).toHaveLength(0)
 })
 
-test('the blank filler is a space on one row, and the legend keeps to the pane', () => {
+test('spare room in a section is a quiet dot under the numbers, the leftover rows are spaces, and the legend keeps to the pane', () => {
   for (const columns of WIDTHS) {
     const views = rowsOf(columns, open('active'))
-    const blanks = views.filter(view => view.key.startsWith('blank:'))
+    const slack = views.filter(view => view.key.startsWith('blank:slack'))
+    const spare = views.filter(view => /^blank:(?!slack)[a-z]+:/.test(view.key))
     const legend = views.find(view => view.key === 'legend')
 
-    expect(blanks.every(view => textOf(view.segs) === ' ')).toBe(true)
+    expect(spare.length).toBeGreaterThan(0)
+    expect(slack.every(view => textOf(view.segs) === ' ')).toBe(true)
+    for (const view of spare) {
+      // The dot sits in the last cell of the number column (here `#6`, two cells), one before the title column.
+      expect(textOf(view.segs)).toBe(`${' '.repeat(3)}·`)
+      expect(view.segs[1]).toMatchObject({ dim: true, color: 'subtle' })
+    }
     if (legend !== undefined) {
       expect(legend.width).toBeLessThanOrEqual(columns)
       expect(textOf(legend.segs)).toContain(columns < 40 ? 'm move' : 'reorder')
     }
   }
+})
+
+test('an empty section and the filler of the first load stay plain', () => {
+  const views = toRowViews(
+    input(layoutBoard({ cards: [], ui: open('active'), bodyRows: 30 }), 44),
+  )
+  const loading = toRowViews(
+    input(
+      layoutBoard({
+        cards: [],
+        ui: open('active'),
+        bodyRows: 30,
+        isLoading: true,
+      }),
+      44,
+    ),
+  )
+
+  for (const list of [views, loading]) {
+    const spare = list.filter(view => /^blank:[a-z]+:/.test(view.key))
+    expect(spare.length).toBeGreaterThan(0)
+    expect(spare.every(view => textOf(view.segs) === ' ')).toBe(true)
+  }
+})
+
+// A single card row, as the Client draws it.
+const cardRow = (
+  one: KanbanCard,
+  columns = 44,
+  extra: Partial<RowViewInput> = {},
+) =>
+  toRowViews(
+    input([{ kind: 'card', column: one.column, card: one }], columns, {
+      cards: [one],
+      ...extra,
+    }),
+  )[0]
+const piece = (view: RowView | undefined, text: string) =>
+  view?.segs.find(one => one.text === text)
+
+test('a card row is its number right-aligned, its title and its age flush right, each in its own style', () => {
+  const one = cardOf(12, 'human', 'Fix the login')
+  const view = cardRow(one, 44, { ageOf: () => '12m' })
+
+  expect(textOf(view?.segs ?? [])).toBe(
+    `  #12 Fix the login${' '.repeat(44 - 2 - 3 - 1 - 13 - 3)}12m`,
+  )
+  expect(view?.width).toBe(44)
+  expect(piece(view, '#12')).toMatchObject({ dim: true })
+  expect(piece(view, 'Fix the login')).toMatchObject({ dim: false, color: '' })
+  expect(piece(view, '12m')).toMatchObject({ dim: true })
+})
+
+test('Done is dim from end to end, Cancelled is dim with a struck title, Suspended has a dim title and a plain number', () => {
+  const done = cardRow(cardOf(5, 'done', 'Shipped'))
+  const cancelled = cardRow(cardOf(5, 'cancelled', 'Dropped'))
+  const suspended = cardRow(cardOf(5, 'suspended', 'On hold'))
+
+  expect(piece(done, '#5')).toMatchObject({ dim: true })
+  expect(piece(done, 'Shipped')).toMatchObject({ dim: true })
+  expect(piece(done, 'Shipped')?.strike).toBeUndefined()
+  expect(piece(cancelled, '#5')).toMatchObject({ dim: true })
+  expect(piece(cancelled, 'Dropped')).toMatchObject({ dim: true, strike: true })
+  expect(piece(suspended, '#5')).toMatchObject({ dim: false })
+  expect(piece(suspended, 'On hold')).toMatchObject({ dim: true })
+  expect(piece(suspended, 'On hold')?.strike).toBeUndefined()
+})
+
+test('a question shows ? and its number in the colour for what needs you, and the tags rev and hum are gone', () => {
+  const question = cardRow(cardOf(23, 'human', 'Which provider?', 'question'))
+  const review = cardRow(cardOf(23, 'human', 'Needs a look', 'review'))
+
+  expect(textOf(question?.segs ?? [])).toMatch(/^ {2}\?23 Which provider\?/)
+  expect(piece(question, '?23')).toMatchObject({
+    bold: true,
+    color: 'permission',
+  })
+  expect(textOf(review?.segs ?? [])).toMatch(/^ {2}#23 Needs a look/)
+  expect(textOf(review?.segs ?? [])).not.toMatch(/rev|hum/)
+})
+
+test('a card not yet made says new in the number column, and gives no age', () => {
+  const pending = { ...cardOf(0, 'backlog', 'Write the README'), id: 'new:1' }
+  const view = cardRow(pending, 44, { ageOf: () => 'now' })
+
+  expect(textOf(view?.segs ?? [])).toMatch(/^ {2}new Write the README\s*$/)
+  expect(piece(view, 'new')).toMatchObject({ dim: true })
+})
+
+test('a sync mark takes the cell before the age, keeps its colour, and a failed move turns the number red', () => {
+  const one = cardOf(5, 'claude', 'In flight')
+  const mark = (text: string, color: string, dim = false) => ({
+    text,
+    color,
+    dim,
+  })
+  const syncing = cardRow(one, 44, {
+    ageOf: () => '10d',
+    glyphOf: () => mark('⟳', 'warning', true),
+  })
+  const failed = cardRow(one, 44, {
+    ageOf: () => '10d',
+    glyphOf: () => mark('✕', 'error'),
+  })
+
+  expect(textOf(syncing?.segs ?? [])).toMatch(/In flight +⟳ 10d$/)
+  expect(piece(syncing, '⟳')).toMatchObject({ color: 'warning', dim: true })
+  expect(piece(syncing, '#5')).toMatchObject({ dim: true })
+  expect(piece(failed, '✕')).toMatchObject({ color: 'error', dim: false })
+  expect(piece(failed, '#5')).toMatchObject({ color: 'error' })
+  expect(piece(failed, '#5')?.dim).toBe(false)
+})
+
+test('a queued card is dim all through and says its place where the age goes, short in a narrow pane', () => {
+  const one = cardOf(5, 'claude', 'Waiting its turn')
+  const queued = { limit: 1, running: 1, waiting: [one.id] }
+  const wide = cardRow(one, 44, { queue: queued })
+  const narrow = cardRow(one, 30, { queue: queued })
+
+  expect(textOf(wide?.segs ?? [])).toMatch(/Waiting its turn +queued 1$/)
+  expect(textOf(narrow?.segs ?? [])).toMatch(/ +q1$/)
+  expect(piece(wide, 'Waiting its turn')).toMatchObject({ dim: true })
+  expect(piece(wide, '#5')).toMatchObject({ dim: true })
+})
+
+test('a more row, an empty line and a bar start at the title column', () => {
+  const board = [cardOf(7, 'backlog'), cardOf(111, 'backlog')]
+  const rows = (row: Row) => toRowViews(input([row], 44, { cards: board }))[0]
+  const lead = (text: string) => text.length - text.trimStart().length
+
+  expect(
+    lead(
+      textOf(
+        rows({ kind: 'more', column: 'backlog', dir: 'down', n: 3 })?.segs ??
+          [],
+      ),
+    ),
+  ).toBe(7)
+  expect(
+    lead(textOf(rows({ kind: 'empty', column: 'backlog' })?.segs ?? [])),
+  ).toBe(7)
+  expect(
+    lead(
+      textOf(
+        rows({ kind: 'skeleton', column: 'backlog', index: 0, percent: 60 })
+          ?.segs ?? [],
+      ),
+    ),
+  ).toBe(7)
+  // And as far in as the numbers are wide: here only `#7`.
+  const narrow = toRowViews(
+    input([{ kind: 'empty', column: 'backlog' }], 44, {
+      cards: [cardOf(7, 'backlog')],
+    }),
+  )[0]
+  expect(lead(textOf(narrow?.segs ?? []))).toBe(5)
+})
+
+test('every section says what it is for when it is empty, in a short form where the long one does not fit', () => {
+  const empty = (
+    column: KanbanColumn,
+    columns: number,
+    extra: Partial<RowViewInput> = {},
+  ) =>
+    textOf(
+      toRowViews(
+        input([{ kind: 'empty', column }], columns, { cards: [], ...extra }),
+      )[0]?.segs ?? [],
+    ).trim()
+
+  expect(empty('human', 44)).toBe('✓ All clear, nothing needs you')
+  expect(empty('human', 24)).toBe('✓ All clear')
+  expect(empty('claude', 44)).toBe('Idle · drag a card here')
+  expect(empty('claude', 44, { canDrag: false })).toBe(
+    'Idle · open a card to move it',
+  )
+  expect(empty('claude', 24)).toBe('Idle')
+  expect(empty('backlog', 44)).toBe('Nothing yet · n adds a card')
+  expect(empty('backlog', 44, { canType: false })).toBe('Nothing parked')
+  expect(empty('backlog', 24)).toBe('n adds a card')
+  expect(empty('done', 44)).toBe('Nothing finished yet')
+  expect(empty('done', 24)).toBe('None yet')
+  expect(empty('suspended', 44)).toBe('Nothing on hold')
+  expect(empty('suspended', 24)).toBe('Nothing on hold')
+  expect(empty('suspended', 20)).toBe('None')
+  expect(empty('cancelled', 44)).toBe('Nothing dropped')
+  expect(empty('cancelled', 20)).toBe('None')
+})
+
+test('the tick of an all-clear Human is in the colour for success, the words dim, and a filter makes every section say no matches', () => {
+  const [view] = toRowViews(
+    input([{ kind: 'empty', column: 'human' }], 44, { cards: [] }),
+  )
+
+  expect(view?.segs.find(one => one.text.startsWith('✓'))).toMatchObject({
+    color: 'success',
+  })
+  expect(view?.segs.at(-1)).toMatchObject({ dim: true })
+  for (const column of COLUMNS) {
+    const [shown] = toRowViews(
+      input([{ kind: 'empty', column }], 44, { cards: [], isFiltered: true }),
+    )
+
+    expect(textOf(shown?.segs ?? []).trim()).toBe('No matches')
+  }
+})
+
+test('the first load draws bars of the section header rule glyph, dim and subtle, at 60, 40 and 75 percent of the title room', () => {
+  const bar = (percent: number) =>
+    toRowViews(
+      input([{ kind: 'skeleton', column: 'human', index: 0, percent }], 44, {
+        cards: [],
+      }),
+    )[0]
+
+  // 44 columns, the title column at 7, the age and its gap at the right: 32 cells of title room.
+  expect(textOf(bar(60)?.segs ?? [])).toBe(`${' '.repeat(7)}${'─'.repeat(19)}`)
+  expect(textOf(bar(40)?.segs ?? [])).toBe(`${' '.repeat(7)}${'─'.repeat(13)}`)
+  expect(textOf(bar(75)?.segs ?? [])).toBe(`${' '.repeat(7)}${'─'.repeat(24)}`)
+  expect(bar(60)?.segs.at(-1)).toMatchObject({ dim: true, color: 'subtle' })
+})
+
+test('while the first load runs the headers have no counts or meta, and the folded group no summary', () => {
+  const views = toRowViews(
+    input(
+      layoutBoard({
+        cards: [],
+        ui: open('active'),
+        bodyRows: 30,
+        isLoading: true,
+      }),
+      44,
+      { cards: [] },
+    ),
+  )
+  const header = (column: string) =>
+    textOf(
+      views.find(view => view.kind === 'header' && view.column === column)
+        ?.segs ?? [],
+    )
+
+  expect(header('human')).toBe(
+    `  Human ${'─'.repeat(36)}`.slice(0, 44).replace(/─$/, '─'),
+  )
+  expect(header('claude')).not.toMatch(/limit|\d/)
+  expect(
+    textOf(views.find(view => view.key === 'grp:inactive')?.segs ?? []),
+  ).toBe('▸ Inactive')
+  expect(
+    views.some(
+      view =>
+        ['note', 'legend'].includes(view.key) || view.key.startsWith('hint'),
+    ),
+  ).toBe(false)
+})
+
+test('the legend lists the cursor keys once a key has brought the cursor up, and each form fits the pane', () => {
+  for (const columns of WIDTHS) {
+    const legend = rowsOf(columns, open('active')).find(
+      view => view.key === 'legend',
+    )
+    if (legend?.kind !== 'text') throw new Error('no legend')
+
+    expect(textOf(legend.segs)).toMatch(/⏎ open · m move/)
+    expect(textOf(legend.keyed ?? [])).toMatch(/↑↓/)
+    expect(cellWidth(textOf(legend.segs))).toBeLessThanOrEqual(columns)
+    expect(cellWidth(textOf(legend.keyed ?? []))).toBeLessThanOrEqual(columns)
+  }
+  const wide = rowsOf(44, open('active')).find(view => view.key === 'legend')
+  expect(textOf(wide?.segs ?? [])).toBe('  ⏎ open · m move · ⇧J/K reorder')
+  expect(textOf(wide?.kind === 'text' ? (wide.keyed ?? []) : [])).toBe(
+    '  ↑↓ walk · ⏎ open · m+key move',
+  )
+})
+
+test('an empty board explains itself in one form at 44 columns and a short one at 30, never cut mid-word', () => {
+  const lines = (columns: number, extra: Partial<RowViewInput> = {}) =>
+    toRowViews(
+      input(
+        layoutBoard({
+          cards: [],
+          ui: open('active'),
+          bodyRows: 30,
+          hint: true,
+        }),
+        columns,
+        { cards: [], ...extra },
+      ),
+    )
+      .filter(view => view.key === 'note' || view.key.startsWith('hint:'))
+      .map(view => textOf(view.segs))
+
+  expect(lines(44)).toEqual([
+    '  Cards live in .kanban/*.md here.',
+    '  On GitHub? Link a Project to the repo',
+    '  or set backend: github to see why.',
+  ])
+  expect(lines(30)).toEqual([
+    '  Cards live in .kanban/',
+    '  GitHub? Link a Project',
+    '  or set backend: github',
+  ])
+  for (const columns of WIDTHS) {
+    for (const line of lines(columns)) {
+      expect(cellWidth(line)).toBeLessThanOrEqual(columns)
+      expect(line).not.toContain('…')
+    }
+  }
+  expect(lines(44, { isGithub: true })[0]).toBe(
+    '  No issues on this board yet.',
+  )
 })
 
 test('a message from the Client is taken only whole: a group of the two, a column of the six, a place that exists', () => {

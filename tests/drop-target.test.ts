@@ -9,6 +9,7 @@ const header = (column: string, isOrdered = true): RowView => ({
   ...base(`hdr:${column}`),
   kind: 'header',
   column,
+  labelAt: 0,
   moveKeys: [],
   carrySegs: [],
   isOrdered,

@@ -23,13 +23,12 @@ import {
 } from './atoms'
 import { refresh } from './board'
 import type { BoardProps } from './board-client'
-import { parseBoardMessage, toRowViews } from './board-rows'
+import { isDimCard, parseBoardMessage, toRowViews } from './board-rows'
 import { isFiltering } from './filter'
 import {
   TOOLBAR_ROWS,
   applyFilter,
   blocksOf,
-  cardLine,
   footRows,
   hitTest,
   layoutBoard,
@@ -37,9 +36,10 @@ import {
   sectionBody,
   sectionList,
   sectionWindow,
+  titleColumn,
 } from './layout'
 import type { Row } from './layout'
-import { TICK_BRIGHT_MS, ageLabel, cellWidth, groupOf, truncate } from './model'
+import { TICK_BRIGHT_MS, ageLabel, cellWidth, truncate } from './model'
 import { queuePlace, queueView } from './queue'
 import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
@@ -55,6 +55,9 @@ import { clearFilter, renderFilter, toggleFilter } from './view-filter'
 import { pickRows, renderPicker } from './view-pick'
 import { renderQuickAdd } from './view-quick-add'
 import { renderSuggestions } from './view-suggest'
+
+// Under this many columns the status row drops " (auto)" from the backend's name.
+const AUTO_SHOWN_FROM = 40
 
 // Where the pane's window sat at the last draw, and the rows above the list that
 // the layout was told of; a wheel row is relative to it.
@@ -288,6 +291,13 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     (quickAdd === null ? 0 : quickAddRows(await readQuickAdd($)))
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows, extraRows }
 
+  // Nothing loaded yet, no cards saved and no reason given why not: bars stand
+  // in for the cards, from the first frame to the load's end.
+  const isLoading =
+    board.fetchedAt === 0 &&
+    board.cards.length === 0 &&
+    board.error === undefined &&
+    board.pick === undefined
   const rows = layoutBoard({
     cards: board.cards,
     ui,
@@ -296,16 +306,25 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     hint: board.mode === 'auto' && board.backend?.kind === 'local',
     extraRows,
     legend: hasClient,
+    isLoading,
   })
+  // A card's second row starts where its title does.
+  const titleAt = titleColumn(board.cards, columns)
   const detailOf = (card: KanbanCard) => {
     const one = activity.cards[card.id]
 
-    return one === undefined ? [] : detailSegs(columns, one, activity.live, now)
+    return one === undefined
+      ? []
+      : detailSegs(columns, one, activity.live, now, titleAt)
   }
 
   // The status text, dim: the backend, the board, how fresh it is, and why not.
   const statusRow = () => {
-    const backendName = S.backendLabel(board.mode, board.backend?.kind)
+    const backendName = S.backendLabel(
+      board.mode,
+      board.backend?.kind,
+      columns < AUTO_SHOWN_FROM,
+    )
     const note = localNote(board.backend)
     const isNoted = note !== undefined
     const detected =
@@ -318,7 +337,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         : S.boardName(detected.projectNumber, detected.title)
     const status =
       board.error ??
-      (board.isLoading
+      (board.isLoading || isLoading
         ? S.loading
         : pausedUntil > now
           ? S.rateLimitLow(minutesLeft(pausedUntil - now))
@@ -349,7 +368,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     const whole = join([label, status])
     const bare = join([status])
     const text =
-      hasClient && board.error === undefined && cellWidth(withHint) <= room
+      hasClient &&
+      board.error === undefined &&
+      !isLoading &&
+      cellWidth(withHint) <= room
         ? withHint
         : cellWidth(whole) > room &&
             !isNoted &&
@@ -463,6 +485,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     ageOf: (card: KanbanCard) => ageLabel(card.updatedAt, now),
     detailOf,
     queue,
+    cards: board.cards,
+    canDrag: hasClient,
+    canType,
+    isGithub: board.backend?.kind === 'github',
   }
   const textOf = (row: Row) => {
     const [made] = toRowViews({ ...rowViewInput, rows: [row] })
@@ -498,6 +524,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
 
       case 'blank':
       case 'folded':
+      case 'empty':
+      case 'skeleton':
+      case 'note':
+      case 'hint':
         return <Text wrap="truncate-end">{textOf(row)}</Text>
 
       // The legend is the Client's: the other surfaces have no keys to list.
@@ -517,41 +547,22 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
               )
             }
           >
-            <Text dimColor wrap="truncate-end">
-              {S.more(dir, row.n)}
-            </Text>
+            {textOf(row)}
           </Button>
         )
       }
 
       case 'card': {
         const { card } = row
-        const entry = sync[card.id]
-        const glyph =
-          entry === undefined ? undefined : glyphOf(entry, tick, now)
-        const place = queuePlace(queue, card.id)
-        const line = cardLine(
-          card,
-          columns,
-          glyph?.text ?? (place === undefined ? ' ' : S.queuedMark(place)),
-          ageLabel(card.updatedAt, now),
-        )
-        const tint =
-          glyph === undefined ? {} : { color: glyph.color, dimColor: glyph.dim }
 
         return (
           <Button
             key={`card:${card.id}`}
             plain
-            dimColor={
-              groupOf(card.column) === 'inactive' || place !== undefined
-            }
+            dimColor={isDimCard(card, queuePlace(queue, card.id) !== undefined)}
             onPress={() => openDetail($, card.id)}
           >
-            {line.left}
-            {line.title}
-            <Text {...tint}>{line.glyph}</Text>
-            <Text dimColor>{line.age}</Text>
+            {textOf(row)}
           </Button>
         )
       }
@@ -562,27 +573,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             {detailOf(row.card).map(part => (
               <Text {...segProps(part)}>{part.text}</Text>
             ))}
-          </Text>
-        )
-
-      case 'empty':
-        return (
-          <Text dimColor wrap="truncate-end">
-            {isFiltered ? S.noMatches : S.empty}
-          </Text>
-        )
-
-      case 'note':
-        return (
-          <Text dimColor wrap="truncate-end">
-            {truncate(S.noCards, columns)}
-          </Text>
-        )
-
-      case 'hint':
-        return (
-          <Text dimColor wrap="truncate-end">
-            {truncate(S.githubHint[row.line] ?? '', columns)}
           </Text>
         )
     }

@@ -1,16 +1,19 @@
 import type { KanbanCard, KanbanColumn, KanbanGroup } from '../types'
 import type { Place, RowView, Seg } from './board-client'
-import { cardLine } from './layout'
+import { META_CELLS, cardLine, numberColumn, titleColumn } from './layout'
 import type { Row, SectionCount } from './layout'
 import {
   COLUMNS,
   MOVE_KEY,
   cellWidth,
+  fit,
   groupOf,
   isColumn,
   isOrdered,
+  isPendingId,
   truncate,
 } from './model'
+import type { Copy } from './model'
 import { headerMeta, queuePlace } from './queue'
 import type { QueueView } from './queue'
 import { S } from './strings'
@@ -29,6 +32,13 @@ export type RowViewInput = {
   detailOf: (card: KanbanCard) => Seg[]
   /** Claude's limit and who waits for it. */
   queue: QueueView
+  /** Every card on the board: the number column is as wide as its widest number. */
+  cards: readonly KanbanCard[]
+  /** Whether the surface takes a drag, and whether it has text fields: some copy differs. */
+  canDrag: boolean
+  canType: boolean
+  /** Whether the cards come from GitHub, which an empty board says. */
+  isGithub: boolean
 }
 
 /** A message the board's Client posts, checked: it came from code, not a fact. */
@@ -68,8 +78,6 @@ const MIN_RULE = 2
 const SHORT_META_BELOW = 36
 // The "press a group" line needs this much room.
 const FOLDED_MIN_COLUMNS = 30
-// The legend is written whole from this many columns.
-const LEGEND_LONG_FROM = 40
 // The chips carry the group's name from this many columns.
 const CHIPS_NAMED_FROM = 40
 
@@ -102,7 +110,8 @@ function sectionHeader(
       bold: true,
       ...(isInactive ? { dim: true } : color === undefined ? {} : { color }),
     }),
-    seg(` ${count}`, { dim: true }),
+    // The first load has no counts to give yet.
+    ...(row.isLoading === true ? [] : [seg(` ${count}`, { dim: true })]),
   ]
   const room = columns - widthOf(left) - 1
   const right = rights.find(one => room - 1 - cellWidth(one.text) >= MIN_RULE)
@@ -225,10 +234,67 @@ function groupChips(
   }
 }
 
+// What a section says when it holds no card, long and short; `canDrag` and
+// `canType` pick the copy a surface can act on.
+function emptyCopy(
+  column: KanbanColumn,
+  canDrag: boolean,
+  canType: boolean,
+): Copy {
+  switch (column) {
+    case 'human':
+      return S.emptyHuman
+    case 'claude':
+      return S.emptyClaude(canDrag)
+    case 'backlog':
+      return S.emptyBacklog(canType)
+    case 'done':
+      return S.emptyDone
+    case 'suspended':
+      return S.emptySuspended
+    case 'cancelled':
+      return S.emptyCancelled
+  }
+}
+
+/** Whether a card is dim from end to end: finished or dropped, or waiting in Claude's queue. */
+export const isDimCard = (card: KanbanCard, isQueued: boolean) =>
+  card.column === 'done' || card.column === 'cancelled' || isQueued
+
+// How a card's number, title and age are drawn: its section sets it, a queued
+// card is dim all through, a question stands out and a failed move turns the
+// number red, where the eye scans.
+function cardStyles(
+  card: KanbanCard,
+  isQueued: boolean,
+  glyph: { color: string } | undefined,
+) {
+  const { column } = card
+  const isDim = isDimCard(card, isQueued)
+  const number: Partial<Omit<Seg, 'text'>> =
+    glyph?.color === 'error'
+      ? { color: 'error' }
+      : card.tag === 'question'
+        ? { bold: true, color: 'permission' }
+        : column === 'suspended' && !isQueued
+          ? {}
+          : { dim: true }
+  const title: Partial<Omit<Seg, 'text'>> = {
+    ...(isDim || column === 'suspended' ? { dim: true } : {}),
+    ...(column === 'cancelled' ? { strike: true } : {}),
+  }
+
+  return { number, title }
+}
+
 /** The list rows (everything under the toolbar) as the Client draws them. */
 export function toRowViews(input: RowViewInput): RowView[] {
   const { columns, isFiltered, glyphOf, ageOf, detailOf, queue } = input
   const views: RowView[] = []
+  const numbers = numberColumn(input.cards, columns)
+  // Titles, empty-state lines, bars and `more` rows all start at this cell.
+  const titleAt = titleColumn(input.cards, columns)
+  const lead = seg(' '.repeat(titleAt))
 
   for (const row of input.rows) {
     switch (row.kind) {
@@ -272,7 +338,10 @@ export function toRowViews(input: RowViewInput): RowView[] {
               : groupLine(
                   label,
                   columns,
-                  summaryOptions(row.counts, isFiltered),
+                  // No summary of what is not known yet.
+                  row.isLoading === true
+                    ? []
+                    : summaryOptions(row.counts, isFiltered),
                 ),
           ),
         })
@@ -283,7 +352,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
         const moveKeys = moveKeysOf(row.column)
         const meta = headerMeta(row.column, row.total, queue)
         const rights: Right[] =
-          meta === undefined
+          meta === undefined || row.isLoading === true
             ? []
             : [
                 ...(columns < SHORT_META_BELOW
@@ -297,6 +366,8 @@ export function toRowViews(input: RowViewInput): RowView[] {
           column: row.column,
           moveKeys,
           isOrdered: isOrdered(row.column),
+          // The label is the second piece, after the indent.
+          labelAt: 1,
           // While a card is carried by `m`, the keys that send it here take the meta's place.
           carrySegs: sectionHeader(row, columns, isFiltered, [
             { text: moveKeys.join('/'), style: { bold: true } },
@@ -312,7 +383,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
           kind: 'more',
           column: row.column,
           dir: row.dir,
-          ...view([seg(S.more(row.dir, row.n), { dim: true })]),
+          ...view([lead, seg(S.more(row.dir, row.n), { dim: true })]),
         })
         break
 
@@ -320,24 +391,37 @@ export function toRowViews(input: RowViewInput): RowView[] {
         const { card } = row
         const glyph = glyphOf(card)
         const place = queuePlace(queue, card.id)
-        const mark = place === undefined ? ' ' : S.queuedMark(place)
-        const line = cardLine(card, columns, glyph?.text ?? mark, ageOf(card))
-        // A card in the inactive group and a queued one are dim all through.
-        const dim = groupOf(card.column) === 'inactive' || place !== undefined
+        // A card not yet made has no age to give; a queued one says its place instead.
+        const age = isPendingId(card.id)
+          ? ''
+          : place === undefined
+            ? ageOf(card)
+            : S.queued(place, columns < SHORT_META_BELOW)
+        const line = cardLine(card, columns, numbers, {
+          mark: glyph?.text ?? '',
+          age,
+        })
+        const styles = cardStyles(card, place !== undefined, glyph)
         views.push({
           key: `card:${card.id}`,
           kind: 'card',
           column: row.column,
           cardId: card.id,
-          ...view([
-            seg(line.left, { dim }),
-            seg(line.title, { dim }),
-            seg(line.glyph, {
-              dim: glyph?.dim ?? dim,
-              color: glyph?.color ?? '',
-            }),
-            seg(line.age, { dim: true }),
-          ]),
+          ...view(
+            [
+              seg(line.indent),
+              seg(line.number, styles.number),
+              seg(' '),
+              seg(line.title, styles.title),
+              seg(line.gap),
+              seg(line.mark, {
+                dim: glyph?.dim ?? false,
+                color: glyph?.color ?? '',
+              }),
+              seg(line.between),
+              seg(line.age, { dim: true }),
+            ].filter(one => one.text !== ''),
+          ),
         })
         break
       }
@@ -352,16 +436,44 @@ export function toRowViews(input: RowViewInput): RowView[] {
         })
         break
 
-      case 'empty':
+      case 'empty': {
+        const copy = isFiltered
+          ? { long: S.noMatches, short: S.noMatches }
+          : emptyCopy(row.column, input.canDrag, input.canType)
+        // Human, when clear, says so with a tick.
+        const tick = !isFiltered && row.column === 'human'
+        const room = columns - titleAt - (tick ? 2 : 0)
         views.push({
           key: `empty:${row.column}`,
           kind: 'text',
           column: row.column,
-          ...view([seg(isFiltered ? S.noMatches : S.empty, { dim: true })]),
+          ...view([
+            lead,
+            ...(tick ? [seg(`${S.confirmed} `, { color: 'success' })] : []),
+            seg(fit(copy, room), { dim: true }),
+          ]),
         })
         break
+      }
 
-      // A space, so the row keeps its one terminal row.
+      case 'skeleton': {
+        const bar = Math.round(
+          ((columns - titleAt - META_CELLS) * row.percent) / 100,
+        )
+        views.push({
+          key: `skeleton:${row.column}:${row.index}`,
+          kind: 'text',
+          column: row.column,
+          ...view([
+            lead,
+            seg(RULE.repeat(Math.max(0, bar)), { dim: true, color: 'subtle' }),
+          ]),
+        })
+        break
+      }
+
+      // A space, so the row keeps its one terminal row; spare room in a
+      // section is a quiet dot at the foot of the number column.
       case 'blank':
         views.push({
           key:
@@ -370,25 +482,28 @@ export function toRowViews(input: RowViewInput): RowView[] {
               : `blank:${row.column}:${row.index}`,
           kind: 'text',
           ...(row.column === undefined ? {} : { column: row.column }),
-          ...view([seg(' ')]),
+          ...view(
+            row.column === undefined || row.isPlain === true
+              ? [seg(' ')]
+              : [
+                  seg(' '.repeat(Math.max(0, titleAt - 2))),
+                  seg(S.slot, { dim: true, color: 'subtle' }),
+                ],
+          ),
         })
         break
 
-      case 'legend':
+      case 'legend': {
+        const room = columns - INDENT.length
         views.push({
           key: 'legend',
           kind: 'text',
-          ...view([
-            seg(
-              truncate(
-                `${INDENT}${columns < LEGEND_LONG_FROM ? S.legend.short : S.legend.long}`,
-                columns,
-              ),
-              { dim: true },
-            ),
-          ]),
+          // Once a key has brought the cursor up, the legend lists the cursor's keys.
+          keyed: [seg(`${INDENT}${fit(S.legendKeys, room)}`, { dim: true })],
+          ...view([seg(`${INDENT}${fit(S.legendIdle, room)}`, { dim: true })]),
         })
         break
+      }
 
       case 'folded':
         if (columns >= FOLDED_MIN_COLUMNS) {
@@ -404,19 +519,31 @@ export function toRowViews(input: RowViewInput): RowView[] {
         views.push({
           key: 'note',
           kind: 'text',
-          ...view([seg(truncate(S.noCards, columns), { dim: true })]),
+          ...view([
+            seg(
+              `${INDENT}${fit(input.isGithub ? S.noIssues : S.noCards, columns - INDENT.length)}`,
+              { dim: true },
+            ),
+          ]),
         })
         break
 
-      case 'hint':
+      case 'hint': {
+        const copy = S.githubHint[row.line]
         views.push({
           key: `hint:${row.line}`,
           kind: 'text',
           ...view([
-            seg(truncate(S.githubHint[row.line] ?? '', columns), { dim: true }),
+            seg(
+              copy === undefined
+                ? ''
+                : `${INDENT}${fit(copy, columns - INDENT.length)}`,
+              { dim: true },
+            ),
           ]),
         })
         break
+      }
     }
   }
 

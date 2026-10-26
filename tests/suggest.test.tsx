@@ -441,7 +441,7 @@ test('with a strip above the list the wheel scrolls the section under the pointe
 
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 13 } })
   expect(scrolls).toHaveLength(0)
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 1 more$/)
 
   // The Human header, which the same row would be a card of Backlog were the
   // strip not counted out; and the strip's own rows are the engine's.
@@ -450,7 +450,7 @@ test('with a strip above the list the wheel scrolls the section under the pointe
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 1 } })
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 0 } })
   expect(scrolls).toHaveLength(4)
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 1 more$/)
   await ui.unmount()
 })
 

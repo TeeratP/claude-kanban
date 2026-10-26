@@ -448,7 +448,7 @@ for (const surface of WITH_CLIENT) {
 
   test(`a drop on a more row lands at that edge of the window shown, and on a header at the very top on the ${surface}`, async ($, on) => {
     const { clock, ui, files } = await start($, on, surface, long())
-    expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
+    expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
 
     // Down: after the last card shown, before the two hidden.
     await drag(ui, 'card:md:0020-api', 'more:backlog:down')
@@ -463,13 +463,13 @@ for (const surface of WITH_CLIENT) {
       B(6),
       'more:backlog:down',
     ])
-    expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 3 more')
+    expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 3 more$/)
 
     // Up: the window pages to the end (six cards of nine), and the card goes
     // before the first of them, after the three hidden above.
     await click(ui, 'more:backlog:down')
     await clock.advance(2000)
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 3 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 3 more$/)
     await drag(ui, B(8), 'more:backlog:up')
     await clock.advance(SYNC_PAUSE)
     expect(orderOf(files, 8, 'b')).toBe(35)
@@ -558,7 +558,7 @@ for (const surface of WITH_CLIENT) {
     // with a `more` row either side.
     await walkTo(ui, B(6))
     await keys(ui, 'J')
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 2 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 2 more$/)
     expect(await row(ui, B(6))).toBeDefined()
     expect(await litRows(ui)).toEqual([B(6)])
 

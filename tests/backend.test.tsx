@@ -596,9 +596,9 @@ test('an empty local board under auto says how to point the mod at GitHub', asyn
 
   expect(shown.cards).toEqual([])
   expect(shown.notes).toEqual(['note', 'hint:0', 'hint:1'])
-  expect(shown.hints[0]).toContain('.kanban/0001-title.md')
-  expect(shown.hints[1]).toContain('CLAUDE.md or AGENTS.md')
-  expect(shown.hints[2]).toContain('backend: github')
+  expect(shown.hints[0]).toContain('Cards live in .kanban/*.md here.')
+  expect(shown.hints[1]).toContain('Link a Project to the repo')
+  expect(shown.hints[2]).toContain('set backend: github')
 })
 
 test(

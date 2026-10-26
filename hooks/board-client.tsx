@@ -9,7 +9,15 @@ import type {
 // reads the posts; the types here are the contract between the two.
 
 /** A run of a row's text and how it is drawn; '' for no colour. */
-export type Seg = { text: string; bold: boolean; dim: boolean; color: string }
+export type Seg = {
+  text: string
+  bold: boolean
+  dim: boolean
+  color: string
+  italic?: true
+  strike?: true
+  underline?: true
+}
 
 type Base = { key: string; segs: Seg[]; width: number }
 
@@ -34,6 +42,8 @@ export type RowView =
   | (Base & {
       kind: 'header'
       column: string
+      /** The piece of `segs` that is the section's name, which a drag lights when it would land here. */
+      labelAt: number
       /** The keys that move the card under the cursor here. */
       moveKeys: string[]
       /** What the header shows while `m` carries a card to another section: those keys. */
@@ -45,8 +55,9 @@ export type RowView =
   | (Base & { kind: 'card'; column: string; cardId: string })
   // The dim second row under a card: part of that card, never a stop for the cursor.
   | (Base & { kind: 'detail'; column: string; cardId: string })
-  // The empty row of a section names it; other text belongs to none.
-  | (Base & { kind: 'text'; column?: string })
+  // The empty row of a section names it; other text belongs to none. `keyed` is
+  // what a row shows once a key has brought the cursor up, when it differs.
+  | (Base & { kind: 'text'; column?: string; keyed?: Seg[] })
 
 export type BoardProps = { rows: RowView[]; columns: number }
 
@@ -239,14 +250,35 @@ type Gesture = {
 // it, so a mouse user sees no cursor; the first key brings it up.
 type Cursor = { key: string; index: number; shown: boolean }
 
-// `moving` is the key of the card an `m` is moving, waiting for a section key.
+// `moving` is the key of the card an `m` is moving, waiting for a section key;
+// `hover` the key of the row under a pointer with no button down.
 type State = {
   gesture: Gesture | null
   cursor: Cursor | null
   moving: string | null
+  hover: string | null
 }
 
-const IDLE: State = { gesture: null, cursor: null, moving: null }
+const IDLE: State = { gesture: null, cursor: null, moving: null, hover: null }
+
+// The rows a pointer can rest on to be told they press: cards, `more` rows and group headers.
+const hoverOf = (row: RowView | undefined) =>
+  row?.kind === 'card' || row?.kind === 'more' || row?.kind === 'group'
+    ? row.key
+    : null
+
+// `›` in the cell an indent leaves free, so no text moves; a row that does not
+// start with a space is left as it is.
+function pointed(segs: readonly Seg[]): Seg[] {
+  const [first, ...rest] = segs
+  if (first === undefined || !first.text.startsWith(' ')) return [...segs]
+
+  return [
+    { text: '›', bold: true, dim: false, color: '' },
+    ...(first.text.length > 1 ? [{ ...first, text: first.text.slice(1) }] : []),
+    ...rest,
+  ]
+}
 
 // Whether the cursor can rest on a row: a group's header, a card or a `more` row.
 // Not the section headers, which are labels, nor plain text and card second rows.
@@ -291,7 +323,7 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
   const { rows, columns } = props
   // The state is read when the event comes: it may be newer than this call.
   const read = () => surface.state ?? IDLE
-  const { gesture, cursor, moving } = read()
+  const { gesture, cursor, moving, hover } = read()
   const stops = stopsOf(rows)
 
   const post = (message: BoardPost) => surface.post(message)
@@ -347,11 +379,25 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     const now = read()
     const current = now.gesture
 
+    if (event.type === 'leave') {
+      if (now.hover !== null) surface.setState({ ...now, hover: null })
+      return
+    }
+    // A move with no button is a hover; if a gesture was held, its button came up out of reach.
+    if (event.type === 'move' && event.button === undefined) {
+      const hover = hoverOf(rows[event.y])
+      if (current !== null || now.hover !== hover) {
+        surface.setState({ ...now, gesture: null, hover })
+      }
+      return
+    }
+
     if (event.type === 'down') {
       const pressed = rows[event.y]
       if (event.button !== 'left' || pressed === undefined) return
       surface.setState({
         ...now,
+        hover: null,
         gesture: {
           x: event.x,
           y: event.y,
@@ -375,11 +421,6 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     if (current === null) return
 
     if (event.type === 'move') {
-      // A move with no button is a hover: the button came up out of reach.
-      if (event.button === undefined) {
-        surface.setState({ ...now, gesture: null })
-        return
-      }
       // Within a row only crossing its middle changes where the card would land,
       // and on a group's header the chip under the pointer.
       if (
@@ -478,10 +519,11 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     }
   })
 
-  // While a card is being dragged it is dimmed and a line shows where it would
-  // land: under the row above that place, or the section is lit when it keeps
-  // no order. A place the card already has shows nothing. A closed group shows
-  // its sections as chips, the one under the pointer lit.
+  // While a card is being dragged it is dimmed, slanted and pointed at, and a
+  // line shows where it would land: under the row above that place, or the
+  // section is lit when it keeps no order, and the name of the section it would
+  // land in is lit either way. A place the card already has shows nothing. A
+  // closed group shows its sections as chips, the one under the pointer lit.
   const draggedAt =
     gesture !== null && gesture.hasMoved
       ? rows.findIndex(row => row.key === gesture.key)
@@ -515,6 +557,9 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
   const style = (seg: Seg) => ({
     ...(seg.bold ? { weight: 'bold' as const } : {}),
     ...(seg.dim ? { dimColor: true } : {}),
+    ...(seg.italic === true ? { italic: true } : {}),
+    ...(seg.strike === true ? { strikethrough: true } : {}),
+    ...(seg.underline === true ? { underline: true } : {}),
     ...(seg.color === '' ? {} : { color: seg.color }),
   })
 
@@ -526,10 +571,11 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
         const isLit =
           (index === target?.lit && row.kind !== 'group') || index === cursorAt
         const isLine = index === target?.line
+        const isGhost = row === dragged
         const rowStyle = {
           ...(isLit ? { inverse: true } : {}),
           ...(isLine ? { underline: true } : {}),
-          ...(row === dragged ? { dimColor: true } : {}),
+          ...(isGhost ? { dimColor: true, italic: true } : {}),
         }
         // What the row shows: its text, or while a card is dragged or carried
         // the other form of a header (chips, the keys), which runs to the edge.
@@ -547,8 +593,30 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
         ) {
           segs = row.carrySegs
           width = columns
+        } else if (
+          row.kind === 'header' &&
+          target !== undefined &&
+          row.column === target.column &&
+          index !== target.lit
+        ) {
+          hot = row.labelAt
+        } else if (row.kind === 'text' && row.keyed && cursor?.shown === true) {
+          segs = row.keyed
         }
-        const only = segs.length === 1 ? segs[0] : undefined
+        // A pointer resting on a row, or the card being dragged, is pointed at.
+        const isHover =
+          row.key === hover && gesture === null && index !== cursorAt
+        let isMarked = false
+        if (isGhost || (isHover && row.kind !== 'group')) {
+          segs = pointed(segs)
+          isMarked = true
+        } else if (isHover && row.kind === 'group') {
+          segs = segs.map((seg, at) =>
+            at === 0 ? { ...seg, underline: true as const } : seg,
+          )
+          isMarked = true
+        }
+        const only = segs.length === 1 && !isMarked ? segs[0] : undefined
         // The highlight and the line run to the pane's edge.
         const pad = isLit || isLine ? Math.max(0, columns - width) : 0
 

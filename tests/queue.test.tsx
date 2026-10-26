@@ -87,17 +87,17 @@ const claude = async (ui: BoardUi) =>
     .trim()
     .replace(/\s*─+\s*/, ' | ')
     .replace(/ \| $/, '')
-// Whether a card's row is drawn dim: the Client dims its Text, the Buttons themselves.
-async function isDim(ui: BoardUi, key: string, number: number) {
+// Whether a card's row is drawn dim: the Client dims its title's Text (the number is dim in every row), the Buttons themselves.
+async function isDim(ui: BoardUi, key: string, title: string) {
   if (!(await hasClient(ui))) return (await rowStyle(ui, key)).dimColor === true
 
-  const lefts = await ui.findAll({
+  const shown = await ui.find({
     type: 'Text',
-    text: new RegExp(`^ {2}#${number} `),
+    text: new RegExp(`^${title}$`),
     in: 'board',
   })
 
-  return lefts.some(left => left.props.dimColor === true)
+  return shown?.props.dimColor === true
 }
 const held = (store: Map<string, string>) =>
   Object.keys(JSON.parse(store.get(KEY) ?? '{"held":{}}').held)
@@ -129,8 +129,8 @@ for (const surface of SURFACES) {
     expect(await claude(ui)).toBe('Claude 2 | limit 1 · 1 queued')
     expect(await text(ui, BETA)).toContain('queued 1')
     expect(await text(ui, ALPHA)).not.toContain('queued')
-    expect(await isDim(ui, BETA, 2)).toBe(true)
-    expect(await isDim(ui, ALPHA, 1)).toBe(false)
+    expect(await isDim(ui, BETA, 'Beta')).toBe(true)
+    expect(await isDim(ui, ALPHA, 'Alpha')).toBe(false)
     expect(held(store)).toEqual(['md:0002-beta'])
     await ui.unmount()
   })

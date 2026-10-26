@@ -182,7 +182,22 @@ export function padEnd(text: string, width: number): string {
   return text + ' '.repeat(Math.max(0, width - cellWidth(text)))
 }
 
-/** A short relative age: `now`, `5m`, `3h`, `2d`; empty for a bad date. */
+/** Pads a string with spaces on the left to exactly `width` cells. */
+export function padStart(text: string, width: number): string {
+  return ' '.repeat(Math.max(0, width - cellWidth(text))) + text
+}
+
+/** Copy written in full and again for a narrow pane. */
+export type Copy = { long: string; short: string }
+
+/** `copy` whole when it fits `room` cells, else its short form, cut if that is too wide as well. */
+export function fit(copy: Copy, room: number): string {
+  if (cellWidth(copy.long) <= room) return copy.long
+
+  return truncate(copy.short, room)
+}
+
+/** A short relative age of at most 3 cells: `now`, `5m`, `3h`, `13d`, `8w`, `2y`; empty for a bad date. */
 export function ageLabel(since: string | number, now: number): string {
   const then = typeof since === 'number' ? since : Date.parse(since)
   if (Number.isNaN(then)) return ''
@@ -192,7 +207,12 @@ export function ageLabel(since: string | number, now: number): string {
   if (minutes < 60) return `${minutes}m`
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h`
 
-  return `${Math.floor(minutes / (60 * 24))}d`
+  const days = Math.floor(minutes / (60 * 24))
+  if (days < 14) return `${days}d`
+  if (days < 365) return `${Math.floor(days / 7)}w`
+
+  // Past 99 years the label would outgrow its 3 cells.
+  return `${Math.min(99, Math.floor(days / 365))}y`
 }
 
 /**

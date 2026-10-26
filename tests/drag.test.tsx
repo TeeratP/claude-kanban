@@ -146,6 +146,71 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
+  test(`a drag points at the card, slants it, and lights the name of the section it would land in on the ${surface}`, async ($, on) => {
+    const { clock, ui } = await start($, on, surface)
+    const from = await rowIndex(ui, DOCS)
+    const human = await rowIndex(ui, 'hdr:human')
+    // The pieces of a header row drawn inverse.
+    const lit = async (key: string) => {
+      const outer = (await row(ui, key))?.children[0] as
+        | { children?: { props?: { inverse?: true }; children: string[] }[] }
+        | undefined
+
+      return (outer?.children ?? []).flatMap(part =>
+        part.props?.inverse === true ? [part.children.join('')] : [],
+      )
+    }
+
+    await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
+    expect((await row(ui, DOCS))?.text).toMatch(/^ {2,}#3 Write docs/)
+    await ui.pointer({ type: 'move', x: 3, y: human, button: 'left' })
+
+    expect((await row(ui, DOCS))?.text).toMatch(/^› +#3 Write docs/)
+    expect(await rowStyle(ui, DOCS)).toMatchObject({
+      dimColor: true,
+      italic: true,
+    })
+    // The line is under the header; the section's name is lit, not its row.
+    expect(await lineRows(ui)).toEqual(['hdr:human'])
+    expect(await lit('hdr:human')).toEqual(['Human'])
+    expect(await lit('hdr:claude')).toEqual([])
+    expect((await rowStyle(ui, 'hdr:human')).inverse).toBeUndefined()
+
+    // A place the card already has lights nothing.
+    await ui.pointer({ type: 'move', x: 3, y: from, button: 'left' })
+    expect(await lit('hdr:human')).toEqual([])
+    expect(await lit('hdr:backlog')).toEqual([])
+    await ui.pointer({ type: 'up', x: 3, y: from, button: 'left' })
+    await clock.advance(SYNC_PAUSE)
+    await ui.unmount()
+  })
+
+  test(`a pointer resting on a card, with no button down, marks it and nothing else on the ${surface}`, async ($, on) => {
+    const { ui } = await start($, on, surface)
+    const docs = await rowIndex(ui, DOCS)
+    const login = await rowIndex(ui, LOGIN)
+    const human = await rowIndex(ui, 'hdr:human')
+    const marked = async () =>
+      (await rowKeys(ui)).filter(key => /^› /.test(String(key)))
+    const textOf = async (key: string) => (await row(ui, key))?.text
+
+    await ui.pointer({ type: 'move', x: 5, y: docs })
+    expect(await textOf(DOCS)).toMatch(/^› +#3 Write docs/)
+    expect(await textOf(LOGIN)).toMatch(/^ +#1 Fix login/)
+    await ui.pointer({ type: 'move', x: 5, y: login })
+    expect(await textOf(DOCS)).toMatch(/^ +#3 Write docs/)
+    expect(await textOf(LOGIN)).toMatch(/^› +#1 Fix login/)
+    // A section header is a label, not something to press: no mark.
+    await ui.pointer({ type: 'move', x: 5, y: human })
+    expect(await textOf(LOGIN)).toMatch(/^ +#1 Fix login/)
+    expect(await textOf('hdr:human')).toMatch(/^ {2}Human/)
+    await ui.pointer({ type: 'move', x: 5, y: docs })
+    await ui.pointer({ type: 'leave', x: 5, y: docs })
+    expect(await textOf(DOCS)).toMatch(/^ +#3 Write docs/)
+    expect(await marked()).toEqual([])
+    await ui.unmount()
+  })
+
   test(`a drop that leaves the card where it is, or is off the list, moves nothing on the ${surface}`, async ($, on) => {
     const { clock, ui, files } = await start($, on, surface)
     const docs = await rowIndex(ui, DOCS)
@@ -341,9 +406,9 @@ for (const surface of WITH_CLIENT) {
     const { ui } = await start($, on, surface, files)
 
     // Seven rows under the header: six cards and the count of the other two.
-    expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
+    expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
     await click(ui, 'more:backlog:down')
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 2 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 2 more$/)
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     await click(ui, 'more:backlog:up')
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
@@ -472,7 +537,7 @@ for (const surface of WITH_CLIENT) {
 
     expect(result).toEqual({})
     expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 1 more$/)
     expect(await row(ui, 'card:md:0001-b')).toBeUndefined()
     expect(await row(ui, 'card:md:0002-b')).toBeDefined()
     await ui.unmount()
