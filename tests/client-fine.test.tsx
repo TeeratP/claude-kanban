@@ -46,6 +46,7 @@ const header = (column: string): RowView => ({
   ...row(`hdr:${column}`, column),
   kind: 'header',
   column,
+  labelAt: 0,
   moveKeys: [],
   carrySegs: [],
   isOrdered: true,
@@ -125,6 +126,8 @@ function mount(shown: BoardProps = props) {
 
   return {
     posts,
+    // The state as the module last set it: its identity changes with every set.
+    state: () => state,
     pointer: (event: ClientPointerEvent) => {
       onPointer(event)
       return draw()
@@ -383,5 +386,248 @@ test('a drag cannot start on a second row', () => {
   board.pointer(at('move', 6))
   board.pointer(at('up', 6))
 
+  expect(board.posts).toEqual([])
+})
+
+// A row's text as drawn, strings of every Text inside it joined.
+const flat = (node: Node | string | false): string =>
+  typeof node === 'string'
+    ? node
+    : node === false
+      ? ''
+      : node.children.map(flat).join('')
+
+// The row Box with a key, and its drawn text.
+const rowOf = (tree: Node, key: string) =>
+  tree.children.find(box => box.props.key === key)
+const textOfRow = (tree: Node, key: string) => {
+  const box = rowOf(tree, key)
+
+  return box === undefined ? undefined : flat(box)
+}
+
+// Rows with an indent, as the board draws them, so a hover has a free cell to mark.
+const pad = (key: string, text: string, extra: Partial<RowView> = {}) =>
+  ({ ...row(key, text), ...extra }) as RowView
+const group = (name: string, text: string): RowView => ({
+  ...row(`grp:${name}`, text),
+  kind: 'group',
+  group: name,
+  isOpen: false,
+  sections: [],
+  chipSegs: [],
+  chips: [],
+  carrySegs: [],
+})
+const spaced: BoardProps = {
+  columns: 40,
+  rows: [
+    group('active', '▸ Active'),
+    pad('hdr:claude', '  Claude', {
+      kind: 'header',
+      column: 'claude',
+      labelAt: 0,
+      moveKeys: [],
+      carrySegs: [],
+      isOrdered: true,
+    } as Partial<RowView>),
+    pad('card:a', '  a', {
+      kind: 'card',
+      column: 'claude',
+      cardId: 'a',
+    } as Partial<RowView>),
+    pad('card:b', '  b', {
+      kind: 'card',
+      column: 'claude',
+      cardId: 'b',
+    } as Partial<RowView>),
+    pad('more:claude:down', '  ↓ 2 more', {
+      kind: 'more',
+      column: 'claude',
+      dir: 'down',
+    } as Partial<RowView>),
+    pad('blank:claude:4', ' ', {
+      kind: 'text',
+      column: 'claude',
+    } as Partial<RowView>),
+  ],
+}
+const hover = (y: number) => ({ type: 'move', x: 3, y }) as ClientPointerEvent
+
+test('a pointer resting on a card, a more row or a group header is pointed at, and nothing else is', () => {
+  const board = mount(spaced)
+
+  // Rows 2 and 3 are cards, row 4 is a more row.
+  let tree = board.pointer(hover(2))
+  expect(textOfRow(tree, 'card:a')).toBe('› a')
+  expect(textOfRow(tree, 'card:b')).toBe('  b')
+  tree = board.pointer(hover(3))
+  expect(textOfRow(tree, 'card:a')).toBe('  a')
+  expect(textOfRow(tree, 'card:b')).toBe('› b')
+  tree = board.pointer(hover(4))
+  expect(textOfRow(tree, 'more:claude:down')).toBe('› ↓ 2 more')
+  // A header, a spare row and the space past the list are labels or nothing.
+  for (const y of [1, 5, 9]) {
+    tree = board.pointer(hover(y))
+    expect(tree.children.map(flat)).toEqual(
+      spaced.rows.map(one => one.segs.map(s => s.text).join('')),
+    )
+  }
+})
+
+test('a group header under the pointer keeps its chevron and underlines its name', () => {
+  const board = mount(spaced)
+  const tree = board.pointer(hover(0))
+  const box = rowOf(tree, 'grp:active')
+
+  expect(box && flat(box)).toBe('▸ Active')
+  const parts = box?.children[0]?.children ?? []
+  expect(
+    parts.some(
+      part => typeof part === 'object' && part.props.underline === true,
+    ),
+  ).toBe(true)
+  // The whole row is not underlined: that mark is the insertion line.
+  expect(lined(tree)).toEqual([])
+})
+
+test('the pointer leaving, or a hover over a row with nothing to press, ends the mark', () => {
+  const board = mount(spaced)
+
+  board.pointer(hover(2))
+  expect(
+    textOfRow(board.pointer({ type: 'leave', x: 3, y: 2 }), 'card:a'),
+  ).toBe('  a')
+  board.pointer(hover(2))
+  expect(textOfRow(board.pointer(hover(1)), 'card:a')).toBe('  a')
+})
+
+test('a hover sets the state only when the row under the pointer changes', () => {
+  const board = mount(spaced)
+
+  board.pointer(hover(2))
+  const first = board.state()
+  board.pointer({ ...hover(2), x: 9 })
+  board.pointer({ ...hover(2), x: 12 })
+  expect(board.state()).toBe(first)
+  board.pointer(hover(3))
+  expect(board.state()).not.toBe(first)
+  // Nothing to press under a pointer that was never over anything: no state at all.
+  const idle = mount(spaced)
+  idle.pointer(hover(1))
+  expect(idle.state()).toBeUndefined()
+})
+
+test('a mark is not drawn on the row under the cursor, nor while a button is held', () => {
+  const board = mount(spaced)
+
+  board.pointer(at('down', 2))
+  board.pointer(at('up', 2))
+  board.key({ key: 'down' })
+  // The cursor is on a, and a hover there shows the cursor only (its row runs to the edge).
+  expect(textOfRow(board.pointer(hover(2)), 'card:a')?.trimEnd()).toBe('  a')
+  // A held button is a drag, whose own mark is the ghost's.
+  board.pointer(at('down', 3))
+  expect(textOfRow(board.pointer(at('move', 4)), 'card:b')?.trimEnd()).toBe(
+    '› b',
+  )
+  expect(textOfRow(board.pointer(at('move', 4)), 'more:claude:down')).toBe(
+    '  ↓ 2 more',
+  )
+})
+
+test('the dragged card is dim and slanted with a mark in the free cell, and the section it would land in has its name lit', () => {
+  const board = mount(spaced)
+
+  board.pointer(at('down', 3))
+  const tree = board.pointer(at('move', 2))
+  const ghost = rowOf(tree, 'card:b')
+
+  expect(ghost && flat(ghost)).toBe('› b')
+  expect(ghost?.children[0]?.props).toMatchObject({
+    dimColor: true,
+    italic: true,
+  })
+  expect(rowOf(tree, 'card:a')?.children[0]?.props.italic).toBeUndefined()
+})
+
+test('the header of the section a drag would land in has its name lit, not the whole row', () => {
+  const named: BoardProps = {
+    columns: 40,
+    rows: [
+      {
+        ...row('hdr:claude', ''),
+        segs: [seg('  '), seg('Claude'), seg(' 2')],
+        width: 10,
+        kind: 'header',
+        column: 'claude',
+        labelAt: 1,
+        moveKeys: [],
+        carrySegs: [],
+        isOrdered: true,
+      },
+      pad('card:a', '  a', {
+        kind: 'card',
+        column: 'claude',
+        cardId: 'a',
+      } as Partial<RowView>),
+      pad('card:b', '  b', {
+        kind: 'card',
+        column: 'claude',
+        cardId: 'b',
+      } as Partial<RowView>),
+      {
+        ...row('hdr:backlog', ''),
+        segs: [seg('  '), seg('Backlog'), seg(' 1')],
+        width: 11,
+        kind: 'header',
+        column: 'backlog',
+        labelAt: 1,
+        moveKeys: [],
+        carrySegs: [],
+        isOrdered: true,
+      },
+      pad('card:c', '  c', {
+        kind: 'card',
+        column: 'backlog',
+        cardId: 'c',
+      } as Partial<RowView>),
+    ],
+  }
+  const lit = (tree: Node, key: string) =>
+    (rowOf(tree, key)?.children[0]?.children ?? []).flatMap(part =>
+      typeof part === 'object' && part.props.inverse === true
+        ? [flat(part)]
+        : [],
+    )
+  const board = mount(named)
+
+  board.pointer(at('down', 4))
+  // Over a card of Claude: the line is under the card above, and Claude's name is lit.
+  const tree = board.pointer(at('move', 2, 2.8))
+  expect(lit(tree, 'hdr:claude')).toEqual(['Claude'])
+  expect(lit(tree, 'hdr:backlog')).toEqual([])
+  expect(rowOf(tree, 'hdr:claude')?.children[0]?.props.inverse).toBeUndefined()
+  // A place the card already has lights nothing.
+  const home = board.pointer(at('move', 4))
+  expect(lit(home, 'hdr:claude')).toEqual([])
+  expect(lit(home, 'hdr:backlog')).toEqual([])
+})
+
+test('the legend lists the cursor keys once a key has brought the cursor up', () => {
+  const legend: RowView = {
+    ...row('legend', '  ⏎ open · m move'),
+    kind: 'text',
+    keyed: [seg('  ↑↓ ⏎ open · m move')],
+  }
+  const board = mount({ columns: 40, rows: [...spaced.rows, legend] })
+
+  expect(textOfRow(board.pointer(hover(1)), 'legend')).toBe('  ⏎ open · m move')
+  expect(textOfRow(board.key({ key: 'down' }), 'legend')).toBe(
+    '  ↑↓ ⏎ open · m move',
+  )
+  // It is no stop for the cursor, and no target for a drop.
+  board.pointer(at('down', 6))
+  board.pointer(at('up', 6))
   expect(board.posts).toEqual([])
 })

@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import { cellWidth } from '../hooks/model'
+import { S } from '../hooks/strings'
 import { toolbar, treeKinds } from './board-ui'
 import type { BoardUi } from './board-ui'
 import { fakeProcess } from './fake-gh'
@@ -80,8 +81,9 @@ async function failTwoMoves(
 }
 
 const HINT = ' · ↑↓ ⏎ open · m move'
-const status = (label: string, hint: boolean) =>
-  ` ${label} · updated now${hint ? HINT : ''}`
+// " (auto)" gives way to the backend's name below 40 columns.
+const status = (name: string, width: number, hint: boolean) =>
+  ` ${name}${width < 40 ? '' : ' (auto)'} · updated just now${hint ? HINT : ''}`
 
 // The key hint shows where the pane has a Client and 80 columns hold it.
 const hasHint = (surface: RenderSurface, width: number) =>
@@ -103,7 +105,7 @@ const MOBILE_ACTIONS = ' r: Refresh'
 
 for (const surface of EVERY_SURFACE) {
   for (const backend of ['local', 'github'] as const) {
-    const label = backend === 'local' ? 'Local (auto)' : 'GitHub (auto)'
+    const label = backend === 'local' ? 'Local' : 'GitHub'
 
     test(`${backend}: row 1 is the status and row 2 the labelled actions at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
       await open($, on, surface, backend)
@@ -113,7 +115,7 @@ for (const surface of EVERY_SURFACE) {
         const rows = await toolbar(ui)
 
         expect(rows).toEqual([
-          status(label, hasHint(surface, width)),
+          status(label, width, hasHint(surface, width)),
           surface === 'mobile' ? MOBILE_ACTIONS : ACTIONS,
         ])
         expectReadable(rows, width)
@@ -144,7 +146,7 @@ for (const surface of EVERY_SURFACE) {
       const rows = await toolbar(ui)
 
       expect(rows).toEqual([
-        status('Local (auto)', hasHint(surface, width)),
+        status('Local', width, hasHint(surface, width)),
         expected[width],
       ])
       expectReadable(rows, width)
@@ -208,7 +210,7 @@ for (const surface of TYPING) {
       const rows = await toolbar(ui)
 
       expect(rows).toEqual([
-        status('Local (auto)', hasHint(surface, width)),
+        status('Local', width, hasHint(surface, width)),
         expected[width],
       ])
       expectReadable(rows, width)
@@ -261,7 +263,7 @@ for (const surface of TYPING) {
       const rows = await toolbar(ui)
 
       expect(rows).toEqual([
-        status('Local (auto)', hasHint(surface, width)),
+        status('Local', width, hasHint(surface, width)),
         expected[width],
       ])
       expectReadable(rows, width)
@@ -348,4 +350,32 @@ test('the status is dim, with no colour of its own', async ($, on) => {
   expect(first?.props.dimColor).toBe(true)
   expect(first?.props.color).toBeUndefined()
   await ui.unmount()
+})
+
+test('the status says in words how old the board is: just now, then minutes and hours ago', async ($, on) => {
+  const world = await open($, on, 'terminal')
+  const statusAt = async () => {
+    const ui = await mount($, 'terminal', 80)
+    const [first = ''] = await toolbar(ui)
+    await ui.unmount()
+
+    return first
+  }
+
+  expect(await statusAt()).toContain('· updated just now')
+  await world.clock.advance(5 * 60_000)
+  expect(await statusAt()).toContain('· updated 5m ago')
+  await world.clock.advance(2 * 60 * 60_000)
+  expect(await statusAt()).toContain('· updated 2h ago')
+})
+
+test('the status copy: ages in words, and the backend name without (auto) when the pane is narrow', () => {
+  expect(S.updated('now')).toBe('updated just now')
+  expect(S.updated('5m')).toBe('updated 5m ago')
+  expect(S.updated('3w')).toBe('updated 3w ago')
+  expect(S.backendLabel('auto', 'local')).toBe('Local (auto)')
+  expect(S.backendLabel('auto', 'github', true)).toBe('GitHub')
+  // A backend that was asked for never had (auto) to lose.
+  expect(S.backendLabel('local', 'local')).toBe('Local')
+  expect(S.backendLabel('local', 'local', true)).toBe('Local')
 })

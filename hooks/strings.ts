@@ -4,8 +4,8 @@ import type {
   KanbanColumn,
   KanbanGroup,
   KanbanSection,
-  KanbanTag,
 } from '../types'
+import type { Copy } from './model'
 
 const COL = {
   human: 'Human',
@@ -41,19 +41,13 @@ export const S = {
     `kanban: could not refresh the board: ${reason}`,
 
   col: COL,
-  tagShort: {
-    review: 'rev',
-    human: 'hum',
-    question: '?',
-  } satisfies Record<KanbanTag, string>,
-  empty: '  (empty)',
-  noCards: 'No cards yet. Add .kanban/0001-title.md',
   more: (dir: 'up' | 'down', n: number) =>
-    `  ${dir === 'up' ? '↑' : '↓'} ${n} more`,
+    `${dir === 'up' ? '↑' : '↓'} ${n} more`,
 
   refresh: 'Refresh',
   loading: 'loading…',
-  updated: (age: string) => `updated ${age}`,
+  updated: (age: string) =>
+    age === 'now' ? 'updated just now' : `updated ${age} ago`,
   expand: '▸',
   collapse: '▾',
   syncing: '⟳',
@@ -203,12 +197,17 @@ export const S = {
     `kanban: could not send the prompt to Claude: ${reason}`,
 
   // #10
-  backendLabel: (mode: KanbanBackendMode, kind?: 'github' | 'local') => {
+  // `isShort` drops the " (auto)" a narrow pane has no room for.
+  backendLabel: (
+    mode: KanbanBackendMode,
+    kind?: 'github' | 'local',
+    isShort = false,
+  ) => {
     const name = kind ?? mode
 
     return name === 'auto'
       ? ''
-      : `${BACKEND[name]}${mode === 'auto' ? ' (auto)' : ''}`
+      : `${BACKEND[name]}${mode === 'auto' && !isShort ? ' (auto)' : ''}`
   },
   githubSignedOut: (reason: string) =>
     `gh auth status failed: run gh auth login (${reason})`,
@@ -304,7 +303,6 @@ export const S = {
     `kanban: could not record Claude's activity: ${reason}`,
 
   // #20
-  queuedMark: (place: number) => `queued ${place}`,
   queueSaveFailed: (reason: string) =>
     `kanban: could not save the queue: ${reason}`,
   queueRestoreFailed: (reason: string) =>
@@ -363,7 +361,6 @@ export const S = {
   filterSubmit: 'done',
   filterClear: '✕',
   filterCount: (shown: number, total: number) => `${shown}/${total}`,
-  noMatches: '  (no matches)',
 
   // #31
   positionSkipped: (card: KanbanCard, reason: string) =>
@@ -375,10 +372,6 @@ export const S = {
   githubConfigUnclear:
     'CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
   configUnclear: 'board config not understood',
-  githubHint: [
-    'GitHub board? Link a Project to the repo, or add Repo and Project board lines to CLAUDE.md or AGENTS.md',
-    'Not picked up? Set backend: github to see why',
-  ],
 
   // #33
   boardName: (number: number, title: string) => `#${number} ${title}`,
@@ -435,7 +428,6 @@ export const S = {
   suspendedLabelDescription: 'on hold (kanban Suspended)',
   badSection: (to: unknown) =>
     `"${String(to)}" is not a column; use backlog, human, claude, done, cancelled or suspended.`,
-  legend: { long: '⏎ open · m move · ⇧J/K reorder', short: '⏎ open · m move' },
 
   // #39
   paneTitleCount: (waiting: number) => `Kanban · ${waiting}`,
@@ -502,4 +494,52 @@ export const S = {
     { hint: '⏎', details: 'Hide' },
   ],
   filterTerms: 'words, #12, label:ai, @done',
+
+  // #37
+  // A card not yet made has no number: the column says `new`.
+  newCard: 'new',
+  // Marks a spare row of a section, under the numbers.
+  slot: '·',
+  // A queued card's place in the queue, in place of its age: `queued 1`, or `q1` in a narrow pane.
+  queued: (place: number, isShort: boolean) =>
+    isShort ? `q${place}` : `queued ${place}`,
+  // What a section says when it holds no card, long and short; the person's surface decides some.
+  emptyHuman: { long: 'All clear, nothing needs you', short: 'All clear' },
+  emptyClaude: (canDrag: boolean): Copy => ({
+    long: canDrag ? 'Idle · drag a card here' : 'Idle · open a card to move it',
+    short: 'Idle',
+  }),
+  emptyBacklog: (canType: boolean): Copy =>
+    canType
+      ? { long: 'Nothing yet · n adds a card', short: 'n adds a card' }
+      : { long: 'Nothing parked', short: 'Nothing parked' },
+  emptyDone: { long: 'Nothing finished yet', short: 'None yet' },
+  emptySuspended: { long: 'Nothing on hold', short: 'None' },
+  emptyCancelled: { long: 'Nothing dropped', short: 'None' },
+  noMatches: 'No matches',
+  // An empty board: what it is, and for an auto board on local cards how to use GitHub.
+  noCards: {
+    long: 'Cards live in .kanban/*.md here.',
+    short: 'Cards live in .kanban/',
+  },
+  noIssues: { long: 'No issues on this board yet.', short: 'No issues yet.' },
+  githubHint: [
+    {
+      long: 'On GitHub? Link a Project to the repo',
+      short: 'GitHub? Link a Project',
+    },
+    {
+      long: 'or set backend: github to see why.',
+      short: 'or set backend: github',
+    },
+  ] satisfies Copy[],
+  // The key hint in a spare row at the bottom of the list, before and after the first key.
+  legendIdle: {
+    long: '⏎ open · m move · ⇧J/K reorder',
+    short: '⏎ open · m move',
+  },
+  legendKeys: {
+    long: '↑↓ walk · ⏎ open · m+key move',
+    short: '↑↓ ⏎ open · m move',
+  },
 }

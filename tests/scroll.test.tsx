@@ -43,7 +43,7 @@ async function start($: Engine, on: On, files = board()) {
 test('the wheel over a section scrolls that section and nothing else', async ($, on) => {
   const { ui, scrolls } = await start($, on)
   expect(await row(ui, 'more:backlog:up')).toBeUndefined()
-  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
+  expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
 
   const result = await $.ui.scroll({
     ...SCROLL,
@@ -53,12 +53,12 @@ test('the wheel over a section scrolls that section and nothing else', async ($,
 
   expect(result).toEqual({})
   expect(scrolls).toHaveLength(0)
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
-  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 1 more$/)
+  expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
   expect(await row(ui, 'card:md:0011-b')).toBeUndefined()
   expect(await row(ui, 'card:md:0012-b')).toBeDefined()
   expect(await row(ui, 'more:human:up')).toBeUndefined()
-  expect((await row(ui, 'more:human:down'))?.text).toBe('  ↓ 3 more')
+  expect((await row(ui, 'more:human:down'))?.text).toMatch(/^ +↓ 3 more$/)
   await ui.unmount()
 })
 
@@ -81,7 +81,7 @@ test("the wheel finds a section by its tree row, under the toolbar's two rows", 
     pointer: { column: 3, row: HUMAN_MORE },
   })
   expect(scrolls).toHaveLength(1)
-  expect((await row(ui, 'more:human:up'))?.text).toBe('  ↑ 1 more')
+  expect((await row(ui, 'more:human:up'))?.text).toMatch(/^ +↑ 1 more$/)
   expect(await row(ui, 'more:backlog:up')).toBeUndefined()
 
   await $.ui.scroll({
@@ -90,7 +90,7 @@ test("the wheel finds a section by its tree row, under the toolbar's two rows", 
     pointer: { column: 3, row: BACKLOG_MORE },
   })
   expect(scrolls).toHaveLength(1)
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 1 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 1 more$/)
   await ui.unmount()
 })
 
@@ -99,12 +99,12 @@ test('the wheel stops at the ends of the list', async ($, on) => {
   const pointer = { column: 3, row: BACKLOG_CARD }
 
   await $.ui.scroll({ ...SCROLL, by: 40, pointer })
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 2 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 2 more$/)
   expect(await row(ui, 'more:backlog:down')).toBeUndefined()
 
   await $.ui.scroll({ ...SCROLL, by: -40, pointer })
   expect(await row(ui, 'more:backlog:up')).toBeUndefined()
-  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
+  expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
   await ui.unmount()
 })
 
@@ -118,7 +118,7 @@ test('the wheel over a header scrolls its section too', async ($, on) => {
   })
 
   expect(scrolls).toHaveLength(0)
-  expect((await row(ui, 'more:human:up'))?.text).toBe('  ↑ 1 more')
+  expect((await row(ui, 'more:human:up'))?.text).toMatch(/^ +↑ 1 more$/)
   expect(await row(ui, 'more:backlog:up')).toBeUndefined()
   await ui.unmount()
 })
@@ -131,7 +131,8 @@ test('the wheel over a blank row belongs to its section: with nothing to scroll 
   }
   files[path(11, 'b')] = card(11, { status: 'backlog', title: 'Only one' })
   const { ui, scrolls } = await start($, on, files)
-  expect((await row(ui, 'blank:backlog:3'))?.text).toBe(' ')
+  // A spare row of a section is marked with a quiet dot under the numbers.
+  expect((await row(ui, 'blank:backlog:3'))?.text).toMatch(/^ +·$/)
 
   // Backlog has one card: a blank row of it cannot scroll it.
   await $.ui.scroll({
@@ -180,21 +181,21 @@ test('every section of the Inactive group scrolls on its own, from its own offse
   const wheel = (at: number, by: number) =>
     $.ui.scroll({ ...SCROLL, by, pointer: { column: 3, row: at } })
 
-  expect((await row(ui, 'more:done:down'))?.text).toBe('  ↓ 4 more')
-  expect((await row(ui, 'more:suspended:down'))?.text).toBe('  ↓ 6 more')
+  expect((await row(ui, 'more:done:down'))?.text).toMatch(/^ +↓ 4 more$/)
+  expect((await row(ui, 'more:suspended:down'))?.text).toMatch(/^ +↓ 6 more$/)
 
   await wheel(14, 2)
-  expect((await row(ui, 'more:cancelled:up'))?.text).toBe('  ↑ 2 more')
+  expect((await row(ui, 'more:cancelled:up'))?.text).toMatch(/^ +↑ 2 more$/)
   expect(await row(ui, 'more:done:up')).toBeUndefined()
   expect(await row(ui, 'more:suspended:up')).toBeUndefined()
 
   await wheel(22, 3)
-  expect((await row(ui, 'more:suspended:up'))?.text).toBe('  ↑ 3 more')
-  expect((await row(ui, 'more:cancelled:up'))?.text).toBe('  ↑ 2 more')
+  expect((await row(ui, 'more:suspended:up'))?.text).toMatch(/^ +↑ 3 more$/)
+  expect((await row(ui, 'more:cancelled:up'))?.text).toMatch(/^ +↑ 2 more$/)
 
   // Done lists its newest ten, so it ends before Suspended does.
   await wheel(6, 40)
-  expect((await row(ui, 'more:done:up'))?.text).toBe('  ↑ 4 more')
+  expect((await row(ui, 'more:done:up'))?.text).toMatch(/^ +↑ 4 more$/)
   expect(await row(ui, 'more:done:down')).toBeUndefined()
   expect(scrolls).toHaveLength(0)
   await ui.unmount()
@@ -224,12 +225,12 @@ test('the more rows page a section by a screenful', async ($, on) => {
   const { ui } = await start($, on)
 
   await click(ui, 'more:backlog:down')
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 2 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 2 more$/)
   expect(await row(ui, 'more:backlog:down')).toBeUndefined()
 
   await click(ui, 'more:backlog:up')
   expect(await row(ui, 'more:backlog:up')).toBeUndefined()
-  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 2 more')
+  expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
   await ui.unmount()
 })
 
@@ -247,8 +248,8 @@ test('a smaller pane gives every section fewer rows, and the same to each', asyn
   // Three rows under each header: two cards and the count of the rest.
   expect((await rowKeys(ui)).filter(key => /-b$/.test(key))).toHaveLength(2)
   expect((await rowKeys(ui)).filter(key => /-h$/.test(key))).toHaveLength(2)
-  expect((await row(ui, 'more:backlog:down'))?.text).toBe('  ↓ 6 more')
-  expect((await row(ui, 'more:human:down'))?.text).toBe('  ↓ 7 more')
+  expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 6 more$/)
+  expect((await row(ui, 'more:human:down'))?.text).toMatch(/^ +↓ 7 more$/)
   await ui.unmount()
 })
 
@@ -285,11 +286,11 @@ test("at the end of a section the wheel is the engine's, so a short pane can scr
   // The last card, under the count of the rest above it.
   await wheel(40)
   expect(scrolls).toHaveLength(1)
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 7 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 7 more$/)
   expect(await row(ui, 'more:backlog:down')).toBeUndefined()
 
   await wheel(1)
   expect(scrolls).toHaveLength(2)
-  expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 7 more')
+  expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 7 more$/)
   await ui.unmount()
 })

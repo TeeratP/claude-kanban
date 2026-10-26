@@ -10,18 +10,23 @@ import {
   hitTest,
   layoutBoard,
   maxOffset,
+  numberColumn,
+  numberLabel,
   sectionBody,
   sectionList,
   sectionWindow,
+  titleColumn,
 } from '../hooks/layout'
-import type { Row } from '../hooks/layout'
+import type { CardLine, Row } from '../hooks/layout'
 import {
   COLUMNS,
   GROUPS,
   INITIAL_UI,
   ageLabel,
   cellWidth,
+  fit,
   groupOf,
+  padStart,
   truncate,
 } from '../hooks/model'
 
@@ -542,6 +547,17 @@ test('under a filter the headers count the matches out of the whole section', ()
   ).toEqual({ kind: 'header', column: 'backlog', shown: 2, total: 3 })
 })
 
+// A card row's cells joined, as it is drawn.
+const lineText = (line: CardLine) =>
+  line.indent +
+  line.number +
+  ' ' +
+  line.title +
+  line.gap +
+  line.mark +
+  line.between +
+  line.age
+
 test('a card row never outgrows the pane, however wide its characters', () => {
   const titles = [
     'Fix login redirect loop that happens on every single request',
@@ -549,35 +565,117 @@ test('a card row never outgrows the pane, however wide its characters', () => {
     'ผู้ใช้ไม่สามารถเข้าสู่ระบบได้เมื่อรหัสผ่านหมดอายุแล้ว',
     '🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀',
   ]
-  for (const columns of [20, 30, 44, 80]) {
+  for (const columns of [20, 24, 30, 44, 80]) {
     for (const title of titles) {
-      for (const tag of [undefined, 'review' as const]) {
-        const line = cardLine(
-          cardOf(123, 'human', { title, ...(tag ? { tag } : {}) }),
-          columns,
-          '⟳',
-          '5m',
-        )
-        const width = cellWidth(line.left + line.title + line.glyph + line.age)
+      for (const tag of [undefined, 'question' as const]) {
+        for (const meta of [
+          { mark: '', age: '5m' },
+          { mark: '⟳', age: '5m' },
+          { mark: '✕', age: '' },
+          { mark: '', age: 'queued 1' },
+          { mark: '⟳', age: 'q1' },
+        ]) {
+          const one = cardOf(123, 'human', { title, ...(tag ? { tag } : {}) })
+          const line = cardLine(
+            one,
+            columns,
+            numberColumn([one], columns),
+            meta,
+          )
 
-        expect(width).toBeLessThanOrEqual(columns)
+          expect(cellWidth(lineText(line))).toBeLessThanOrEqual(columns)
+        }
       }
     }
   }
 })
 
-test('a card row lines its age up at the right edge', () => {
-  const line = cardLine(cardOf(7, 'claude'), 44, ' ', '5m')
+test('titles start at one cell: the numbers are right-aligned in a column as wide as the widest on the board', () => {
+  const board = [cardOf(7, 'claude'), cardOf(12, 'human'), cardOf(111, 'done')]
+  const column = numberColumn(board, 44)
 
-  expect(line.left).toBe('  #7 ')
-  expect(cellWidth(line.left + line.title + line.glyph + line.age)).toBe(44)
-  expect(line.age).toBe(' 5m')
+  expect(column).toEqual({ width: 4, hasHash: true })
+  expect(titleColumn(board, 44)).toBe(7)
+  for (const one of board) {
+    const line = cardLine(one, 44, column, { mark: '', age: '5m' })
+    // The indent, the number ending at the column's edge, a space, the title.
+    expect(lineText(line).indexOf('Card')).toBe(7)
+    expect(cellWidth(line.indent + line.number)).toBe(6)
+  }
 })
 
-test('a card row drops the age when the title would have no room', () => {
-  const line = cardLine(cardOf(7, 'claude'), 13, ' ', '5m')
+test('the number column of a board with no cards is four cells, and a question or a card not yet made has its own label', () => {
+  expect(numberColumn([], 44)).toEqual({ width: 4, hasHash: true })
+  expect(numberLabel(cardOf(23, 'human', { tag: 'question' }))).toBe('?23')
+  expect(numberLabel(cardOf(23, 'human', { tag: 'review' }))).toBe('#23')
+  expect(numberLabel(cardOf(0, 'backlog', { id: 'new:1' }))).toBe('new')
+  // A pending card widens the column to its three cells.
+  expect(numberColumn([cardOf(5, 'backlog', { id: 'new:1' })], 44)).toEqual({
+    width: 3,
+    hasHash: true,
+  })
+})
 
-  expect(line.age).toBe('')
+test('the # goes from the numbers when they would take more than a quarter of the row', () => {
+  const board = [cardOf(1234567, 'backlog')]
+
+  expect(numberColumn(board, 44)).toEqual({ width: 8, hasHash: true })
+  expect(numberColumn(board, 24)).toEqual({ width: 7, hasHash: false })
+  const line = cardLine(board[0] as KanbanCard, 24, numberColumn(board, 24), {
+    mark: '',
+    age: '5m',
+  })
+  expect(line.number).toBe('1234567')
+  expect(cellWidth(lineText(line))).toBeLessThanOrEqual(24)
+})
+
+test('a card row ends flush right in the age, in 3 cells, and a sync mark comes before it', () => {
+  const one = cardOf(7, 'claude')
+  const column = numberColumn([one], 44)
+  const plain = cardLine(one, 44, column, { mark: '', age: '5m' })
+  const marked = cardLine(one, 44, column, { mark: '⟳', age: '5m' })
+  const alone = cardLine(one, 44, column, { mark: '⟳', age: '' })
+
+  expect(cellWidth(lineText(plain))).toBe(44)
+  expect(plain.age).toBe(' 5m')
+  expect(lineText(plain).endsWith(' 5m')).toBe(true)
+  expect(marked.mark + marked.between + marked.age).toBe('⟳  5m')
+  expect(cellWidth(lineText(marked))).toBe(44)
+  expect(alone.mark).toBe('⟳')
+  expect(alone.age).toBe('')
+  expect(lineText(alone).endsWith('⟳')).toBe(true)
+  expect(cellWidth(lineText(alone))).toBe(44)
+})
+
+test('the title gives up room only while a mark shows, and always leaves two cells before the meta', () => {
+  const one = cardOf(7, 'claude', { title: 'x'.repeat(60) })
+  const column = numberColumn([one], 44)
+  const plain = cardLine(one, 44, column, { mark: '', age: '5m' })
+  const marked = cardLine(one, 44, column, { mark: '⟳', age: '5m' })
+
+  expect(cellWidth(plain.title) - cellWidth(marked.title)).toBe(2)
+  expect(plain.gap).toBe('  ')
+  expect(marked.gap).toBe('  ')
+  // With no mark and no age nothing is reserved.
+  const bare = cardLine(one, 44, column, { mark: '', age: '' })
+  expect(cellWidth(bare.title)).toBe(44 - 2 - 2 - 1)
+  expect(bare.gap).toBe('')
+})
+
+test('a card row drops the age when the title would have fewer than 8 cells', () => {
+  const one = cardOf(7, 'claude', { title: 'Long enough title to need room' })
+  const kept = cardLine(one, 24, numberColumn([one], 24), {
+    mark: '',
+    age: '5m',
+  })
+  const tight = cardLine(one, 16, numberColumn([one], 16), {
+    mark: '',
+    age: '5m',
+  })
+
+  expect(kept.age).toBe(' 5m')
+  expect(tight.age).toBe('')
+  expect(cellWidth(tight.title)).toBeGreaterThanOrEqual(8)
 })
 
 test('hitTest maps a tree row to its section: its header, cards, count rows and filler, and the toolbar, group rows and legend to none', () => {
@@ -614,12 +712,152 @@ test('cell widths count wide characters twice and combining marks not at all', (
   expect(truncate('日本語', 0)).toBe('')
 })
 
-test('ages read as now, minutes, hours and days', () => {
+test('ages read as now, minutes, hours, days, weeks and years, never past 3 cells', () => {
   const now = Date.parse('2026-10-25T12:00:00Z')
+  const age = (iso: string) => ageLabel(iso, now)
 
-  expect(ageLabel('2026-10-25T11:59:40Z', now)).toBe('now')
-  expect(ageLabel('2026-10-25T11:55:00Z', now)).toBe('5m')
-  expect(ageLabel('2026-10-25T09:00:00Z', now)).toBe('3h')
-  expect(ageLabel('2026-10-23T12:00:00Z', now)).toBe('2d')
+  expect(age('2026-10-25T11:59:40Z')).toBe('now')
+  expect(age('2026-10-25T11:55:00Z')).toBe('5m')
+  expect(age('2026-10-25T09:00:00Z')).toBe('3h')
+  expect(age('2026-10-23T12:00:00Z')).toBe('2d')
+  // Days up to 13, then weeks up to 52, then years.
+  expect(age('2026-10-12T12:00:00Z')).toBe('13d')
+  expect(age('2026-10-11T12:00:00Z')).toBe('2w')
+  expect(age('2026-09-27T12:00:00Z')).toBe('4w')
+  expect(age('2025-10-26T12:00:00Z')).toBe('52w')
+  expect(age('2025-10-25T12:00:00Z')).toBe('1y')
+  expect(age('2016-10-25T12:00:00Z')).toBe('10y')
+  expect(ageLabel(0, now * 20)).toBe('99y')
   expect(ageLabel('not a date', now)).toBe('')
+  for (const days of [1, 13, 14, 100, 364, 365, 3650, 36_500]) {
+    expect(
+      cellWidth(ageLabel(now - days * 24 * 60 * 60_000, now)),
+    ).toBeLessThanOrEqual(3)
+  }
+})
+
+test('copy fits whole, else short, else cut', () => {
+  const copy = { long: 'Nothing yet · n adds a card', short: 'n adds a card' }
+
+  expect(fit(copy, 27)).toBe(copy.long)
+  expect(fit(copy, 26)).toBe(copy.short)
+  expect(fit(copy, 13)).toBe(copy.short)
+  expect(fit(copy, 8)).toBe('n adds …')
+  expect(padStart('5m', 3)).toBe(' 5m')
+  expect(padStart('日', 3)).toBe(' 日')
+})
+
+test('while the first load runs the open group shows bars and no counts, and no note, hint, legend or folded Inactive summary', () => {
+  const rows = layoutBoard({
+    cards: [],
+    ui: INITIAL_UI,
+    bodyRows: 30,
+    hint: true,
+    legend: true,
+    isLoading: true,
+  })
+
+  expect(rows).toHaveLength(30)
+  expect(rows.some(row => ['note', 'hint', 'legend'].includes(row.kind))).toBe(
+    false,
+  )
+  expect(rows.filter(row => row.kind === 'header')).toEqual(
+    (['backlog', 'human', 'claude'] as const).map(column => ({
+      kind: 'header',
+      column,
+      shown: 0,
+      total: 0,
+      isLoading: true,
+    })),
+  )
+  expect(rows.filter(row => row.kind === 'group')).toMatchObject([
+    { group: 'active', isOpen: true, isLoading: true },
+    { group: 'inactive', isOpen: false, isLoading: true },
+  ])
+  // Every section is the same height: its header, three bars and plain filler.
+  for (const column of ['backlog', 'human', 'claude'] as const) {
+    const body = block(rows, column).slice(1)
+    expect(body.map(row => row.kind)).toEqual([
+      'skeleton',
+      'skeleton',
+      'skeleton',
+      'blank',
+      'blank',
+      'blank',
+      'blank',
+    ])
+    expect(body.every(row => row.kind !== 'blank' || row.isPlain)).toBe(true)
+  }
+})
+
+test('the bars are the same on every draw and differ from one section to the next', () => {
+  const draw = () =>
+    layoutBoard({ cards: [], ui: INITIAL_UI, bodyRows: 30, isLoading: true })
+  const percents = (rows: Row[], column: KanbanColumn) =>
+    block(rows, column).flatMap(row =>
+      row.kind === 'skeleton' ? [row.percent] : [],
+    )
+
+  expect(draw()).toEqual(draw())
+  expect(percents(draw(), 'backlog')).toEqual([60, 40, 75])
+  expect(percents(draw(), 'human')).toEqual([40, 75, 60])
+  expect(percents(draw(), 'claude')).toEqual([75, 60, 40])
+})
+
+test('a pane of two-row sections shows two bars, and a loaded board no bars at all', () => {
+  const short = layoutBoard({
+    cards: [],
+    ui: INITIAL_UI,
+    bodyRows: 10,
+    isLoading: true,
+  })
+  const loaded = layoutBoard({
+    cards: [cardOf(1, 'backlog')],
+    ui: INITIAL_UI,
+    bodyRows: 30,
+  })
+
+  expect(
+    block(short, 'human').filter(row => row.kind === 'skeleton'),
+  ).toHaveLength(2)
+  expect(loaded.some(row => row.kind === 'skeleton')).toBe(false)
+  expect(footRows([], true, true)).toBe(0)
+  expect(footRows([], true, false)).toBe(3)
+})
+
+test('an empty section says so and leaves plain filler, a section with cards marks its spare room', () => {
+  const rows = layoutBoard({
+    cards: [cardOf(1, 'human')],
+    ui: INITIAL_UI,
+    bodyRows: 30,
+  })
+  const spare = (column: KanbanColumn) =>
+    block(rows, column).filter(row => row.kind === 'blank')
+
+  expect(spare('human')).toHaveLength(6)
+  expect(spare('human').some(row => row.kind === 'blank' && row.isPlain)).toBe(
+    false,
+  )
+  expect(spare('claude')).toHaveLength(6)
+  expect(
+    spare('claude').every(row => row.kind === 'blank' && row.isPlain),
+  ).toBe(true)
+})
+
+test('the legend is left out of a board with no card to act on', () => {
+  const empty = layoutBoard({
+    cards: [],
+    ui: INITIAL_UI,
+    bodyRows: 30,
+    legend: true,
+  })
+  const full = layoutBoard({
+    cards: [cardOf(1, 'human')],
+    ui: INITIAL_UI,
+    bodyRows: 30,
+    legend: true,
+  })
+
+  expect(empty.some(row => row.kind === 'legend')).toBe(false)
+  expect(full.some(row => row.kind === 'legend')).toBe(true)
 })

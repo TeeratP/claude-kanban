@@ -204,7 +204,7 @@ for (const surface of WITH_CLIENT) {
     await goTo(ui, 'more:backlog:down')
     await keys(ui, 'return')
 
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('  ↑ 2 more')
+    expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 2 more$/)
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     // Its row gone, the cursor rests on the nearest one.
     expect(await litRows(ui)).toEqual(['card:md:0008-b'])

@@ -9,7 +9,8 @@ import {
   cellWidth,
   groupOf,
   isOrdered,
-  padEnd,
+  isPendingId,
+  padStart,
   truncate,
 } from './model'
 import { S } from './strings'
@@ -31,15 +32,26 @@ export type Row =
       group: KanbanGroup
       isOpen: boolean
       counts: SectionCount[]
+      isLoading?: true
     }
-  | { kind: 'header'; column: KanbanColumn; shown: number; total: number }
+  // `isLoading` while the first load runs: no counts yet.
+  | {
+      kind: 'header'
+      column: KanbanColumn
+      shown: number
+      total: number
+      isLoading?: true
+    }
   | { kind: 'more'; column: KanbanColumn; dir: 'up' | 'down'; n: number }
   | { kind: 'card'; column: KanbanColumn; card: KanbanCard }
   // The dim second row under a Claude card Claude has worked on.
   | { kind: 'detail'; column: KanbanColumn; card: KanbanCard }
   | { kind: 'empty'; column: KanbanColumn }
+  // A bar standing in for a card while the first load runs, `percent` of the title room.
+  | { kind: 'skeleton'; column: KanbanColumn; index: number; percent: number }
   // Filler that keeps a section's height; `index` counts from the section's first.
-  | { kind: 'blank'; column?: KanbanColumn; index: number }
+  // A section's spare room is marked with a quiet slot dot unless `isPlain`.
+  | { kind: 'blank'; column?: KanbanColumn; index: number; isPlain?: true }
   // The key hint in the first row left over at the bottom.
   | { kind: 'legend' }
   // What the list says while both groups are folded.
@@ -63,6 +75,8 @@ export type LayoutInput = {
   extraRows?: number
   /** Whether a row left over at the bottom carries the key hint. */
   legend?: boolean
+  /** Whether the first load is running with nothing to show yet: bars stand in for cards. */
+  isLoading?: boolean
 }
 
 /** The cards a section lists, in order: Done and Cancelled are their newest ten. */
@@ -144,9 +158,15 @@ export function applyFilter(
   return { cards: matched, ui: { ...ui, openGroup } }
 }
 
-/** Rows an empty board adds under the groups: the note, and with `hint` the GitHub lines. */
-export function footRows(cards: readonly KanbanCard[], hint = false): number {
-  return cards.length === 0 ? 1 + (hint ? S.githubHint.length : 0) : 0
+/** Rows an empty board adds under the groups: the note, and with `hint` the GitHub lines; none while loading. */
+export function footRows(
+  cards: readonly KanbanCard[],
+  hint = false,
+  isLoading = false,
+): number {
+  if (cards.length > 0 || isLoading) return 0
+
+  return 1 + (hint ? S.githubHint.length : 0)
 }
 
 /**
@@ -216,16 +236,26 @@ export function sectionWindow(
   body: number,
   details?: ReadonlySet<string>,
 ): SectionWindow {
-  const filler = (rows: Row[]): Row[] => {
+  // An empty section says so and leaves the rest plain; one with cards marks its spare room.
+  const filler = (rows: Row[], isPlain = false): Row[] => {
     const filled = [...rows]
     while (filled.length < body) {
-      filled.push({ kind: 'blank', column, index: filled.length })
+      filled.push({
+        kind: 'blank',
+        column,
+        index: filled.length,
+        ...(isPlain ? { isPlain: true as const } : {}),
+      })
     }
 
     return filled
   }
   if (list.length === 0) {
-    return { offset: 0, taken: 0, rows: filler([{ kind: 'empty', column }]) }
+    return {
+      offset: 0,
+      taken: 0,
+      rows: filler([{ kind: 'empty', column }], true),
+    }
   }
 
   const sizes = blocksOf(list, column, details)
@@ -270,6 +300,23 @@ export function sectionWindow(
   return { offset: start, taken, rows: filler(rows) }
 }
 
+// How much of the title room each bar of the first load fills, in turn.
+const SKELETON_PERCENT = [60, 40, 75] as const
+// At most this many bars to a section.
+const SKELETON_BARS = 3
+
+// A section's body while the first load runs: bars, then filler. Each section
+// starts a step further along `SKELETON_PERCENT`, so the bars do not line up.
+function skeletonRows(column: KanbanColumn, body: number, step: number): Row[] {
+  return Array.from({ length: body }, (_, index): Row => {
+    const percent = SKELETON_PERCENT[(step + index) % SKELETON_PERCENT.length]
+
+    return index < SKELETON_BARS && percent !== undefined
+      ? { kind: 'skeleton', column, index, percent }
+      : { kind: 'blank', column, index, isPlain: true }
+  })
+}
+
 export function layoutBoard({
   cards,
   ui: stored,
@@ -278,12 +325,14 @@ export function layoutBoard({
   hint,
   extraRows,
   legend,
+  isLoading,
 }: LayoutInput): Row[] {
+  const loading = isLoading === true
   const { cards: matched, ui } = applyFilter(cards, stored)
   const { body, slack } = sectionBody({
     bodyRows,
     extraRows: extraRows ?? 0,
-    footRows: footRows(cards, hint),
+    footRows: footRows(cards, hint, loading),
   })
   const rows: Row[] = [
     { kind: 'toolbar', line: 'status' },
@@ -297,19 +346,36 @@ export function layoutBoard({
       total: cards.filter(card => card.column === column).length,
     }))
     const isOpen = ui.openGroup === group
-    rows.push({ kind: 'group', group, isOpen, counts })
+    rows.push({
+      kind: 'group',
+      group,
+      isOpen,
+      counts,
+      ...(loading ? { isLoading: true as const } : {}),
+    })
     if (!isOpen) continue
 
-    for (const { column, shown, total } of counts) {
-      const section = sectionWindow(
-        sectionList(matched, column),
+    counts.forEach(({ column, shown, total }, step) => {
+      const header: Row = {
+        kind: 'header',
         column,
-        ui.offsets[column],
-        body,
-        details,
+        shown,
+        total,
+        ...(loading ? { isLoading: true as const } : {}),
+      }
+      rows.push(
+        header,
+        ...(loading
+          ? skeletonRows(column, body, step)
+          : sectionWindow(
+              sectionList(matched, column),
+              column,
+              ui.offsets[column],
+              body,
+              details,
+            ).rows),
       )
-      rows.push({ kind: 'header', column, shown, total }, ...section.rows)
-    }
+    })
   }
 
   if (ui.openGroup === 'none') {
@@ -317,14 +383,14 @@ export function layoutBoard({
   } else {
     for (let index = 0; index < slack; index += 1) {
       rows.push(
-        index === 0 && legend === true
+        index === 0 && legend === true && !loading && cards.length > 0
           ? { kind: 'legend' }
           : { kind: 'blank', index },
       )
     }
   }
 
-  if (cards.length === 0) {
+  if (cards.length === 0 && !loading) {
     rows.push({ kind: 'note' })
     if (hint === true) {
       S.githubHint.forEach((_, line) => rows.push({ kind: 'hint', line }))
@@ -344,36 +410,115 @@ export function hitTest(
   return row !== undefined && 'column' in row ? row.column : undefined
 }
 
+// Cells before a card's number; its title starts after the number column and a space.
+const CARD_INDENT = 2
+// The number column of a board with no card to size it by: `#111`.
+const DEFAULT_NUMBER_WIDTH = 4
+// The age takes this many cells, flush right, and the title leaves this many before it.
+const AGE_CELLS = 3
+const META_GAP = 2
+/** The cells a card row keeps at its right for the gap and the age, and so the title room's end. */
+export const META_CELLS = META_GAP + AGE_CELLS
+// A title that would get fewer cells than this makes the age give way.
+const MIN_TITLE = 8
+
+/** What a card's number column says: `#12`, `?12` on a question, `new` on a card not yet made. */
+export function numberLabel(card: KanbanCard, hasHash = true): string {
+  if (isPendingId(card.id)) return S.newCard
+
+  return `${card.tag === 'question' ? '?' : hasHash ? '#' : ''}${card.number}`
+}
+
+/** The width of the number column, and whether its labels keep the `#`. */
+export type NumberColumn = { width: number; hasHash: boolean }
+
+/**
+ * The number column of the whole board, as wide as its widest label, so titles
+ * start at one cell in every section and while scrolling. The `#` goes when
+ * the numbers would take more than a quarter of the row.
+ */
+export function numberColumn(
+  cards: readonly KanbanCard[],
+  columns: number,
+): NumberColumn {
+  const widest = (hasHash: boolean) =>
+    cards.reduce(
+      (most, card) => Math.max(most, cellWidth(numberLabel(card, hasHash))),
+      0,
+    )
+  const withHash = widest(true)
+  if (withHash === 0) return { width: DEFAULT_NUMBER_WIDTH, hasHash: true }
+
+  return withHash * 4 <= columns
+    ? { width: withHash, hasHash: true }
+    : { width: widest(false), hasHash: false }
+}
+
+/** The cell a card's title starts at: the indent, the number column and a space. */
+export const titleColumn = (cards: readonly KanbanCard[], columns: number) =>
+  CARD_INDENT + numberColumn(cards, columns).width + 1
+
+/** A card row's pieces; the cells of all of them sum to the pane's width, or to less with no meta. */
 export type CardLine = {
-  left: string
+  /** The indent, the number right-aligned in its column, and a space. */
+  indent: string
+  number: string
   title: string
-  glyph: string
+  /** Spaces from the title to the meta, so the meta ends at the right edge. */
+  gap: string
+  mark: string
+  /** The one space between the mark and the age, when both show. */
+  between: string
   age: string
 }
 
-/** A card row's pieces, sized so `left + title + glyph + age` is `columns` cells. */
+/**
+ * A card row for a pane `columns` wide: the number, the title, and the meta
+ * flush right (the sync `mark`, then the `age` in 3 cells). The title gives up
+ * room for the mark only while it shows, and the age goes when the title would
+ * get under 8 cells.
+ */
 export function cardLine(
   card: KanbanCard,
   columns: number,
-  glyph: string,
-  age: string,
+  column: NumberColumn,
+  meta: { mark: string; age: string },
 ): CardLine {
-  const left = `  #${card.number} ${card.tag ? `${S.tagShort[card.tag]} ` : ''}`
-  const fixed = cellWidth(left) + 1 + cellWidth(glyph)
-  const ageText = age === '' ? '' : ` ${age}`
+  const number = numberLabel(card, column.hasHash)
+  const indent = ' '.repeat(
+    CARD_INDENT + Math.max(0, column.width - cellWidth(number)),
+  )
+  const left = cellWidth(indent) + cellWidth(number) + 1
 
-  let room = columns - fixed - cellWidth(ageText)
-  let shownAge = ageText
-  if (room < 4) {
-    shownAge = ''
-    room = columns - fixed
+  const metaOf = (age: string) => {
+    const aged = age === '' ? '' : padStart(age, AGE_CELLS)
+    const between = meta.mark !== '' && aged !== '' ? ' ' : ''
+
+    return {
+      age: aged,
+      between,
+      width: cellWidth(meta.mark) + between.length + cellWidth(aged),
+    }
   }
-  const width = Math.max(0, room)
+  const roomFor = (shown: { width: number }) =>
+    columns - left - (shown.width === 0 ? 0 : META_GAP + shown.width)
+
+  let shown = metaOf(meta.age)
+  if (meta.age !== '' && roomFor(shown) < MIN_TITLE) shown = metaOf('')
+
+  const title = truncate(card.title, Math.max(0, roomFor(shown)))
+  const gap =
+    shown.width === 0
+      ? ''
+      : ' '.repeat(Math.max(0, columns - left - cellWidth(title) - shown.width))
 
   return {
-    left,
-    title: `${padEnd(truncate(card.title, width), width)} `,
-    glyph,
-    age: shownAge,
+    indent,
+    number,
+    title,
+    gap,
+    mark: meta.mark,
+    between: shown.between,
+    age: shown.age,
   }
 }

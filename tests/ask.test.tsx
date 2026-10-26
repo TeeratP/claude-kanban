@@ -143,9 +143,7 @@ test('a question card shows a ? tag on its row, and an answered one does not', a
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await row(ui, 'card:md:0001-login'))?.text).toContain(
-    '#1 ? Fix login',
-  )
+  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('?1 Fix login')
   expect((await row(ui, 'card:md:0002-api'))?.text).toContain('#2 Build API')
   // A question only waits on the person while the card is theirs.
   expect((await row(ui, 'card:md:0003-docs'))?.text).toContain('#3 Write docs')

@@ -56,7 +56,8 @@ export async function marks(ui: BoardUi, mark: string) {
     : ui.findAll({ type: 'Text', text })
 }
 
-const ROW_KEY = /^(grp|hdr|card|act|more|empty|blank|legend|folded|note|hint)\b/
+const ROW_KEY =
+  /^(grp|hdr|card|act|more|empty|skeleton|blank|legend|folded|note|hint)\b/
 
 /** The list rows, top to bottom: the Client's keyed Boxes, or the Buttons. */
 export async function listRows(ui: BoardUi) {
@@ -67,7 +68,7 @@ export async function listRows(ui: BoardUi) {
   return found.filter(one => one.key !== undefined && ROW_KEY.test(one.key))
 }
 
-const FILLER = /^(blank|legend)\b/
+const FILLER = /^(blank|skeleton|legend)\b/
 const HEADER_TEXT = /^ {2}(Backlog|Human|Claude|Done|Cancelled|Suspended) \S/
 
 // The keys of the rows below a drawn element, in order: a Button's own key, and a
@@ -89,7 +90,7 @@ function drawnKeys(node: unknown, found: string[]): string[] {
   return found
 }
 
-/** The keys of the list rows, top to bottom, without the blank filler and the legend that only keep heights. */
+/** The keys of the list rows, top to bottom, without the blank filler, the loading bars and the legend that only keep heights. */
 export async function rowKeys(ui: BoardUi): Promise<string[]> {
   const found = (await hasClient(ui))
     ? (await listRows(ui)).flatMap(one =>
