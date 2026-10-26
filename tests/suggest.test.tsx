@@ -152,6 +152,31 @@ for (const surface of SURFACES) {
   })
 }
 
+test('Add under a filter that hides the card says so, and one that shows it stays quiet', async ($, on) => {
+  const { clock, toasts, ui } = await open($, on, 'terminal')
+  await suggest($)
+  await ui.press({ key: 'filter' })
+  const { input } = ui as unknown as Pick<Mounted<'terminal'>, 'input'>
+  await input({ key: 'filter:text', text: 'docs' })
+
+  await ui.press({ key: 'suggest:add:1' })
+  await clock.settle()
+  expect(toasts).toEqual([
+    'Claude suggests a card: Fix flaky test',
+    'Added #5 · hidden by the filter',
+  ])
+
+  await suggest($, { title: 'Write more docs' })
+  await ui.press({ key: 'suggest:add:1' })
+  await clock.settle()
+  expect(toasts).toHaveLength(3)
+  expect(toasts[2]).toBe('Claude suggests a card: Write more docs')
+  expect(await under(ui, 'hdr:backlog')).toContain(
+    'card:md:0006-write-more-docs',
+  )
+  await ui.unmount()
+})
+
 test('a card the backend refuses puts the suggestion back, with a toast', async ($, on) => {
   const { clock, calls, files, saved, toasts, ui } = await open(
     $,
