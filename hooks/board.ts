@@ -551,7 +551,7 @@ export async function openBoard($: EngineInterface): Promise<void> {
 // With nothing saved to name the board from, detects it now, as
 // the pane's first load would, and saves it, so the system prompt can name it and
 // a later session needs no detection. No cards are loaded. A failure, a rate
-// limit among them, is only logged.
+// limit among them, is only logged; missing setup is left to the pane.
 async function findBackend($: EngineInterface): Promise<void> {
   const { backend } = await readBoard($)
   if (backend !== null) return
