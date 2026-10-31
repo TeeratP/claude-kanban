@@ -59,7 +59,7 @@ const BACKEND = {
 }
 
 const saved = (savedCards: KanbanCard[], key = `cache:${CWD}`) => ({
-  [key]: { shape: 'cache-3', backend: BACKEND, cards: savedCards },
+  [key]: { shape: 'cache-4', backend: BACKEND, cards: savedCards },
 })
 
 const SAVED_CARD = cardOf(9, 'human', { title: 'Cached card' })
@@ -431,7 +431,7 @@ test('a load saves the board for the next time the pane opens', async ($, on) =>
   const entry = JSON.parse(store.get(`cache:${CWD}`) ?? 'null')
 
   expect(entry).toMatchObject({
-    shape: 'cache-3',
+    shape: 'cache-4',
     backend: { kind: 'github', repo: REPO, projectId: PROJECT },
     cards: expect.arrayContaining([
       expect.objectContaining({ id: 'gh:1', column: 'human' }),

@@ -46,6 +46,8 @@ export const ISSUE_CREATE = [
   '-',
   '--label',
   'triage',
+  '--assignee',
+  'TeeratP',
 ]
 export const ITEM_ADD = [
   'gh',
@@ -73,7 +75,8 @@ export const ITEM_EDIT = [
   '1a1cd0bb',
 ]
 
-// The board GitHub holds: the new issue joins it once `gh issue create` ran.
+// The board GitHub holds: the new issue joins it once `gh issue create` ran,
+// assigned to the signed-in TeeratP.
 export function github(
   on: On,
   overrides: Route[] = [],
@@ -94,6 +97,8 @@ export function github(
         reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
       },
       { match: GRAPHQL, reply: argv => boardReply(nodes)(argv) },
+      // The signed-in login, whom a new card is assigned to.
+      { match: ['gh', 'api', 'user'], reply: { stdout: 'TeeratP\n' } },
       {
         match: ['gh', 'label', 'list'],
         reply: { stdout: 'bug\ntriage\nai\n' },

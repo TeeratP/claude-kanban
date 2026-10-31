@@ -158,6 +158,15 @@ for (const surface of EVERY_SURFACE) {
   })
 }
 
+// The Your name block for TeeratP, who goes by the login, at 44 columns.
+const YOUR_NAME = [
+  'Your name',
+  '  TeeratP · Change',
+  '  What your team sees for @TeeratP. Your',
+  '  cards stay assigned to @TeeratP, so a new',
+  '  name changes no issue.',
+]
+
 // The Board block for the board CLAUDE.md names.
 const NAMED_BOARD = [
   'Board',
@@ -178,6 +187,8 @@ test('each setting shows its name without the default, its value, its help and w
     'Reconcile at turn end',
     '  ✓ on (default) · off',
     '  Remind Claude to hand off at turn end.',
+    '',
+    ...YOUR_NAME,
     '',
     ...NAMED_BOARD,
     '',
@@ -321,6 +332,8 @@ test('the view says it is loading until the rows are read', async ($, on) => {
     'Settings',
     '',
     'Loading…',
+    '',
+    ...YOUR_NAME,
     '',
     ...NAMED_BOARD,
     '',

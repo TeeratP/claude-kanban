@@ -179,7 +179,10 @@ test('the board name is cut to the status row at 30, 44 and 80 columns, with the
 
     expect(await toolbar(ui)).toEqual([
       expected[width],
-      ' r: Refresh   n: New   f: Find',
+      // Below 44 columns Refresh gives way to whose cards show.
+      width < 44
+        ? ' n: New   v: Mine   f: Find'
+        : ' r: Refresh   n: New   v: Mine   f: Find',
     ])
     await ui.unmount()
   }
@@ -278,7 +281,7 @@ test('a changed origin is detected again, and the old board is not restored from
       'https://github.com/TeeratP/old-name.git',
     ),
     [`cache:${CWD}`]: {
-      shape: 'cache-3',
+      shape: 'cache-4',
       backend: detected(CAST).info,
       cards: [],
     },

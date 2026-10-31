@@ -374,7 +374,7 @@ const SAVED_GITHUB = {
 
 const cached = (
   backend: unknown,
-  shape = 'cache-3',
+  shape = 'cache-4',
   key = `cache:${CWD}`,
 ) => ({
   [key]: {
@@ -446,6 +446,18 @@ test('a board saved in an older shape is ignored, the one with a backend setting
   expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
 })
 
+test('a board saved before cards had owners is ignored', async ($, on) => {
+  const { whileLoading, loaded } = await openFromCache(
+    $,
+    on,
+    cached(SAVED_GITHUB, 'cache-3'),
+    [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD],
+  )
+
+  expect(whileLoading.cards).toEqual([])
+  expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
+})
+
 test('a saved board without a setting recorded is ignored', async ($, on) => {
   const old = cached({ kind: 'local' }, 'cache-1')
 
@@ -465,7 +477,7 @@ test('a load saves the board with its GitHub backend and no setting', async ($, 
   const entry = JSON.parse(saved.get(`cache:${CWD}`) ?? 'null')
 
   expect(entry).toMatchObject({
-    shape: 'cache-3',
+    shape: 'cache-4',
     backend: { kind: 'github', repo: REPO, projectNumber: 7 },
   })
   expect(entry).not.toHaveProperty('mode')

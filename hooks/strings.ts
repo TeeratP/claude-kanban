@@ -493,7 +493,7 @@ export const S = {
   },
   backlogRules: [
     'Keep it current with the kanban tools:',
-    "- Asked to work the backlog, or given no task: take the top Backlog card that is the person's or unassigned (kanban_list) and kanban_move it to claude before writing code; that assigns it to them. Cards assigned to other people are theirs: leave them unless asked.",
+    "- Asked to work the backlog, or given no task: take the top Backlog card from kanban_list (the person's and unassigned ones) and kanban_move it to claude before writing code. Leave other people's cards unless asked.",
     '- When the work a card tracks is finished: record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
     "- Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify. Record a handoff that says what you need first.",
     '- Blocked on a decision only the person can make: kanban_ask.',
@@ -559,6 +559,8 @@ export const S = {
 
   // Whose cards: the view, the names people go by, a card's assignee.
   who: { mine: 'Mine', open: 'Mine + open', all: 'Everyone' },
+  // In a narrow pane.
+  whoShort: { mine: 'Mine', open: 'Mine+', all: 'All' },
   yourName: 'Your name',
   yourNameHelp: (login: string) =>
     `What your team sees for @${login}. Your cards stay assigned to @${login}, so a new name changes no issue.`,

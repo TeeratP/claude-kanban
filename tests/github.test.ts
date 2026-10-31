@@ -813,6 +813,7 @@ test('load asks for the board in one GraphQL query and records what it cost', as
   // newest comments, for an open question.
   expect(query).toContain('comments(last: 5)')
   expect(query).toContain('viewer { login }')
+  expect(query).toContain('assignees(first: 10) { nodes { login } }')
   expect(query.replace(/comments\(last: 5\) \{[^}]*\}\s*\}/, '')).not.toContain(
     'body',
   )
@@ -844,6 +845,8 @@ test('load asks for the board in one GraphQL query and records what it cost', as
     labels: ['feature', 'ai'],
     isClosed: false,
     url: 'https://github.com/TeeratP/claude-kanban/issues/3',
+    // Captured before the query read assignees: nobody's.
+    assignees: [],
   })
   expect(load.cards[1]?.isClosed).toBe(true)
 })
@@ -3005,7 +3008,11 @@ const ISSUE_CREATE = (label = 'triage') => [
   '-',
   '--label',
   label,
+  '--assignee',
+  'TeeratP',
 ]
+// The signed-in login, whom a new issue is assigned to.
+const VIEWER_LOOKUP = ['gh', 'api', 'user', '--jq', '.login']
 const ITEM_ADD = [
   'gh',
   'project',
@@ -3035,7 +3042,9 @@ const HAS_TRIAGE: Route = {
   match: ['gh', 'label', 'list'],
   reply: { stdout: 'bug\ntriage\n' },
 }
+const VIEWER: Route = { match: VIEWER_LOOKUP, reply: { stdout: 'TeeratP\n' } }
 const CREATES: Route[] = [
+  VIEWER,
   { match: ['gh', 'issue', 'create'], reply: { stdout: `${ISSUE_URL}\n` } },
   {
     match: ['gh', 'project', 'item-add'],
@@ -3057,11 +3066,12 @@ test('create makes the issue with the triage label and the spec on stdin, adds i
 
   expect(calls.map(call => call.argv)).toEqual([
     TRIAGE_LIST,
+    VIEWER_LOOKUP,
     ISSUE_CREATE(),
     ITEM_ADD,
     NEW_ITEM_EDIT,
   ])
-  expect(calls[1]?.stdin).toBe('Users loop.')
+  expect(calls[2]?.stdin).toBe('Users loop.')
   expect(made).toEqual({
     id: 'gh:30',
     number: 30,
@@ -3075,6 +3085,7 @@ test('create makes the issue with the triage label and the spec on stdin, adds i
     labels: ['triage'],
     isClosed: false,
     url: ISSUE_URL,
+    assignees: ['TeeratP'],
   })
 })
 
@@ -3087,9 +3098,10 @@ test('create makes the triage label first when the repo has none, and never over
 
   await createGithub(missing.$, CFG, 'Fix the login', '', 'backlog')
 
-  expect(missing.calls.map(call => call.argv).slice(0, 3)).toEqual([
+  expect(missing.calls.map(call => call.argv).slice(0, 4)).toEqual([
     TRIAGE_LIST,
     TRIAGE_CREATE,
+    VIEWER_LOOKUP,
     ISSUE_CREATE(),
   ])
 
@@ -3112,7 +3124,7 @@ test('create makes the triage label first when the repo has none, and never over
       call => call.argv[2] === 'create' && call.argv[1] === 'label',
     ),
   ).toBe(false)
-  expect(spelled.calls[1]?.argv).toEqual(ISSUE_CREATE('Triage'))
+  expect(spelled.calls[2]?.argv).toEqual(ISSUE_CREATE('Triage'))
   expect(made.labels).toEqual(['Triage'])
 })
 
@@ -3121,7 +3133,7 @@ test('create sends an empty spec as an empty body', async () => {
 
   await createGithub($, CFG, 'Fix the login', '', 'backlog')
 
-  expect(calls[1]).toEqual({ argv: ISSUE_CREATE(), stdin: '' })
+  expect(calls[2]).toEqual({ argv: ISSUE_CREATE(), stdin: '' })
 })
 
 test('create in Claude then moves the new card as a move to Claude does', async () => {
@@ -3135,6 +3147,7 @@ test('create in Claude then moves the new card as a move to Claude does', async 
 
   expect(calls.map(call => call.argv.slice(0, 3).join(' '))).toEqual([
     'gh label list',
+    'gh api user',
     'gh issue create',
     'gh project item-add',
     'gh project item-edit',
@@ -3179,7 +3192,8 @@ test('a failure before the issue exists says only what failed, and creates nothi
 test('a failure after the issue exists names the issue', async () => {
   const noBoard = fakeEngine([
     HAS_TRIAGE,
-    CREATES[0] as Route,
+    VIEWER,
+    CREATES[1] as Route,
     {
       match: ['gh', 'project', 'item-add'],
       reply: { exitCode: 1, stderr: 'GraphQL: insufficient scopes' },
@@ -3196,8 +3210,9 @@ test('a failure after the issue exists names the issue', async () => {
 
   const noStatus = fakeEngine([
     HAS_TRIAGE,
-    CREATES[0] as Route,
+    VIEWER,
     CREATES[1] as Route,
+    CREATES[2] as Route,
     {
       match: ['gh', 'project', 'item-edit'],
       reply: { exitCode: 1, stderr: 'GraphQL: nope' },
@@ -3210,6 +3225,7 @@ test('a failure after the issue exists names the issue', async () => {
 
   const odd = fakeEngine([
     HAS_TRIAGE,
+    VIEWER,
     { match: ['gh', 'issue', 'create'], reply: { stdout: 'created it\n' } },
   ])
 

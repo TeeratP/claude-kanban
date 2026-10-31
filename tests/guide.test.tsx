@@ -30,7 +30,7 @@ const COMPOSE = {
 
 const RULES = [
   'Keep it current with the kanban tools:',
-  '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
+  "- Asked to work the backlog, or given no task: take the top Backlog card from kanban_list (the person's and unassigned ones) and kanban_move it to claude before writing code. Leave other people's cards unless asked.",
   '- When the work a card tracks is finished: record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
   "- Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify. Record a handoff that says what you need first.",
   '- Blocked on a decision only the person can make: kanban_ask.',
@@ -73,7 +73,7 @@ const DETECTED = {
   },
 }
 const savedBoard = (backend: object) => ({
-  [`cache:${CWD}`]: { shape: 'cache-3', backend, cards: [] },
+  [`cache:${CWD}`]: { shape: 'cache-4', backend, cards: [] },
 })
 
 // Zero-config detection finds the shared board, which holds one issue.

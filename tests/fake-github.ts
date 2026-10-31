@@ -97,7 +97,8 @@ export function issue(
       author: (typeof one === 'string' ? undefined : one.author) ?? VIEWER,
     })),
     prs: fields.prs ?? [],
-    assignees: fields.assignees ?? [],
+    // The signed-in person's, so the board shows it when it opens on their cards.
+    assignees: fields.assignees ?? [VIEWER],
   }
 }
 

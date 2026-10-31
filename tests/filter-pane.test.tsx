@@ -704,6 +704,17 @@ test('label filters read the GitHub labels, and a reorder goes after the nearest
   await ui.unmount()
 })
 
+test('at 44 columns the filter text shows in Find: the spacing tightens to make room', async ($, on) => {
+  const { ui } = await start($, on, 'terminal')
+
+  await applyFilter(ui, 'fix')
+
+  const [, actions] = await toolbar(ui)
+  expect(actions).toBe('r: Refresh n: New v: Mine f: Find "fix" ✕')
+  expect(cellWidth(actions)).toBeLessThanOrEqual(PANE.props.bodyColumns)
+  await ui.unmount()
+})
+
 test('a long filter is cut to fit the action row and the status row keeps its text', async ($, on) => {
   const { ui } = await start($, on, 'terminal')
   const query = 'label:ai label:feature -label:human area:UIX words that go on'
@@ -712,7 +723,7 @@ test('a long filter is cut to fit the action row and the status row keeps its te
 
   const [status, actions] = await toolbar(ui)
   expect(actions).toMatch(
-    /^ r: Refresh {3}n: New {3}f: Find "label:ai[^"]*…" ✕$/,
+    /^r: Refresh n: New v: Mine f: Find "label[^"]*…" ✕$/,
   )
   expect(status).toContain('updated')
   expect(cellWidth(status)).toBeLessThanOrEqual(PANE.props.bodyColumns)

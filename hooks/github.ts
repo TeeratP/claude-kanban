@@ -1081,9 +1081,10 @@ export async function moveGithub(
     await ensureLabel($, info, SUSPENDED)
   }
 
-  // A card nobody has becomes the person's when it goes to Claude.
+  // A card nobody has becomes the person's when it goes to Claude. One whose
+  // assignees were not read is left as it is.
   const claim =
-    !isReorder && to === 'claude' && (card.assignees ?? []).length === 0
+    !isReorder && to === 'claude' && card.assignees?.length === 0
       ? await viewerLogin($)
       : undefined
 

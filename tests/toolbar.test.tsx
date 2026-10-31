@@ -91,7 +91,7 @@ const hasHint = (surface: RenderSurface, width: number) =>
 
 // A symbol-only label with a hotkey after it reads as that symbol's hotkey
 // (`↻n:`, which is what the row said before it had words).
-const SYMBOL_THEN_HOTKEY = /[↻+🔍✕]\s*[nfr]: /
+const SYMBOL_THEN_HOTKEY = /[↻+🔍✕]\s*[nfrv]: /
 
 function expectReadable(rows: string[], width: number) {
   for (const line of rows) {
@@ -100,8 +100,12 @@ function expectReadable(rows: string[], width: number) {
   }
 }
 
-const ACTIONS = ' r: Refresh   n: New   f: Find'
-const MOBILE_ACTIONS = ' r: Refresh'
+// Whose cards show sits before Find; below 44 columns Refresh gives way.
+const ACTIONS = ' r: Refresh   n: New   v: Mine   f: Find'
+const NARROW_ACTIONS = ' n: New   v: Mine   f: Find'
+const MOBILE_ACTIONS = ' r: Refresh   v: Mine'
+const actionsAt = (surface: RenderSurface, width: number) =>
+  surface === 'mobile' ? MOBILE_ACTIONS : width < 44 ? NARROW_ACTIONS : ACTIONS
 
 for (const surface of EVERY_SURFACE) {
   test(`row 1 is the status and row 2 the labelled actions at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
@@ -113,7 +117,7 @@ for (const surface of EVERY_SURFACE) {
 
       expect(rows).toEqual([
         status(width, hasHint(surface, width)),
-        surface === 'mobile' ? MOBILE_ACTIONS : ACTIONS,
+        actionsAt(surface, width),
       ])
       expectReadable(rows, width)
       await ui.unmount()
@@ -126,15 +130,17 @@ for (const surface of EVERY_SURFACE) {
     const expected =
       surface === 'mobile'
         ? {
-            80: ' r: Refresh   ✕2 retry',
-            44: ' r: Refresh   ✕2 retry',
-            30: ' r: Refresh   ✕2 retry',
+            80: ' r: Refresh   v: Mine   ✕2 retry',
+            44: ' r: Refresh   v: Mine   ✕2 retry',
+            // The spacing tightens first.
+            30: 'r: Refresh v: Mine ✕2 retry',
           }
         : {
-            80: ' r: Refresh   n: New   f: Find   ✕2 retry',
-            44: ' r: Refresh   n: New   f: Find   ✕2 retry',
-            // Refresh gives way: the board refreshes itself.
-            30: ' n: New   f: Find   ✕2 retry',
+            80: ' r: Refresh   n: New   v: Mine   f: Find   ✕2 retry',
+            // The spacing tightens first.
+            44: 'r: Refresh n: New v: Mine f: Find ✕2 retry',
+            // Refresh and New give way: the board refreshes itself.
+            30: ' v: Mine   f: Find   ✕2 retry',
           }
 
     for (const width of WIDTHS) {
@@ -191,13 +197,12 @@ for (const surface of EVERY_SURFACE) {
 }
 
 for (const surface of TYPING) {
-  test(`a filter shows as f: Find "<query>" with a clear cross, the query cut first, at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
+  test(`a filter shows as f: Find "<query>" with a clear cross, the spacing and then Refresh giving way for the query, at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
     await open($, on, surface)
     const expected = {
-      80: ` r: Refresh   n: New   f: Find "${QUERY}" ✕`,
-      44: ' r: Refresh   n: New   f: Find "fix logi…" ✕',
-      // No room for the query: the spacing tightens and the cross says a filter is on.
-      30: 'r: Refresh n: New f: Find ✕',
+      80: ` r: Refresh   n: New   v: Mine   f: Find "${QUERY}" ✕`,
+      44: 'r: Refresh n: New v: Mine f: Find "fix l…" ✕',
+      30: 'n: New v: Mine f: Find "fi…" ✕',
     }
 
     for (const width of WIDTHS) {
@@ -239,18 +244,18 @@ for (const surface of TYPING) {
     await filterBy(ui, 'label:ai label:feature words that go on')
 
     expect((await toolbar(ui))[1]).toBe(
-      ' r: Refresh   n: New   f: Find "label:ai…" ✕',
+      'r: Refresh n: New v: Mine f: Find "label…" ✕',
     )
     await ui.unmount()
   })
 
-  test(`a filter and failed moves together keep the cross and the retry, and give up the query, Refresh and New in that order, on the ${surface}`, async ($, on) => {
+  test(`a filter and failed moves together keep the cross and the retry: Refresh gives way for the query, then the query and New go, on the ${surface}`, async ($, on) => {
     const world = await open($, on, surface)
     await failTwoMoves($, world)
     const expected = {
-      80: ` r: Refresh   n: New   f: Find "${QUERY}" ✕   ✕2 retry`,
-      44: ' r: Refresh   n: New   f: Find ✕   ✕2 retry',
-      30: ' n: New   f: Find ✕   ✕2 retry',
+      80: ` r: Refresh   n: New   v: Mine   f: Find "${QUERY}" ✕   ✕2 retry`,
+      44: 'n: New v: Mine f: Find "fix log…" ✕ ✕2 retry',
+      30: 'v: Mine f: Find ✕ ✕2 retry',
     }
 
     for (const width of WIDTHS) {
@@ -269,15 +274,43 @@ for (const surface of TYPING) {
   })
 }
 
-test('a very narrow pane keeps the filter, the cross and the retry and drops New too', async ($, on) => {
+test('a very narrow pane keeps the filter, the cross and the retry, and gives up Refresh, New and then whose cards show', async ($, on) => {
   const world = await open($, on, 'terminal')
   await failTwoMoves($, world)
   const ui = await mount($, 'terminal', 20)
 
   await filterBy(ui, QUERY)
 
-  expect((await toolbar(ui))[1]).toBe('f: Find ✕ ✕2 retry')
+  const [, actions] = await toolbar(ui)
+  expect(actions).toBe('f: Find ✕ ✕2 retry')
+  expectReadable([actions], 20)
   await ui.unmount()
+})
+
+test('in a narrow pane the view goes by its short name before its button gives way', async ($, on) => {
+  await open($, on, 'terminal')
+  const rowAt = async (width: number) => {
+    const ui = await mount($, 'terminal', width)
+    const [, actions] = await toolbar(ui)
+    expectReadable([actions], width)
+    await ui.unmount()
+
+    return actions
+  }
+  const step = async () => {
+    const ui = await mount($, 'terminal', 44)
+    await ui.press({ key: 'who' })
+    await ui.unmount()
+  }
+
+  expect(await rowAt(20)).toBe(' v: Mine   f: Find')
+  await step()
+  // `Mine + open` does not fit beside Find: it goes by `Mine+`.
+  expect(await rowAt(20)).toBe(' v: Mine+   f: Find')
+  expect(await rowAt(24)).toBe('v: Mine + open f: Find')
+  await step()
+  expect(await rowAt(20)).toBe('v: Everyone f: Find')
+  expect(await rowAt(16)).toBe('v: All f: Find')
 })
 
 for (const surface of ['terminal', 'vscode'] as const) {

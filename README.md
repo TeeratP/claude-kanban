@@ -2,7 +2,7 @@
 
 A Claude Code mod that puts a kanban board in a side pane: six sections in two groups that show, at a glance, who holds the ball on every task. Cards are your GitHub Issues, laid out by a Projects board. When GitHub is not set up yet, the pane says what is missing and offers to have Claude set it up.
 
-<!-- screenshot: the board pane (Active open: Backlog / Claude / Human, Inactive folded), with the two-row toolbar: the dim status row over `r: Refresh   n: New   f: Find` -->
+<!-- screenshot: the board pane (Active open: Backlog / Claude / Human, Inactive folded), with the two-row toolbar: the dim status row over `r: Refresh   n: New   v: Mine   f: Find` -->
 
 ## Sections
 
@@ -47,7 +47,7 @@ Type `/kanban` to open the board in a side pane. Click a card to open its detail
 
 Claude can work the board without the pane open (see [Claude's tools](#claudes-tools-and-the-handoff)).
 
-The toolbar is two rows. The first is dim status text: `GitHub` and, for a board found without config, its number and name, when the board was last updated (`updated just now`, `updated 5m ago`), and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). At the right end of the row a dim `s: Settings` opens the Settings view; the status gives way to it (the age goes first), and in a pane too narrow for both it reads `s: Set…`, then is left out, but the backend's name stays. In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   f: Find` (on mobile, which has no text field, only `r: Refresh`). When a move has failed it ends with `✕N retry` in red. In a narrow pane the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds and its ages (the status row's, each card's) redraw every 30. While cards wait in Human the pane's title reads `Kanban · N`, which shows as its tab when several panes are open. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
+The toolbar is two rows. The first is dim status text: `GitHub` and, for a board found without config, its number and name, when the board was last updated (`updated just now`, `updated 5m ago`), and any error (an error is red), and on the terminal and desktop, when it fits the pane's width, a key hint (`↑↓ ⏎ open · m move`). At the right end of the row a dim `s: Settings` opens the Settings view; the status gives way to it (the age goes first), and in a pane too narrow for both it reads `s: Set…`, then is left out, but the backend's name stays. In a narrow pane a status that does not fit beside the backend's name is shown without the name rather than cut. The second row is the buttons, each with its key: `r: Refresh   n: New   v: Mine   f: Find` (on mobile, which has no text field, `r: Refresh   v: Mine`); `v` picks [whose cards](#whose-cards) show. When a move has failed it ends with `✕N retry` in red. While a filter is on, its text keeps its place if tighter spacing, then `r: Refresh` giving way, makes room for it. Otherwise, in a narrow pane, the row gives way in this order: the filter's text, the spacing between buttons, then `r: Refresh`, then `n: New`, then the view's long name (`Mine+`, `All`), then the `v` button; the filter, its `✕` and the retry stay. While the pane is open the board refreshes every 45 seconds and its ages (the status row's, each card's) redraw every 30. While cards wait in Human the pane's title reads `Kanban · N`, which shows as its tab when several panes are open. The status line shows `1 card waiting on you` or `N cards waiting on you`, and a toast (`Waiting on you: #7 Fix login`) appears when a card newly lands in Human; if Claude moved it, you are notified as well. Cards you moved yourself don't toast.
 
 ### Moving cards
 
@@ -90,6 +90,39 @@ Each header counts the cards shown out of all it holds while a filter is on (`Ba
 
 The filter only changes what is drawn. Everything you do acts on the cards you can see: the keyboard cursor, a click, a drop, the wheel and `J`/`K` all use the visible rows. A card put at a place in a section goes right after the nearest visible card above that place, ahead of any hidden cards that followed it (first in the section when none is above), so the visible order is the one you made and the hidden cards keep their order among themselves. The field is not shown on mobile, which has no text field. While the field is open the wheel scrolls the pane, not a section.
 
+### Whose cards
+
+A card belongs to whoever its issue is assigned to, by GitHub login. The board shows one of three views, chosen with `v` on the toolbar's second row (`v: Mine`), which steps through them:
+
+| View | Shows |
+|---|---|
+| `Mine` (when the pane opens) | Cards assigned to you. |
+| `Mine + open` | Yours, and cards nobody is assigned. |
+| `Everyone` | Every card. |
+
+In `Mine + open` and `Everyone`, a card someone else has shows their name, dim, after its title (at most 8 cells; it goes first when the title needs the room). Moves, drags and reordering go by the cards the view shows, as they do under a filter. The status line, the pane's `Kanban · N` and the `Waiting on you` toasts count only your cards and nobody's.
+
+Cards are tagged by login, not by name:
+
+- A card you add with `n: New`, or Claude adds with `kanban_create` in your session, is assigned to you.
+- A card nobody has becomes yours when it moves to Claude (by you or by Claude).
+- In a card's detail view the **Owner** row lists you, the others the board knows (named in its README or assigned a card) and `nobody`, with the current one marked `✓`; press one to give the card to them. A refusal from GitHub is toasted and the card goes back.
+
+`kanban_list` lists your cards and nobody's, says how many it left out, and lists everyone's with `all: true`, marking a card someone else has `@login`. Claude is told to leave other people's cards alone unless you ask.
+
+### Your name
+
+Settings has a **Your name** row: the name you go by on the board, and `Change`, which opens a field (not on mobile). Saving writes it to a block at the end of the project board's README, read fresh first so a teammate's change is kept:
+
+```
+<!-- kanban:people
+TeeratP: Teerat
+alice: Alice Smith
+-->
+```
+
+Everyone on the board reads names from there with each load. A name is one line of at most 40 characters; saving an empty one takes your line out, and you go by your login again. The rest of the README is left as it is. Because cards are assigned by login, a new name changes no issue.
+
 ### How Claude keeps the board current
 
 A session with the plugin knows the board is the project's backlog without a line in CLAUDE.md or AGENTS.md. The plugin adds one short section to Claude's system prompt (to every request but a `--bare` one) that names the backlog and states the rules:
@@ -118,7 +151,7 @@ Press `s: Settings` at the right end of the status row (or the `s` key while the
 
 The value a setting starts with is marked `(default)`, read from the `(default: X)` that ends each setting's title in `/config`. Pressing the other value changes the setting through the engine, which applies the same checks as `/config`; if a check refuses, the value stays, and the reason shows under the row and in a toast. A setting an organization's policy sets shows its value with no buttons. Like a change in `/config`, a change reloads the plugin with the new value; the view stays open.
 
-Under the settings, a Board row names the board in use (`GitHub · owner/repo` and the board's number and name, or `setup needed`) and, for a board found without config, a `Change board` link that opens the board picker on the board (or says there is no other). A board named in CLAUDE.md or AGENTS.md is changed there. Which board a project uses is not a setting, because settings are for every project. The last line, `Also in /config`, is a reminder that `/config` edits the same settings.
+Under the settings, a [Your name](#your-name) row shows the name you go by and lets you change it, and a Board row names the board in use (`GitHub · owner/repo` and the board's number and name, or `setup needed`) and, for a board found without config, a `Change board` link that opens the board picker on the board (or says there is no other). A board named in CLAUDE.md or AGENTS.md is changed there. Which board a project uses is not a setting, because settings are for every project. The last line, `Also in /config`, is a reminder that `/config` edits the same settings.
 
 ## GitHub
 

@@ -1220,6 +1220,7 @@ test('a place that has left its section falls back to the last card there, never
     [
       ...liveGithub(issues),
       { match: ['gh', 'label', 'list'], reply: { stdout: 'ai\ntriage\n' } },
+      { match: ['gh', 'api', 'user'], reply: { stdout: 'TeeratP\n' } },
       {
         match: ['gh', 'issue', 'create'],
         reply: {

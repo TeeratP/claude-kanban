@@ -115,6 +115,8 @@ export async function addCard(
   added += 1
   const id = `${PENDING_PREFIX}${now}-${added}`
   const at = new Date(now).toISOString()
+  // The card is the person's from the start, so a view of their cards shows it.
+  const { viewer } = await readBoard($)
   const pending: KanbanCard = {
     id,
     number: 0,
@@ -123,6 +125,7 @@ export async function addCard(
     order: 0,
     createdAt: at,
     updatedAt: at,
+    ...(viewer === undefined ? {} : { assignees: [viewer] }),
   }
 
   await updateSync($, sync => ({

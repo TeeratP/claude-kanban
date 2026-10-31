@@ -517,6 +517,9 @@ test('a Human card at 44 columns: nav, title, actions, the handoff to review, th
     'Move to    Backlog · Claude',
     'Set aside  Done · Cancel · Suspend',
     '',
+    // The card is the person's; they can give it to nobody.
+    'Owner      ✓ TeeratP · nobody',
+    '',
     'Spec text.',
     '',
     'History',

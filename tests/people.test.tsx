@@ -29,7 +29,7 @@ const README = [
 // Mine (TeeratP), Alice's, and nobody's, across the three active sections.
 const cards = (): FakeCard[] => [
   issue(1, { column: 'backlog', title: 'Mine to do', assignees: ['TeeratP'] }),
-  issue(2, { column: 'backlog', title: 'Up for grabs' }),
+  issue(2, { column: 'backlog', title: 'Up for grabs', assignees: [] }),
   issue(3, { column: 'backlog', title: 'Alice to do', assignees: ['alice'] }),
   issue(4, { column: 'human', title: 'Alice reviews', assignees: ['alice'] }),
   issue(5, { column: 'human', title: 'I review', assignees: ['TeeratP'] }),

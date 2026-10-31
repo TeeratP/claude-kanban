@@ -35,10 +35,19 @@ const WIDE: Spacing = { indent: 1, gap: 3 }
 const TIGHT: Spacing = { indent: 0, gap: 1 }
 
 // What gives way when even the tight spacing does not fit: Refresh first (the
-// board refreshes itself), then New. The filter, whose cards show and the retry
-// stay, as they say what the board leaves out or what is wrong with it.
-const NARROWEST: Action['key'][] = ['refresh', 'add']
-const DROPS: Action['key'][][] = [[], ['refresh'], NARROWEST]
+// board refreshes itself), then New, then the view's name goes short, then the
+// view's button. The filter and the retry stay, as they say what the board
+// leaves out or what is wrong with it.
+type Drop = { keys: Action['key'][]; isWhoShort?: true }
+
+const NARROWEST: Drop = { keys: ['refresh', 'add', 'who'], isWhoShort: true }
+const DROPS: Drop[] = [
+  { keys: [] },
+  { keys: ['refresh'] },
+  { keys: ['refresh', 'add'] },
+  { keys: ['refresh', 'add'], isWhoShort: true },
+  NARROWEST,
+]
 
 const widthOf = (action: Action) =>
   (action.hotkey === undefined ? 0 : cellWidth(action.hotkey) + 2) +
@@ -57,49 +66,71 @@ const rowWidth = (placed: PlacedAction[]) =>
 // The buttons that remain, with the filter text (cut already) inside Find.
 function actionsFor(
   { canType, query, failed, who }: ActionsInput,
-  dropped: Action['key'][],
+  dropped: Drop,
   shown: string,
 ): Action[] {
   const all: Action[] = [{ key: 'refresh', hotkey: 'r', label: S.refresh }]
+  if (canType) all.push({ key: 'add', hotkey: 'n', label: S.add })
+  // Before Find, so no hotkey follows the filter's cross and reads as its own.
+  all.push({
+    key: 'who',
+    hotkey: WHO_KEY,
+    label: dropped.isWhoShort === true ? S.whoShort[who] : S.who[who],
+  })
   if (canType) {
-    all.push(
-      { key: 'add', hotkey: 'n', label: S.add },
-      {
-        key: 'filter',
-        hotkey: 'f',
-        label: shown === '' ? S.filter : S.filterQuery(shown),
-      },
-    )
+    all.push({
+      key: 'filter',
+      hotkey: 'f',
+      label: shown === '' ? S.filter : S.filterQuery(shown),
+    })
   }
   if (oneLine(query) !== '')
     all.push({ key: 'filter:clear', label: S.filterClear })
-  all.push({ key: 'who', hotkey: WHO_KEY, label: S.who[who] })
   if (failed > 0) all.push({ key: 'retry-all', label: S.retryAll(failed) })
 
-  return all.filter(action => !dropped.includes(action.key))
+  return all.filter(action => !dropped.keys.includes(action.key))
 }
 
+// What gives way so the filter's text can show: the spacing, then Refresh.
+const FOR_TEXT: Drop[] = [{ keys: [] }, { keys: ['refresh'] }]
+
 /**
- * The action row for a pane `columns` wide: Refresh, New and Find with their
- * hotkeys, the filter text and a cross to clear it, whose cards show, and
- * `✕N retry`. What does
- * not fit gives way in this order: the filter text, the spacing, Refresh, New.
+ * The action row for a pane `columns` wide: Refresh and New, whose cards
+ * show, Find with the filter text and a cross to clear it, and `✕N retry`.
+ * While a filter is on its text shows if the spacing tightening and Refresh
+ * giving way make room for it. Otherwise what does not fit gives way in this
+ * order: the filter text, the spacing, Refresh, New, the view's long name, the
+ * view's button.
  */
 export function planActions(input: ActionsInput): PlacedAction[] {
   const text = oneLine(input.query)
+  // The row with `dropped` gone at `spacing`, the text cut to the room left;
+  // undefined when the row does not fit.
+  const tryRow = (dropped: Drop, spacing: Spacing) => {
+    const width = rowWidth(place(actionsFor(input, dropped, ''), spacing))
+    if (width > input.columns) return undefined
 
+    // The text takes what is left, inside its quotes; a cut that shows
+    // nothing but an ellipsis is left out.
+    const room = input.columns - width - cellWidth(' ""')
+    const shown =
+      room >= 2 || cellWidth(text) <= room ? truncate(text, room) : ''
+
+    return { shown, row: place(actionsFor(input, dropped, shown), spacing) }
+  }
+
+  if (text !== '') {
+    for (const dropped of FOR_TEXT) {
+      for (const spacing of [WIDE, TIGHT]) {
+        const tried = tryRow(dropped, spacing)
+        if (tried !== undefined && tried.shown !== '') return tried.row
+      }
+    }
+  }
   for (const dropped of DROPS) {
     for (const spacing of [WIDE, TIGHT]) {
-      const width = rowWidth(place(actionsFor(input, dropped, ''), spacing))
-      if (width > input.columns) continue
-
-      // The text takes what is left, inside its quotes; a cut that shows
-      // nothing but an ellipsis is left out.
-      const room = input.columns - width - cellWidth(' ""')
-      const shown =
-        room >= 2 || cellWidth(text) <= room ? truncate(text, room) : ''
-
-      return place(actionsFor(input, dropped, shown), spacing)
+      const tried = tryRow(dropped, spacing)
+      if (tried !== undefined) return tried.row
     }
   }
 

@@ -173,7 +173,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
 
   expect(await fits(ui, 44, 'active open')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   f: Find',
+    ' r: Refresh   n: New   v: Mine   f: Find',
     '▾ Active',
     '  Backlog 8 ────────────────────────────────',
     '   #40 Write docs                        20h',
@@ -206,14 +206,14 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
   await ui.unmount()
 })
 
-test('Active open at 30 columns drops the age, the Refresh label stays and the long titles are cut', async ($, on) => {
+test('Active open at 30 columns drops the age and Refresh, keeps whose cards show, and cuts the long titles', async ($, on) => {
   await start($, on, board())
   const ui = await mount($, 30)
   const lines = await fits(ui, 30, 'active open')
 
   expect(lines.slice(0, 7)).toEqual([
     ' GitHub            s: Settings',
-    ' r: Refresh   n: New   f: Find',
+    ' n: New   v: Mine   f: Find',
     '▾ Active',
     '  Backlog 8 ──────────────────',
     '   #40 Write docs          20h',
@@ -236,7 +236,7 @@ test('Inactive open: Active is a summary, the dim cards keep the title column an
 
   expect(await fits(ui, 44, 'inactive open')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   f: Find',
+    ' r: Refresh   n: New   v: Mine   f: Find',
     '▸ Active      8 Backlog · 2 Claude · 3 Human',
     '▾ Inactive',
     '  Done 12 ──────────────────────── 10 newest',
@@ -276,7 +276,7 @@ test('both groups folded: two summaries and the line that says to press one, whi
 
   expect(await fits(ui, 44, 'both folded')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   f: Find',
+    ' r: Refresh   n: New   v: Mine   f: Find',
     '▸ Active      8 Backlog · 2 Claude · 3 Human',
     '▸ Inactive                         12D 1C 1S',
     '  Press a group to open it',
@@ -297,7 +297,7 @@ test('an empty board says what each section is for, and that the board has no is
 
   expect(await fits(ui, 44, 'empty')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   f: Find',
+    ' r: Refresh   n: New   v: Mine   f: Find',
     '▾ Active',
     '  Backlog 0 ────────────────────────────────',
     '       Nothing yet · n adds a card',
@@ -364,7 +364,7 @@ test('the first load draws bars where the cards will be, never an empty board', 
 
   expect(await fits(ui, 44, 'loading')).toEqual([
     ' GitHub · loading…               s: Settings',
-    ' r: Refresh   n: New   f: Find',
+    ' r: Refresh   n: New   v: Mine   f: Find',
     '▾ Active',
     '  Backlog ──────────────────────────────────',
     '       ───────────────────',

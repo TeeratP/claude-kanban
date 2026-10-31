@@ -674,14 +674,14 @@ for (const surface of CLIENT_SURFACES) {
   })
 }
 
-test('the board view gives r to refresh, n to the add button and f to the filter button, and no Button a hotkey that is also a Client key', async ($, on) => {
+test('the board view gives r to refresh, n to the add button, v to whose cards show and f to the filter button, and no Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
   const hotkeys = (await ui.findAll({ type: 'Button' })).flatMap(button =>
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],
   )
 
   // The Settings button, on the status row, has none: the Client takes `s`.
-  expect(hotkeys).toEqual(['r', 'n', 'f'])
+  expect(hotkeys).toEqual(['r', 'n', 'v', 'f'])
   // The keys the board's list takes when it has the keyboard.
   const clientKeys = [
     'j',
@@ -712,14 +712,21 @@ async function openAt(
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
-  const ui = await $.ui.mount({
-    ...PANE,
-    surface,
-    props: { ...PANE.props, bodyColumns: columns },
-  })
-  await ui.press({ key: 'add' })
+  const at = (width: number) =>
+    $.ui.mount({
+      ...PANE,
+      surface,
+      props: { ...PANE.props, bodyColumns: width },
+    })
+  // Below 24 columns New gives way, so the form is opened wider and the pane
+  // narrowed after, as when a pane is resized with the form open.
+  const opener = await at(Math.max(columns, 24))
+  await opener.press({ key: 'add' })
+  if (columns >= 24) return { ...world, ui: opener }
 
-  return { ...world, ui }
+  await opener.unmount()
+
+  return { ...world, ui: await at(columns) }
 }
 
 // The form's rows: from the title field down to the first group.
