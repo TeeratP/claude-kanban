@@ -37,12 +37,12 @@ const pauseUntil = (now: number, resetAt: number | undefined) =>
 export async function loadGithubPaced(
   $: EngineInterface,
   info: KanbanGithub,
-): Promise<Pick<GithubLoad, 'cards' | 'statusOptions'>> {
+): Promise<Omit<GithubLoad, 'rateLimit'>> {
   const left = await pauseLeft($)
   if (left > 0) $.ui.toast(S.refreshWhilePaused(minutesLeft(left)))
 
   try {
-    const { cards, rateLimit, statusOptions } = await loadGithub($, info)
+    const { rateLimit, ...loaded } = await loadGithub($, info)
     const now = await $.clock.now()
     const until =
       rateLimit !== undefined && rateLimit.remaining <= LOW_REMAINING
@@ -50,7 +50,7 @@ export async function loadGithubPaced(
         : 0
     await updatePausedUntil($, () => until)
 
-    return { cards, statusOptions }
+    return loaded
   } catch (error) {
     if (!isRateLimited(error)) throw error
 

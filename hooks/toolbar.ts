@@ -1,13 +1,17 @@
+import type { KanbanWho } from '../types'
 import { cellWidth, oneLine, truncate } from './model'
 import { S } from './strings'
 
 /** A button on the toolbar's action row. */
 export type Action = {
-  key: 'refresh' | 'add' | 'filter' | 'filter:clear' | 'retry-all'
+  key: 'refresh' | 'add' | 'filter' | 'filter:clear' | 'who' | 'retry-all'
   /** The hotkey, which the engine draws before the label as `n: `. */
   hotkey?: string
   label: string
 }
+
+/** The key that steps through whose cards the board shows; not one the board's Client takes. */
+export const WHO_KEY = 'v'
 
 /** An action with the cells of space the row puts before it. */
 export type PlacedAction = Action & { before: number }
@@ -20,6 +24,8 @@ export type ActionsInput = {
   query: string
   /** How many moves failed. */
   failed: number
+  /** Whose cards the board shows. */
+  who: KanbanWho
 }
 
 // Cells before the first button, and between two buttons.
@@ -29,8 +35,8 @@ const WIDE: Spacing = { indent: 1, gap: 3 }
 const TIGHT: Spacing = { indent: 0, gap: 1 }
 
 // What gives way when even the tight spacing does not fit: Refresh first (the
-// board refreshes itself), then New. The filter and the retry stay, as they say
-// what is wrong with the board.
+// board refreshes itself), then New. The filter, whose cards show and the retry
+// stay, as they say what the board leaves out or what is wrong with it.
 const NARROWEST: Action['key'][] = ['refresh', 'add']
 const DROPS: Action['key'][][] = [[], ['refresh'], NARROWEST]
 
@@ -50,7 +56,7 @@ const rowWidth = (placed: PlacedAction[]) =>
 
 // The buttons that remain, with the filter text (cut already) inside Find.
 function actionsFor(
-  { canType, query, failed }: ActionsInput,
+  { canType, query, failed, who }: ActionsInput,
   dropped: Action['key'][],
   shown: string,
 ): Action[] {
@@ -67,6 +73,7 @@ function actionsFor(
   }
   if (oneLine(query) !== '')
     all.push({ key: 'filter:clear', label: S.filterClear })
+  all.push({ key: 'who', hotkey: WHO_KEY, label: S.who[who] })
   if (failed > 0) all.push({ key: 'retry-all', label: S.retryAll(failed) })
 
   return all.filter(action => !dropped.includes(action.key))
@@ -74,7 +81,8 @@ function actionsFor(
 
 /**
  * The action row for a pane `columns` wide: Refresh, New and Find with their
- * hotkeys, the filter text and a cross to clear it, and `✕N retry`. What does
+ * hotkeys, the filter text and a cross to clear it, whose cards show, and
+ * `✕N retry`. What does
  * not fit gives way in this order: the filter text, the spacing, Refresh, New.
  */
 export function planActions(input: ActionsInput): PlacedAction[] {

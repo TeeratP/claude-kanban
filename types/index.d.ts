@@ -22,7 +22,13 @@ export type KanbanCard = {
   prNumbers?: number[]
   /** Why a GitHub issue was closed (or reopened); absent for one never closed. */
   stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'DUPLICATE' | 'REOPENED'
+  /** The GitHub logins the issue is assigned to: whose card it is. */
+  assignees?: string[]
 }
+/** Whose cards the board shows: the person's, theirs and nobody's, or everyone's. */
+export type KanbanWho = 'mine' | 'open' | 'all'
+/** The names people gave themselves, by GitHub login; kept in the board's README. */
+export type KanbanPeople = Record<string, string>
 // `inReview` is missing on a detected board without that status: Human is then the `human` label.
 // `cancelled` and `suspended` are Status options the board happens to have, learned from its loads.
 // `isDetected`: found from git and gh with no config (`title` is the board's name then).
@@ -63,6 +69,9 @@ export type KanbanSetupStep = 'gh' | 'auth' | 'remote' | 'board' | 'config'
 export type KanbanSetup = { step: KanbanSetupStep; reason: string }
 export type KanbanBoard = {
   backend: KanbanBackendInfo | null
+  /** The signed-in GitHub login, as the last load gave it. */
+  viewer?: string
+  people?: KanbanPeople
   cards: KanbanCard[]
   fetchedAt: number
   isLoading: boolean
@@ -104,6 +113,8 @@ export type KanbanUi = {
   isFilterOpen: boolean
   /** The group a header press chose while filtering; dropped when the filter changes. */
   filterGroup?: KanbanGroup | 'none'
+  /** Whose cards show; the person's own when the pane opens. */
+  who: KanbanWho
 }
 /** One of the mod's `/config` rows as `$.config.list()` returns it. */
 export type KanbanSettingRow = {
@@ -124,6 +135,10 @@ export type KanbanSettings = {
   denied: Record<string, string>
   /** Why the rows could not be read. */
   error?: string
+  /** The name being typed in the Your name field; absent while it is not open. */
+  nameDraft?: string
+  /** Why the name could not be saved. */
+  nameError?: string
 }
 export type KanbanQuickAdd = {
   isOpen: boolean

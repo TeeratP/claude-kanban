@@ -4,14 +4,19 @@ import type { KanbanBoard } from '../types'
 import { readBoard, readSettings } from './atoms'
 import { cellWidth } from './model'
 import { S } from './strings'
+import { nameOf } from './people'
 import {
   boardAction,
   changeBoardFromSettings,
+  closeNameField,
   closeSettings,
   isDefault,
+  openNameField,
   optionsOf,
   setSetting,
   settingsOf,
+  submitName,
+  typeName,
   valueText,
 } from './settings'
 import type { Setting } from './settings'
@@ -165,6 +170,89 @@ export async function renderSettings(
     )
   }
 
+  // The name the person goes by on the board: shown, and changed in a field
+  // where the surface has one.
+  const nameBlock = () => {
+    const { viewer, people } = board
+    // The mobile app draws no field yet, though its element table names Input.
+    const els = $.ui.resolve(e)
+    const Input =
+      e.surface !== 'mobile' && 'Input' in els ? els.Input : undefined
+    const canType = Input !== undefined
+    const draft = settings.nameDraft
+    if (viewer === undefined) {
+      return (
+        <Box key="name" flexDirection="column">
+          <Text>{S.yourName}</Text>
+          <Box paddingLeft={INDENT}>
+            <Text dimColor wrap="wrap">
+              {S.nameUnknown}
+            </Text>
+          </Box>
+        </Box>
+      )
+    }
+
+    const shown = nameOf(people, viewer)
+    const field =
+      draft !== undefined && Input !== undefined ? (
+        <Box flexDirection="column">
+          <Input
+            key="name:field"
+            autoFocus
+            label={S.yourName}
+            placeholder={viewer}
+            submitLabel={S.nameSave}
+            value={draft}
+            onInput={value => typeName($, value)}
+            onSubmit={value => submitName($, value)}
+          />
+          <Button
+            key="name:cancel"
+            plain
+            label={S.nameCancel}
+            onPress={() => closeNameField($)}
+          >
+            <Text color="suggestion">{S.nameCancel}</Text>
+          </Button>
+        </Box>
+      ) : (
+        <Box flexDirection="row">
+          <Text weight="bold" wrap="truncate-end">
+            {shown}
+          </Text>
+          {canType && <Text>{S.dot}</Text>}
+          {canType && (
+            <Button
+              key="name:change"
+              plain
+              label={S.nameChange}
+              onPress={() => openNameField($)}
+            >
+              <Text color="suggestion">{S.nameChange}</Text>
+            </Button>
+          )}
+        </Box>
+      )
+
+    return (
+      <Box key="name" flexDirection="column">
+        <Text>{S.yourName}</Text>
+        <Box flexDirection="column" paddingLeft={INDENT}>
+          {field}
+          <Text dimColor wrap="wrap">
+            {S.yourNameHelp(viewer)}
+          </Text>
+          {settings.nameError !== undefined && (
+            <Text color="error" wrap="wrap">
+              {settings.nameError}
+            </Text>
+          )}
+        </Box>
+      </Box>
+    )
+  }
+
   const listed = settingsOf(settings.rows)
   const body: RenderElement[] = !settings.isLoaded
     ? [<Text dimColor>{S.settingsLoading}</Text>]
@@ -193,6 +281,7 @@ export async function renderSettings(
       />
       <Text weight="bold">{S.settings}</Text>
       {body}
+      {nameBlock()}
       {boardBlock()}
       <Text dimColor>{S.settingsFooter}</Text>
     </Box>

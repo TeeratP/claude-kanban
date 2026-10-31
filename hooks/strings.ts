@@ -65,8 +65,9 @@ export const S = {
 
   toolList: {
     description:
-      'List the cards on the kanban board, one per line: #number [column] title. Done and Cancelled list only their 10 newest.',
+      "List the cards on the kanban board, one per line: #number [column] title, and @login for a card assigned to someone else. Lists the person's cards and unassigned ones; cards assigned to other people only with all. Done and Cancelled list only their 10 newest.",
     column: 'Only list cards in this column.',
+    all: "Also list cards assigned to other people. Leave them alone unless the person asks: they are someone else's work.",
   },
   toolMove: {
     description:
@@ -74,8 +75,8 @@ export const S = {
     card: 'The card number, as shown by kanban_list.',
     to: 'The column to move the card to.',
   },
-  listLine: (card: KanbanCard) =>
-    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''} updated ${card.updatedAt.slice(0, 10)}`,
+  listLine: (card: KanbanCard, owner = '') =>
+    `#${card.number} [${card.column}] ${card.title}${owner === '' ? '' : ` @${owner}`}${card.tag ? ` (${card.tag})` : ''} updated ${card.updatedAt.slice(0, 10)}`,
   boardUnavailable: (reason?: string) =>
     `The kanban board could not be loaded${reason === undefined ? '' : `: ${reason}`}.`,
   listEmpty: 'No cards on the board.',
@@ -492,7 +493,7 @@ export const S = {
   },
   backlogRules: [
     'Keep it current with the kanban tools:',
-    '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
+    "- Asked to work the backlog, or given no task: take the top Backlog card that is the person's or unassigned (kanban_list) and kanban_move it to claude before writing code; that assigns it to them. Cards assigned to other people are theirs: leave them unless asked.",
     '- When the work a card tracks is finished: record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
     "- Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify. Record a handoff that says what you need first.",
     '- Blocked on a decision only the person can make: kanban_ask.',
@@ -555,4 +556,23 @@ export const S = {
       '5. config: write the repo and board to CLAUDE.md as two lines: "- Repo: `owner/name`" and "- Project board: #N".',
       'Ask me before you create anything on GitHub. When it is done, tell me to press r: Refresh in the kanban pane.',
     ].join('\n'),
+
+  // Whose cards: the view, the names people go by, a card's assignee.
+  who: { mine: 'Mine', open: 'Mine + open', all: 'Everyone' },
+  yourName: 'Your name',
+  yourNameHelp: (login: string) =>
+    `What your team sees for @${login}. Your cards stay assigned to @${login}, so a new name changes no issue.`,
+  nameChange: 'Change',
+  nameSave: 'Save',
+  nameCancel: 'Cancel',
+  nameUnknown: 'Shown once the board loads from GitHub.',
+  nameSaved: (name: string) => `Your name is now ${name}.`,
+  nameCleared: (login: string) => `You go by @${login} again.`,
+  nameFailed: (reason: string) => `Could not save your name: ${reason}`,
+  // The detail view's row of who has the card, the current one marked.
+  ownerRow: 'Owner',
+  assignNobody: 'nobody',
+  assignFailed: (reason: string) => `Could not change who has the card: ${reason}`,
+  listHidden: (n: number) =>
+    `${n} card${n === 1 ? '' : 's'} assigned to other people are left out; pass all: true to list them.`,
 }

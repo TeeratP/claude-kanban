@@ -27,6 +27,7 @@ import {
   parseColumn,
   withCard,
 } from './model'
+import { isForViewer, ownerOf } from './people'
 import { S } from './strings'
 import { moveCard } from './sync'
 
@@ -66,6 +67,7 @@ export const TOOL_SPECS: ToolSpec[] = [
           enum: [...COLUMNS],
           description: S.toolList.column,
         },
+        all: { type: 'boolean', description: S.toolList.all },
       },
     },
   },
@@ -157,13 +159,26 @@ async function list(
   const board = await ensureBoard($)
   if (board.fetchedAt === 0) return { deny: S.boardUnavailable(board.error) }
 
-  // A card still being made has no number the tools could name.
+  // A card still being made has no number the tools could name. Someone
+  // else's card is theirs to work: it is listed only when all are asked for.
   const made = board.cards.filter(one => !isPendingId(one.id))
-  const lines = COLUMNS.filter(one => column === undefined || column === one)
+  const listed = COLUMNS.filter(one => column === undefined || column === one)
     .flatMap(one => sectionList(made, one))
-    .map(card => S.listLine(card))
+  const shown =
+    input.all === true
+      ? listed
+      : listed.filter(card => isForViewer(card, board.viewer))
+  const lines = shown.map(card =>
+    S.listLine(card, ownerOf(card, board.viewer, undefined)),
+  )
+  const hidden = listed.length - shown.length
 
-  return { result: lines.length === 0 ? S.listEmpty : lines.join('\n') }
+  return {
+    result: [
+      lines.length === 0 ? S.listEmpty : lines.join('\n'),
+      ...(hidden === 0 ? [] : [S.listHidden(hidden)]),
+    ].join('\n'),
+  }
 }
 
 type Ready = { board: KanbanBoard; info: KanbanBackendInfo }

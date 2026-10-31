@@ -29,6 +29,8 @@ export type RowViewInput = {
   ageOf: (card: KanbanCard) => string
   /** The pieces of a Claude card's second row. */
   detailOf: (card: KanbanCard) => Seg[]
+  /** Whose a card is when the row should say so; empty when it should not. */
+  ownerOf?: (card: KanbanCard) => string
   /** Every card on the board: the number column is as wide as its widest number. */
   cards: readonly KanbanCard[]
   /** Whether the surface takes a drag, and whether it has text fields: some copy differs. */
@@ -395,6 +397,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
         const line = cardLine(card, columns, numbers, {
           mark: glyph?.text ?? '',
           age,
+          owner: input.ownerOf?.(card) ?? '',
         })
         const styles = cardStyles(card, glyph)
         views.push({
@@ -408,6 +411,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
               seg(line.number, styles.number),
               seg(' '),
               seg(line.title, styles.title),
+              seg(line.owner, { dim: true }),
               seg(line.gap),
               seg(line.mark, {
                 dim: glyph?.dim ?? false,

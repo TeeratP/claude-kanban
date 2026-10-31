@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type {
   KanbanBackendInfo,
   KanbanCard,
+  KanbanPeople,
   KanbanColumn,
   KanbanDetail,
 } from '../types'
@@ -27,8 +28,13 @@ import { S } from './strings'
 // The board is GitHub Issues on a Projects board. These are plain functions:
 // `$` may only be handed to named top-level functions, not to methods.
 
-/** What a load brings: the cards, and the Status options the board reported. */
-export type Loaded = { cards: KanbanCard[]; statusOptions: StatusOption[] }
+/** What a load brings: the cards, the Status options the board reported, who is signed in and the names people go by. */
+export type Loaded = {
+  cards: KanbanCard[]
+  statusOptions: StatusOption[]
+  viewer: string
+  people: KanbanPeople
+}
 
 export async function loadCards(
   $: EngineInterface,

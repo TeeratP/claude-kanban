@@ -13,6 +13,7 @@ import {
   padStart,
   truncate,
 } from './model'
+import { whoCards } from './people'
 import { S } from './strings'
 
 /** How many of a section's cards the filter lets through, out of all of them. */
@@ -73,6 +74,8 @@ export type LayoutInput = {
   legend?: boolean
   /** Whether the first load is running with nothing to show yet: bars stand in for cards. */
   isLoading?: boolean
+  /** The signed-in login, which `ui.who` goes by. */
+  viewer?: string
 }
 
 /** The cards a section lists, in order: Done and Cancelled are their newest ten. */
@@ -130,16 +133,19 @@ export function queueAfter(
 }
 
 /**
- * What the board shows of `cards`: those the filter lets through, and `ui` with
+ * What the board shows of `cards`: those of the people `ui.who` names (by the
+ * signed-in `viewer`) that the filter lets through, and `ui` with
  * the group that is drawn open. While filtering that is the one a header press
  * chose (`filterGroup`), else the open group if it has a match, else the first
  * group that has one. The stored `openGroup` stays as it is, so clearing the
  * filter gives the groups back as they were.
  */
 export function applyFilter(
-  cards: readonly KanbanCard[],
+  all: readonly KanbanCard[],
   ui: KanbanUi,
+  viewer?: string,
 ): { cards: readonly KanbanCard[]; ui: KanbanUi } {
+  const cards = whoCards(all, ui.who, viewer)
   if (!isFiltering(ui.filter)) return { cards, ui }
 
   const matched = filterCards(cards, ui.filter)
@@ -318,9 +324,10 @@ export function layoutBoard({
   extraRows,
   legend,
   isLoading,
+  viewer,
 }: LayoutInput): Row[] {
   const loading = isLoading === true
-  const { cards: matched, ui } = applyFilter(cards, stored)
+  const { cards: matched, ui } = applyFilter(cards, stored, viewer)
   const { body, slack } = sectionBody({
     bodyRows,
     extraRows: extraRows ?? 0,
@@ -410,6 +417,8 @@ const META_GAP = 2
 export const META_CELLS = META_GAP + AGE_CELLS
 // A title that would get fewer cells than this makes the age give way.
 const MIN_TITLE = 8
+// Someone else's name beside a card's title takes at most this many cells.
+const OWNER_CELLS = 8
 
 /** What a card's number column says: `#12`, `?12` on a question, `new` on a card not yet made. */
 export function numberLabel(card: KanbanCard, hasHash = true): string {
@@ -453,6 +462,8 @@ export type CardLine = {
   indent: string
   number: string
   title: string
+  /** Whose card it is when it is someone else's, with the space before it; empty otherwise. */
+  owner: string
   /** Spaces from the title to the meta, so the meta ends at the right edge. */
   gap: string
   mark: string
@@ -465,13 +476,14 @@ export type CardLine = {
  * A card row for a pane `columns` wide: the number, the title, and the meta
  * flush right (the sync `mark`, then the `age` in 3 cells). The title gives up
  * room for the mark only while it shows, and the age goes when the title would
- * get under 8 cells.
+ * get under 8 cells. Someone else's card shows their name after the title, at
+ * most 8 cells, and that goes first when room is short.
  */
 export function cardLine(
   card: KanbanCard,
   columns: number,
   column: NumberColumn,
-  meta: { mark: string; age: string },
+  meta: { mark: string; age: string; owner?: string },
 ): CardLine {
   const number = numberLabel(card, column.hasHash)
   const indent = ' '.repeat(
@@ -495,16 +507,26 @@ export function cardLine(
   let shown = metaOf(meta.age)
   if (meta.age !== '' && roomFor(shown) < MIN_TITLE) shown = metaOf('')
 
-  const title = truncate(card.title, Math.max(0, roomFor(shown)))
+  const named =
+    meta.owner === undefined || meta.owner === ''
+      ? ''
+      : ` ${truncate(meta.owner, OWNER_CELLS)}`
+  const owner = roomFor(shown) - cellWidth(named) < MIN_TITLE ? '' : named
+  const title = truncate(
+    card.title,
+    Math.max(0, roomFor(shown) - cellWidth(owner)),
+  )
+  const used = cellWidth(title) + cellWidth(owner)
   const gap =
     shown.width === 0
       ? ''
-      : ' '.repeat(Math.max(0, columns - left - cellWidth(title) - shown.width))
+      : ' '.repeat(Math.max(0, columns - left - used - shown.width))
 
   return {
     indent,
     number,
     title,
+    owner,
     gap,
     mark: meta.mark,
     between: shown.between,

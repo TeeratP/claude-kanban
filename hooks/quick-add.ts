@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { KanbanCard, KanbanQuickAdd } from '../types'
-import { updateQuickAdd, updateSync, updateUi } from './atoms'
+import { readBoard, updateQuickAdd, updateSync, updateUi } from './atoms'
 import { createCard } from './backend'
 import { ensureBackend, inBackground, refresh, setBoard } from './board'
 import { isFiltering, matchesFilter } from './filter'
@@ -203,9 +203,10 @@ async function tellIfHidden(
   if (!isFiltering(ui.filter)) return
 
   const group = groupOf(card.column)
+  const { viewer } = await readBoard($)
   const notes = [
     ...(matchesFilter(card, ui.filter) ? [] : [S.hiddenByFilter]),
-    ...(applyFilter(cards, ui).ui.openGroup === group
+    ...(applyFilter(cards, ui, viewer).ui.openGroup === group
       ? []
       : [S.groupFolded(S.group[group])]),
   ]

@@ -37,7 +37,8 @@ import {
   titleColumn,
 } from './layout'
 import type { Row } from './layout'
-import { TICK_BRIGHT_MS, ageLabel } from './model'
+import { INITIAL_UI, TICK_BRIGHT_MS, ageLabel } from './model'
+import { nextWho, ownerOf } from './people'
 import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { changeBoard } from './pick'
@@ -81,18 +82,30 @@ function glyphOf(entry: KanbanSync, tick: number, now: number) {
   }
 }
 
+// Shows the next view of whose cards: mine, mine and nobody's, everyone's.
+// Each section starts again at its top, as its list is another one now.
+async function stepWho($: EngineInterface) {
+  await updateUi($, ui => ({
+    ...ui,
+    who: nextWho(ui.who),
+    offsets: INITIAL_UI.offsets,
+  }))
+}
+
 // A press on a group's header opens it, which folds the other, or folds it when
 // it is open. Under a filter it turns the group as drawn, which the filter may
 // have opened, and leaves the stored one for when the filter is gone.
 async function toggleGroup($: EngineInterface, group: KanbanGroup) {
-  const { cards } = await readBoard($)
+  const { cards, viewer } = await readBoard($)
 
   return updateUi($, ui => {
     if (isFiltering(ui.filter)) {
       return {
         ...ui,
         filterGroup:
-          applyFilter(cards, ui).ui.openGroup === group ? 'none' : group,
+          applyFilter(cards, ui, viewer).ui.openGroup === group
+            ? 'none'
+            : group,
       }
     }
 
@@ -116,13 +129,13 @@ async function scrollSection(
   extraRows: number,
   delta: (taken: number) => number,
 ): Promise<boolean> {
-  const { cards } = await readBoard($)
+  const { cards, viewer } = await readBoard($)
   const details = detailIds(cards, await readActivity($))
 
   const seen = { isMoved: false }
   await updateUi($, ui => {
     // The window moves over the cards the filter lets through.
-    const list = sectionList(applyFilter(cards, ui).cards, column)
+    const list = sectionList(applyFilter(cards, ui, viewer).cards, column)
     const body = bodyOf(cards, bodyRows, extraRows)
     const shown = sectionWindow(list, column, ui.offsets[column], body, details)
     const last = maxOffset(blocksOf(list, column, details), body)
@@ -147,10 +160,10 @@ async function keepInView(
   at: { index: number; length: number },
 ): Promise<void> {
   // The board as the move left it, not as this dispatch first read it.
-  const { cards } = await updateBoard($, board => board)
+  const { cards, viewer } = await updateBoard($, board => board)
   const details = detailIds(cards, await readActivity($))
   await updateUi($, ui => {
-    const list = sectionList(applyFilter(cards, ui).cards, column)
+    const list = sectionList(applyFilter(cards, ui, viewer).cards, column)
     const body = bodyOf(cards, lastBody.bodyRows, lastBody.extraRows)
     const taken = (from: number) =>
       sectionWindow(list, column, from, body, details).taken
@@ -189,6 +202,7 @@ export async function handleBoardScroll(
     bodyRows: e.bodyRows,
     details: detailIds(cards, await readActivity($)),
     extraRows: strip,
+    viewer: board.viewer,
   })
   const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
   if (column === undefined) return false
@@ -290,6 +304,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     extraRows,
     legend: hasClient,
     isLoading,
+    viewer: board.viewer,
   })
   // A card's second row starts where its title does.
   const titleAt = titleColumn(board.cards, columns)
@@ -380,6 +395,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       canType,
       query: ui.filter,
       failed: failed.length,
+      who: ui.who,
     })
     const button = (action: PlacedAction) => {
       switch (action.key) {
@@ -412,6 +428,17 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
               plain
               hotkey={action.hotkey}
               onPress={() => toggleFilter($)}
+            >
+              {action.label}
+            </Button>
+          )
+        case 'who':
+          return (
+            <Button
+              key="who"
+              plain
+              hotkey={action.hotkey}
+              onPress={() => stepWho($)}
             >
               {action.label}
             </Button>
@@ -455,6 +482,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     },
     ageOf: (card: KanbanCard) => ageLabel(card.updatedAt, now),
     detailOf,
+    // Only a view with other people's cards says whose they are.
+    ownerOf: (card: KanbanCard) =>
+      ui.who === 'mine' ? '' : ownerOf(card, board.viewer, board.people),
     cards: board.cards,
     canDrag: hasClient,
     canType,
