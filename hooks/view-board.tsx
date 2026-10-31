@@ -46,7 +46,6 @@ import { changeBoard } from './pick'
 import { dropCard, shiftCard } from './reorder'
 import { openSettings } from './settings'
 import { S } from './strings'
-import { readStripRows } from './suggest'
 import {
   SETTINGS_KEY,
   planStatus,
@@ -61,7 +60,6 @@ import { openDetail } from './view-detail'
 import { clearFilter, renderFilter, toggleFilter } from './view-filter'
 import { pickRows, renderPicker } from './view-pick'
 import { renderQuickAdd } from './view-quick-add'
-import { renderSuggestions } from './view-suggest'
 
 // Where the pane's window sat at the last draw, and the rows above the list that
 // the layout was told of; a wheel row is relative to it.
@@ -202,8 +200,8 @@ export async function handleBoardScroll(
 
   const board = await readBoard($)
   const { cards } = board
-  // The picker and the suggestions sit between the toolbar and the list; the layout is told of them.
-  const strip = (await readStripRows($)) + pickRows(board)
+  // The picker sits between the toolbar and the list; the layout is told of it.
+  const strip = pickRows(board)
   const rows = layoutBoard({
     cards,
     ui,
@@ -288,12 +286,10 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const isFiltered = isFiltering(ui.filter)
   const filterField = await renderFilter($, e)
   const quickAdd = await renderQuickAdd($, e)
-  const suggested = await renderSuggestions($, e)
   const picker = renderPicker($, e, board)
   // The rows above the list, which the equal-height sections give way to.
   const extraRows =
     pickRows(board) +
-    (await readStripRows($)) +
     (filterField === null ? 0 : 1) +
     (quickAdd === null ? 0 : quickAddRows(await readQuickAdd($)))
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows, extraRows }
@@ -587,7 +583,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
         {picker}
         {filterField}
         {quickAdd}
-        {suggested}
         {rows.slice(TOOLBAR_ROWS).map(draw)}
       </Box>
     )
@@ -605,7 +600,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       {picker}
       {filterField}
       {quickAdd}
-      {suggested}
       <Client
         key="board"
         module="./board-client.tsx"

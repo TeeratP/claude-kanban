@@ -328,29 +328,6 @@ export const S = {
   triageLabelDescription: 'needs grooming',
   createdPartly: (url: string, reason: string) =>
     `Created ${url} but could not finish adding it: ${reason}`,
-  // #24
-  toolSuggest: {
-    description:
-      'Suggest a kanban card for a follow-up, a deferred item or out-of-scope work you notice. This creates nothing: the person sees the suggestion on the board and presses Add or Dismiss.',
-    title: 'A short title for the card.',
-    spec: 'The card text: what is to be done and how to tell it is done.',
-    why: 'Why it is worth doing, in a sentence.',
-  },
-  suggestPrompt:
-    'When you notice a follow-up, a deferred item or out-of-scope work, call mcp__kanban__kanban_suggest (title, spec, why) instead of only mentioning it in text. It only proposes a card: the person presses Add. Do not create cards with kanban_create unless asked.',
-  suggested: (title: string) => `Claude suggests a card: ${title}`,
-  suggestedResult: (title: string) =>
-    `Suggested "${title}". The person decides whether to add it; do not create it yourself unless asked.`,
-  suggestFolded: (title: string) =>
-    `"${title}" is already a card or a suggestion; nothing was added.`,
-  suggestedHeader: (n: number) => `Suggested (${n})`,
-  suggestMore: (n: number) => `  +${n} more`,
-  suggestAdd: 'Add',
-  suggestDismiss: '✕',
-  suggestWhy: (why: string) => `Why: ${why}`,
-  suggestionsNotSaved: (reason: string) =>
-    `kanban: could not save the suggestions: ${reason}`,
-
   // #25
   filter: 'Find',
   filterLabel: 'Filter',
@@ -546,12 +523,6 @@ export const S = {
   hiddenByFilter: 'hidden by the filter',
   groupFolded: (group: string) => `${group} is folded`,
 
-  // #27
-  dismissedShow: (n: number) => `Show dismissed (${n})`,
-  dismissedHide: (n: number) => `Hide dismissed (${n})`,
-  dismissedRestore: 'Restore',
-  suggestDismissed: (title: string) =>
-    `"${title}" was suggested before and the person dismissed it; nothing was added. Do not suggest it again.`,
   // #43
   githubNeedsGh:
     'GitHub needs the gh CLI. Install it (https://cli.github.com, or `brew install gh`), run `gh auth login`, then choose GitHub again.',
@@ -574,7 +545,7 @@ export const S = {
     '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
     '- When the work a card tracks is done, record kanban_handoff, then kanban_move it to human. Never move a card to done: the person approves it.',
     '- Blocked on a decision only the person can make: kanban_ask.',
-    '- Follow-ups: kanban_suggest. Use kanban_create only when asked.',
+    '- Create cards with kanban_create only when asked.',
     '- Never move cards into or out of Suspended or Cancelled.',
     '- Use the kanban tools, not raw gh issue/gh project edits or hand edits of .kanban files, so the board stays in sync.',
   ].join('\n'),

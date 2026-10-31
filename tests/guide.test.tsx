@@ -33,7 +33,7 @@ const RULES = [
   '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
   '- When the work a card tracks is done, record kanban_handoff, then kanban_move it to human. Never move a card to done: the person approves it.',
   '- Blocked on a decision only the person can make: kanban_ask.',
-  '- Follow-ups: kanban_suggest. Use kanban_create only when asked.',
+  '- Create cards with kanban_create only when asked.',
   '- Never move cards into or out of Suspended or Cancelled.',
   '- Use the kanban tools, not raw gh issue/gh project edits or hand edits of .kanban files, so the board stays in sync.',
 ].join('\n')
@@ -380,7 +380,7 @@ test(
   },
 )
 
-test('the section comes once, after the engine and the suggest section, and is short', async ($, on) => {
+test('the section comes once, after the engine section, and is short', async ($, on) => {
   boot(on, cards())
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -390,13 +390,12 @@ test('the section comes once, after the engine and the suggest section, and is s
 
   expect(first.sections.map(one => one.id)).toEqual([
     'intro',
-    'kanban:suggest',
     'kanban:backlog',
   ])
   expect(second.sections.map(one => one.id)).toEqual(
     first.sections.map(one => one.id),
   )
-  expect(first.sections[2]?.text.length).toBeLessThan(900)
+  expect(first.sections[1]?.text.length).toBeLessThan(900)
 })
 
 test('the one-line bare prompt gets no section', async ($, on) => {

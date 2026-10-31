@@ -299,7 +299,7 @@ test('a very narrow pane keeps the filter, the cross and the retry and drops New
 })
 
 for (const surface of ['terminal', 'vscode'] as const) {
-  test(`the form and the filter field open under both toolbar rows and the suggestions follow them on the ${surface}`, async ($, on) => {
+  test(`the form and the filter field open under both toolbar rows on the ${surface}`, async ($, on) => {
     await open($, on, surface)
     const ui = await mount($, surface, 44)
     const list = surface === 'terminal' ? 'board' : 'grp:active'
@@ -312,11 +312,6 @@ for (const surface of ['terminal', 'vscode'] as const) {
 
     await ui.press({ key: 'add' })
     await ui.press({ key: 'filter' })
-    await $.tool.call({
-      tool: 'mcp__kanban__kanban_suggest',
-      title: 'Fix flaky test',
-      spec: 'It fails 1 in 10.',
-    })
     const kinds = await treeKinds(ui)
 
     expect(kinds.slice(0, 4)).toEqual([
@@ -325,7 +320,6 @@ for (const surface of ['terminal', 'vscode'] as const) {
       'filter:text',
       'add:title',
     ])
-    expect(kinds[4]).toMatch(/^suggest:/)
     await ui.unmount()
   })
 }

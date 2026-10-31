@@ -27,7 +27,6 @@ import {
   withCard,
 } from './model'
 import { S } from './strings'
-import { suggestCard } from './suggest'
 import { moveCard } from './sync'
 
 type ToolName =
@@ -37,7 +36,6 @@ type ToolName =
   | 'kanban_move'
   | 'kanban_create'
   | 'kanban_ask'
-  | 'kanban_suggest'
 
 // Where Claude may move a card, and create one. Suspended and Cancelled are the
 // person's calls, so a card in either is left where it is.
@@ -140,20 +138,6 @@ export const TOOL_SPECS: ToolSpec[] = [
         question: { type: 'string', description: S.toolAsk.question },
       },
       required: ['card', 'question'],
-    },
-  },
-  {
-    name: 'kanban_suggest',
-    description: S.toolSuggest.description,
-    isDeferred: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: S.toolSuggest.title },
-        spec: { type: 'string', description: S.toolSuggest.spec },
-        why: { type: 'string', description: S.toolSuggest.why },
-      },
-      required: ['title', 'spec'],
     },
   },
 ]
@@ -397,26 +381,6 @@ async function create(
   }
 }
 
-async function suggest(
-  $: EngineInterface,
-  input: Record<string, unknown>,
-): Promise<ToolAnswer> {
-  const title = textOf(input.title)?.replace(/\s+/g, ' ')
-  const spec = textOf(input.spec)
-  const why = textOf(input.why)
-  if (title === undefined || title === '') return { deny: S.badTitle }
-  if (spec === undefined) return { deny: S.badText('spec') }
-  if (why === undefined) return { deny: S.badText('why') }
-
-  const outcome = await suggestCard($, { title, spec, why })
-  if (outcome === 'dismissed') return { result: S.suggestDismissed(title) }
-
-  return {
-    result:
-      outcome === 'added' ? S.suggestedResult(title) : S.suggestFolded(title),
-  }
-}
-
 /** Serves one of this plugin's tools. */
 export function runTool(
   $: EngineInterface,
@@ -436,7 +400,5 @@ export function runTool(
       return create($, input)
     case 'kanban_ask':
       return ask($, input)
-    case 'kanban_suggest':
-      return suggest($, input)
   }
 }

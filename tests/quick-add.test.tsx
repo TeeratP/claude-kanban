@@ -643,18 +643,6 @@ for (const surface of CLIENT_SURFACES) {
 
 test('the board view gives r to refresh, n to the add button and f to the filter button, and no Button a hotkey that is also a Client key', async ($, on) => {
   const { ui } = await open($, on, 'terminal')
-  // A suggestion adds its own buttons to the board view.
-  await $.tool.call({
-    tool: 'mcp__kanban__kanban_suggest',
-    title: 'Fix flaky test',
-    spec: 'It fails 1 in 10.',
-  })
-  expect(
-    (await ui.findAll({ type: 'Button' })).some(button =>
-      String(button.key).startsWith('suggest:add:'),
-    ),
-  ).toBe(true)
-
   const hotkeys = (await ui.findAll({ type: 'Button' })).flatMap(button =>
     button.props.hotkey === undefined ? [] : [String(button.props.hotkey)],
   )

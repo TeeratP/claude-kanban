@@ -210,7 +210,7 @@ test('sectionBody gives every section floor(avail / 3) rows and the 0 to 2 left 
   expect(sectionBody({ bodyRows: 30 })).toEqual({ body: 7, slack: 2 })
   expect(sectionBody({ bodyRows: 31 })).toEqual({ body: 8, slack: 0 })
   expect(sectionBody({ bodyRows: 32 })).toEqual({ body: 8, slack: 1 })
-  // The picker, filter, form and suggestions come off first.
+  // The picker, filter and form come off first.
   expect(sectionBody({ bodyRows: 30, extraRows: 3 })).toEqual({
     body: 6,
     slack: 2,

@@ -6,20 +6,17 @@ import type {
   KanbanBoard,
   KanbanCheckRun,
   KanbanDetail,
-  KanbanDismissed,
   KanbanGhState,
   KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
   KanbanReconcile,
-  KanbanSuggestion,
   KanbanSync,
   KanbanUi,
 } from '../types'
 import {
   EMPTY_ACTIVITY,
   EMPTY_BOARD,
-  EMPTY_DISMISSED,
   EMPTY_QUEUE,
   EMPTY_QUICK_ADD,
   EMPTY_SETTINGS,
@@ -83,20 +80,6 @@ const settings = atom(
   { plugin: 'kanban', key: 'settings' } as const,
   EMPTY_SETTINGS,
   { shape: 'settings-1' },
-)
-// Claude's follow-ups waiting for the person to add or dismiss them.
-const suggestions = atom(
-  { plugin: 'kanban', key: 'suggestions' } as const,
-  [],
-  {
-    shape: 'suggestions-1',
-  },
-)
-// The suggestions the person dismissed, kept so Claude is not let repeat them.
-const dismissed = atom(
-  { plugin: 'kanban', key: 'dismissed' } as const,
-  EMPTY_DISMISSED,
-  { shape: 'dismissed-1' },
 )
 
 // What the turn-end check has seen of the running turn, and what it has said.
@@ -246,19 +229,6 @@ export function updateQuickAdd(
   return update($, quickAdd, change)
 }
 
-export function readSuggestions(
-  $: EngineInterface,
-): Promise<KanbanSuggestion[]> {
-  return read($, suggestions)
-}
-
-export function updateSuggestions(
-  $: EngineInterface,
-  change: (value: KanbanSuggestion[]) => KanbanSuggestion[],
-): Promise<KanbanSuggestion[]> {
-  return update($, suggestions, change)
-}
-
 export function readSettings($: EngineInterface): Promise<KanbanSettings> {
   return read($, settings)
 }
@@ -268,17 +238,6 @@ export function updateSettings(
   change: (value: KanbanSettings) => KanbanSettings,
 ): Promise<KanbanSettings> {
   return update($, settings, change)
-}
-
-export function readDismissed($: EngineInterface): Promise<KanbanDismissed> {
-  return read($, dismissed)
-}
-
-export function updateDismissed(
-  $: EngineInterface,
-  change: (value: KanbanDismissed) => KanbanDismissed,
-): Promise<KanbanDismissed> {
-  return update($, dismissed, change)
 }
 
 export function updateReconcile(

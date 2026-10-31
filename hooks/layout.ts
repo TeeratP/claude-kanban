@@ -71,7 +71,7 @@ export type LayoutInput = {
   details?: ReadonlySet<string>
   /** Whether an empty board also says how to use GitHub. */
   hint?: boolean
-  /** Rows the picker, filter field, add form and suggestions take above the list. */
+  /** Rows the picker, filter field and add form take above the list. */
   extraRows?: number
   /** Whether a row left over at the bottom carries the key hint. */
   legend?: boolean

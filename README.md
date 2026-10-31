@@ -96,12 +96,6 @@ Each header counts the cards shown out of all it holds while a filter is on (`Ba
 
 The filter only changes what is drawn. Everything you do acts on the cards you can see: the keyboard cursor, a click, a drop, the wheel and `J`/`K` all use the visible rows. A card put at a place in a section goes right after the nearest visible card above that place, ahead of any hidden cards that followed it (first in the section when none is above), so the visible order is the one you made and the hidden cards keep their order among themselves. The field is not shown on mobile, which has no text field. While the field is open the wheel scrolls the pane, not a section.
 
-### Suggestions from Claude
-
-When Claude notices a follow-up, a deferred item or out-of-scope work, it calls `kanban_suggest` instead of only mentioning it. The suggestion appears in a dim `Suggested (N)` strip under the toolbar (three rows at most, then `+N more`), with a toast `Claude suggests a card: <title>`. Nothing is created until you press `Add`, which makes a Backlog card exactly as the `n: New` form does (on GitHub, an issue labeled `triage` on the board; the reason Claude gave is added to the card text). `✕` dismisses it. If the backend refuses, the card goes and the suggestion comes back. A suggestion whose title matches an open card (anything but Done and Cancelled, so a card on hold counts) or another suggestion (any case) is not added again. Suggestions are kept per directory until you handle them, also across restarts.
-
-A dismissed suggestion is remembered (the last 200 per directory, also across restarts): if Claude suggests the same title again, nothing is added, no toast is shown, and Claude is told you dismissed it. A dim `Show dismissed (N)` row under the strip lists the newest three (`Hide dismissed (N)` shuts them again, then `+N more`); `Restore` puts one back at the top of the strip. The plugin adds one short section to Claude's system prompt asking for this; Claude is told not to create cards itself unless you ask.
-
 ### How Claude keeps the board current
 
 A session with the plugin knows the board is the project's backlog without a line in CLAUDE.md or AGENTS.md. The plugin adds one short section to Claude's system prompt (to every request but a `--bare` one) that names the backlog and states the rules:
@@ -112,7 +106,7 @@ A session with the plugin knows the board is the project's backlog without a lin
 
 The backend is named from the `backend` setting and what is already known, with no call to `gh`. `local` says the `.kanban` cards at once; `github` says `GitHub Issues.` (and the board, once it is known). Under `auto` it is the backend the board has, else the one the last load saved for the directory, else the board an earlier detection found (see [How GitHub is detected](#how-github-is-detected)). When none of those exists, the first session in a directory detects it in the background at its start, as the pane would on opening, without opening the pane; an error there, a rate limit among them, only goes to the debug log, and the only toast is the one-time note that a board has no In review status. The section names the backend from the next request, and later sessions read what was saved.
 
-The rules are the same for all three. Asked to work the backlog, or given no task, Claude takes the top Backlog card (`kanban_list`) and moves it to Claude before writing code. When the work a card tracks is done it records `kanban_handoff` and moves the card to Human; it never moves a card to Done, which you approve. Blocked on a decision only you can make, it calls `kanban_ask`. For follow-ups it calls `kanban_suggest`, and it creates a card with `kanban_create` only when asked. It never moves a card into or out of Suspended or Cancelled, and it uses the kanban tools, not `gh issue` or `gh project` edits or hand edits of `.kanban` files, so the board stays in sync.
+The rules are the same for all three. Asked to work the backlog, or given no task, Claude takes the top Backlog card (`kanban_list`) and moves it to Claude before writing code. When the work a card tracks is done it records `kanban_handoff` and moves the card to Human; it never moves a card to Done, which you approve. Blocked on a decision only you can make, it calls `kanban_ask`. It creates a card with `kanban_create` only when asked. It never moves a card into or out of Suspended or Cancelled, and it uses the kanban tools, not `gh issue` or `gh project` edits or hand edits of `.kanban` files, so the board stays in sync.
 
 Claude can forget the last step, so the plugin checks when a turn ends. The `reconcile` setting (on by default; off turns off only what follows, not the section above) covers a turn of the main session that Claude answered: not one you interrupted, one that ended in an error or a refusal, a subagent's, nor one the check itself started.
 
@@ -243,7 +237,6 @@ Claude gets these tools. They work with the pane closed.
 | `kanban_ask` | Asks you a blocking question on a card (see below). |
 | `kanban_move` | Moves a card to `human`, `claude`, `backlog` or `done`. Suspended and Cancelled are your calls: Claude cannot move a card there, and it is refused a move (or a question) on a card you set aside until you move it back. `kanban_show` and `kanban_handoff` still work on it. |
 | `kanban_create` | Creates a card: a file on the local backend, an issue labeled `triage` on the project board on GitHub. The spec cannot open a handoff or feedback section: marker lines in it are escaped (local backend). |
-| `kanban_suggest` | Proposes a card for a follow-up. Creates nothing: the suggestion waits in the strip for you to add or dismiss it. |
 
 ### Handoff format
 

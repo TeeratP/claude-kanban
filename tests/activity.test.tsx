@@ -4,7 +4,6 @@ import type { Engine } from 'claude-code/testing'
 
 import { colorOf } from '../hooks/activity-view'
 import { cellWidth } from '../hooks/model'
-import { stripRows } from '../hooks/suggest'
 import {
   TOOLBAR_ROWS,
   click,
@@ -933,45 +932,6 @@ for (const surface of WITH_CLIENT) {
     expect(order(23, 'b')).toBeLessThan(order(13, 'c'))
     // Claude is at its limit of one, so the card waits and no prompt goes out.
     expect(prompts).toEqual([])
-    await ui.unmount()
-  })
-
-  test(`the wheel finds its section by the rows it is drawn on, under a strip of suggestions and second rows, on the ${surface}`, async ($, on) => {
-    const { ui, scrolls } = await crowd($, on, surface)
-    for (const n of [1, 2]) {
-      await $.tool.call({
-        tool: 'mcp__kanban__kanban_suggest',
-        title: `Idea ${n}`,
-        spec: 'Worth a card.',
-      })
-    }
-    // The strip is its header and two suggestions, between the toolbar and the list.
-    const strip = stripRows(2)
-    expect(strip).toBe(3)
-    const at = async (key: string) =>
-      (await rowIndex(ui, key)) + TOOLBAR_ROWS + strip
-
-    // Over the last second row of Claude shown: the Claude section, which scrolls itself.
-    await $.ui.scroll({
-      ...SCROLL,
-      by: 1,
-      pointer: { column: 3, row: await at('act:md:0012-c') },
-    })
-    expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:claude:up'))?.text).toBe('      ↑ 1 more')
-
-    // Over a card of Backlog, above the second rows: Backlog.
-    await $.ui.scroll({
-      ...SCROLL,
-      by: 1,
-      pointer: { column: 3, row: await at('card:md:0021-b') },
-    })
-    expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('      ↑ 1 more')
-
-    // Over the strip, which follows the toolbar's two rows: the engine's.
-    await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 3 } })
-    expect(scrolls).toHaveLength(1)
     await ui.unmount()
   })
 

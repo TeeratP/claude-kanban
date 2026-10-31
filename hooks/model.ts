@@ -3,7 +3,6 @@ import type {
   KanbanBoard,
   KanbanCard,
   KanbanColumn,
-  KanbanDismissed,
   KanbanGroup,
   KanbanQueue,
   KanbanQuickAdd,
@@ -111,8 +110,6 @@ export const EMPTY_SETTINGS: KanbanSettings = {
   rows: [],
   denied: {},
 }
-
-export const EMPTY_DISMISSED: KanbanDismissed = { items: [], isShown: false }
 
 export const EMPTY_TURN: KanbanReconcile['turn'] = {
   isReconcile: false,

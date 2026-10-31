@@ -24,7 +24,6 @@ import {
   reconcileTurnStart,
 } from './reconcile'
 import { S } from './strings'
-import { restoreSuggestions, withSuggestSection } from './suggest'
 import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
 import {
@@ -72,7 +71,6 @@ export const register: Register = (on, options) => {
     inBackground($, bootstrap($))
     inBackground($, resumePendingSyncs($))
     inBackground($, restoreActivity($))
-    inBackground($, restoreSuggestions($))
     inBackground($, resumeSettings($))
 
     return next(e)
@@ -150,19 +148,11 @@ export const register: Register = (on, options) => {
     next.called ? next(e) : { deny: S.toolFailed('kanban_ask') },
   )
 
-  on('tool.call', { tool: 'mcp__kanban__kanban_suggest' }, ($, e) =>
-    runTool($, 'kanban_suggest', e),
-  ).catch(($, e, next) =>
-    next.called ? next(e) : { deny: S.toolFailed('kanban_suggest') },
-  )
-
-  // Tells Claude the board is the backlog and asks it to suggest follow-ups as
-  // cards, in two short sections.
+  // Tells Claude the board is the backlog, in one short section.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    const sections = withSuggestSection(composed.sections, e.traits)
 
-    return { sections: await backlogSection($, sections, e.traits) }
+    return { sections: await backlogSection($, composed.sections, e.traits) }
   }).catch(($, e, next) => next(e))
 
   // The GitHub backend cannot be chosen in /config while gh is missing or signed
