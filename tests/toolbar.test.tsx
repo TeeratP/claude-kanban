@@ -2,15 +2,15 @@ import type { On, RenderSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
-import { cellWidth } from '../hooks/model'
+import { cellWidth, truncate } from '../hooks/model'
 import { S } from '../hooks/strings'
-import { toolbar, treeKinds } from './board-ui'
+import { keys, row, toolbar, treeKinds } from './board-ui'
 import type { BoardUi } from './board-ui'
 import { fakeProcess } from './fake-gh'
-import { HANDED_OFF, PANE, RUN, boot, card, path } from './fakes'
-import type { Files } from './fakes'
-import { KANBAN, github } from './github-board'
-import { GH_VERSION, SIGNED_OUT, remote } from './zero'
+import { HANDOFF, bootGithub, issue } from './fake-github'
+import { PANE, RUN, boot } from './fakes'
+import { overflow, renderPane } from './render'
+import { GH_VERSION, NO_GH, SIGNED_OUT, remote } from './zero'
 
 // Row 1 of the toolbar is the status, row 2 the buttons. The engine draws a
 // plain Button that has a hotkey as `<hotkey>: <label>`, so these tests read the
@@ -23,30 +23,15 @@ const WIDTHS = [30, 44, 80] as const
 const MOVE = { tool: 'mcp__kanban__kanban_move' } as const
 const QUERY = 'fix login page'
 
-const cards = (): Files => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
+const cards = () => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API' }),
   // Card 3 is moved to Human by these tests, which needs a handoff.
-  [path(3, 'docs')]: card(
-    3,
-    { status: 'backlog', title: 'Write docs' },
-    HANDED_OFF,
-  ),
-})
+  issue(3, { column: 'backlog', title: 'Write docs', comments: [HANDOFF] }),
+]
 
-async function open(
-  $: Engine,
-  on: On,
-  surface: RenderSurface,
-  backend: 'local' | 'github' = 'local',
-) {
-  const world = boot(
-    on,
-    backend === 'github'
-      ? { 'CLAUDE.md': KANBAN }
-      : { ...cards(), 'CLAUDE.md': '# Notes\n' },
-  )
-  if (backend === 'github') github(on)
+async function open($: Engine, on: On, surface: RenderSurface) {
+  const world = bootGithub(on, cards())
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -74,7 +59,10 @@ async function failTwoMoves(
   $: Engine,
   world: Awaited<ReturnType<typeof open>>,
 ) {
-  world.calls.denyWrite = 'EIO: disk error'
+  world.github.fail['project item-edit'] = {
+    exitCode: 1,
+    stderr: 'HTTP 403: Resource not accessible',
+  }
   await $.tool.call({ ...MOVE, card: 3, to: 'human' })
   await $.tool.call({ ...MOVE, card: 1, to: 'claude' })
   await world.clock.advance(300)
@@ -84,17 +72,15 @@ const HINT = ' · ↑↓ ⏎ open · m move'
 const SETTINGS = 's: Settings'
 
 // Row 1: the status, then `s: Settings` flush right. The button takes 12 cells,
-// so the status gives way: " (auto)" first (to the backend's name below 40
-// columns, and at 44 where the name is longer), then the age.
-const status = (name: string, width: number, hint: boolean) => {
+// so the status gives way: below 40 columns the age goes, leaving the backend's name.
+const status = (width: number, hint: boolean) => {
   const age = ' · updated just now'
-  const auto = name === 'Local' ? ' (auto)' : ''
   const text =
     width < 40
-      ? ` ${name}`
+      ? ' GitHub'
       : width < 80
-        ? ` ${name}${auto}${age}`
-        : ` ${name} (auto)${age}${hint ? HINT : ''}`
+        ? ` GitHub${age}`
+        : ` GitHub${age}${hint ? HINT : ''}`
 
   return `${text.padEnd(width - SETTINGS.length)}${SETTINGS}`
 }
@@ -118,25 +104,21 @@ const ACTIONS = ' r: Refresh   n: New   f: Find'
 const MOBILE_ACTIONS = ' r: Refresh'
 
 for (const surface of EVERY_SURFACE) {
-  for (const backend of ['local', 'github'] as const) {
-    const label = backend === 'local' ? 'Local' : 'GitHub'
+  test(`row 1 is the status and row 2 the labelled actions at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
+    await open($, on, surface)
 
-    test(`${backend}: row 1 is the status and row 2 the labelled actions at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
-      await open($, on, surface, backend)
+    for (const width of WIDTHS) {
+      const ui = await mount($, surface, width)
+      const rows = await toolbar(ui)
 
-      for (const width of WIDTHS) {
-        const ui = await mount($, surface, width)
-        const rows = await toolbar(ui)
-
-        expect(rows).toEqual([
-          status(label, width, hasHint(surface, width)),
-          surface === 'mobile' ? MOBILE_ACTIONS : ACTIONS,
-        ])
-        expectReadable(rows, width)
-        await ui.unmount()
-      }
-    })
-  }
+      expect(rows).toEqual([
+        status(width, hasHint(surface, width)),
+        surface === 'mobile' ? MOBILE_ACTIONS : ACTIONS,
+      ])
+      expectReadable(rows, width)
+      await ui.unmount()
+    }
+  })
 
   test(`failed moves show ✕N retry at the end of row 2, in the error colour, and row 1 keeps the status on the ${surface}`, async ($, on) => {
     const world = await open($, on, surface)
@@ -160,7 +142,7 @@ for (const surface of EVERY_SURFACE) {
       const rows = await toolbar(ui)
 
       expect(rows).toEqual([
-        status('Local', width, hasHint(surface, width)),
+        status(width, hasHint(surface, width)),
         expected[width],
       ])
       expectReadable(rows, width)
@@ -182,10 +164,10 @@ for (const surface of EVERY_SURFACE) {
 
     expect(await hotkey('refresh')).toBe('r')
     expect(await text('refresh')).toBe('Refresh')
-    const lists = world.calls.lists
+    const loads = world.github.loads()
     await ui.press({ key: 'refresh' })
     await world.clock.settle()
-    expect(world.calls.lists).toBeGreaterThan(lists)
+    expect(world.github.loads()).toBeGreaterThan(loads)
 
     if (surface === 'mobile') {
       expect(await ui.find({ key: 'add' })).toBeUndefined()
@@ -224,7 +206,7 @@ for (const surface of TYPING) {
       const rows = await toolbar(ui)
 
       expect(rows).toEqual([
-        status('Local', width, hasHint(surface, width)),
+        status(width, hasHint(surface, width)),
         expected[width],
       ])
       expectReadable(rows, width)
@@ -277,7 +259,7 @@ for (const surface of TYPING) {
       const rows = await toolbar(ui)
 
       expect(rows).toEqual([
-        status('Local', width, hasHint(surface, width)),
+        status(width, hasHint(surface, width)),
         expected[width],
       ])
       expectReadable(rows, width)
@@ -324,35 +306,133 @@ for (const surface of ['terminal', 'vscode'] as const) {
   })
 }
 
-test(
-  'an error keeps its colour on row 1 and the actions stay on row 2',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const world = boot(on, { 'CLAUDE.md': KANBAN })
+test('setup needed keeps the error colour on row 1 and the actions stay on row 2', async ($, on) => {
+  const world = boot(on, {})
+  fakeProcess(on, [
+    GH_VERSION,
+    SIGNED_OUT,
+    remote('git@github.com:TeeratP/claude-kanban.git'),
+  ])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+
+  const ui = await mount($, 'terminal', 44)
+  const first = (await ui.findAll({ type: 'Text' }))[0]
+  const rows = await toolbar(ui)
+
+  expect(first?.props.color).toBe('error')
+  expect(rows[0]).toMatch(/^ GitHub · setup needed/)
+  expect(rows[1]).toBe(ACTIONS)
+  expectReadable(rows, 44)
+  await ui.unmount()
+})
+
+for (const surface of EVERY_SURFACE) {
+  test(`with gh missing the pane says so under the toolbar and offers g: Set up with Claude on the ${surface}`, async ($, on) => {
+    const world = boot(on, {})
     fakeProcess(on, [
-      GH_VERSION,
-      SIGNED_OUT,
+      NO_GH,
       remote('git@github.com:TeeratP/claude-kanban.git'),
     ])
-    await $.session.start({
-      cwd: '/',
-      surface: 'terminal',
-      isInteractive: true,
-    })
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
     await world.clock.settle()
 
-    const ui = await mount($, 'terminal', 44)
-    const first = (await ui.findAll({ type: 'Text' }))[0]
-    const rows = await toolbar(ui)
+    for (const width of WIDTHS) {
+      const ui = await mount($, surface, width)
+      const lines = await renderPane(ui, width)
 
-    expect(first?.props.color).toBe('error')
-    expect(rows[0]).toMatch(/^ GitHub · gh auth status failed/)
-    expect(rows[1]).toBe(ACTIONS)
-    expectReadable(rows, 44)
-    await ui.unmount()
-  },
-)
+      expect(lines[0]).toMatch(/^ GitHub · setup n/)
+      // What is missing, then the button, once each, under both toolbar rows.
+      expect(lines.slice(2, 4)).toEqual([
+        truncate(` ${S.setupMissing.gh}`, width),
+        ' g: Set up with Claude',
+      ])
+      expect(
+        lines.filter(line => line.includes('Set up with Claude')),
+      ).toHaveLength(1)
+      expect((await ui.find({ key: 'setup' }))?.props.hotkey).toBe('g')
+      expect(overflow(lines, width)).toEqual([])
+      await ui.unmount()
+    }
+  })
+}
+
+test('pressing the setup button asks Claude to set GitHub up, with the reason', async ($, on) => {
+  const world = boot(on, {})
+  fakeProcess(on, [
+      NO_GH,
+      remote('git@github.com:TeeratP/claude-kanban.git'),
+    ])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+  const ui = await mount($, 'terminal', 44)
+
+  await ui.press({ key: 'setup' })
+  await world.clock.settle()
+
+  expect(world.prompts).toHaveLength(1)
+  expect(world.prompts[0]).toContain('Set up GitHub for the kanban board')
+  expect(world.prompts[0]).toContain('gh: command not found')
+  expect(world.prompts[0]).toContain('(gh)')
+  expect(world.toasts).toEqual([S.setupAsked])
+  await ui.unmount()
+})
+
+test('the setup hotkey g submits the same prompt', async ($, on) => {
+  const world = boot(on, {})
+  fakeProcess(on, [
+      NO_GH,
+      remote('git@github.com:TeeratP/claude-kanban.git'),
+    ])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+  const ui = await mount($, 'terminal', 44)
+
+  // The engine hands the key to the Client and to the Buttons that have it for a hotkey.
+  const armed = (await ui.findAll({ type: 'Button' })).flatMap(one =>
+    one.props.hotkey === 'g' && one.key !== undefined ? [one.key] : [],
+  )
+  expect(armed).toEqual(['setup'])
+  await keys(ui, 'g')
+  for (const key of armed) await ui.press({ key })
+  await world.clock.settle()
+
+  expect(world.prompts).toHaveLength(1)
+  expect(world.prompts[0]).toContain('gh: command not found')
+  await ui.unmount()
+})
+
+test('once gh works, a refresh loads the board and the setup rows are gone', async ($, on) => {
+  const world = bootGithub(on, cards())
+  world.github.fail['--version'] = {
+    exitCode: 127,
+    stderr: 'gh: command not found',
+  }
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+  const ui = await mount($, 'terminal', 44)
+  expect(await ui.find({ key: 'setup' })).toBeDefined()
+  expect((await toolbar(ui))[0]).toMatch(/^ GitHub · setup needed/)
+  expect(await row(ui, 'card:gh:1')).toBeUndefined()
+
+  delete world.github.fail['--version']
+  await ui.press({ key: 'refresh' })
+  await world.clock.settle()
+
+  expect(await ui.find({ key: 'setup' })).toBeUndefined()
+  expect(
+    await ui.find({ type: 'Text', text: S.setupMissing.gh.trim() }),
+  ).toBeUndefined()
+  expect(await toolbar(ui)).toEqual([status(44, false), ACTIONS])
+  expect((await row(ui, 'card:gh:1'))?.text).toContain('#1 Fix login')
+  expect(world.github.loads()).toBeGreaterThanOrEqual(1)
+  await ui.unmount()
+})
 
 test('the status is dim, with no colour of its own', async ($, on) => {
   await open($, on, 'terminal')
@@ -382,13 +462,10 @@ test('the status says in words how old the board is: just now, then minutes and 
   expect(await statusAt()).toContain('· updated 2h ago')
 })
 
-test('the status copy: ages in words, and the backend name without (auto) when the pane is narrow', () => {
+test('the status copy: ages in words, and the backend name', () => {
   expect(S.updated('now')).toBe('updated just now')
   expect(S.updated('5m')).toBe('updated 5m ago')
   expect(S.updated('3w')).toBe('updated 3w ago')
-  expect(S.backendLabel('auto', 'local')).toBe('Local (auto)')
-  expect(S.backendLabel('auto', 'github', true)).toBe('GitHub')
-  // A backend that was asked for never had (auto) to lose.
-  expect(S.backendLabel('local', 'local')).toBe('Local')
-  expect(S.backendLabel('local', 'local', true)).toBe('Local')
+  expect(S.backendName).toBe('GitHub')
+  expect(S.setupNeeded).toBe('setup needed')
 })

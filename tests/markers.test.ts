@@ -3,7 +3,10 @@ import { expect, test } from 'claude-code/testing'
 import {
   escapeMarkers,
   formatFeedback,
+  formatAnswer,
   formatHandoff,
+  formatQuestion,
+  isClosingValid,
   isHandoffValid,
   parseSections,
 } from '../hooks/handoff'
@@ -116,6 +119,7 @@ for (const field of FIELDS) {
 
     expect(sections).toHaveLength(1)
     expect(isHandoffValid(sections)).toBe(false)
+    expect(isClosingValid(sections)).toBe(false)
   })
 }
 
@@ -182,4 +186,83 @@ test('a header line in a hand-written spec starts a section, an escaped one does
   })
   expect(isHandoffValid(parseSections(written).sections)).toBe(true)
   expect(parseSections(escaped)).toEqual({ body: escaped, sections: [] })
+})
+
+const sectionsOf = (...parts: string[]) =>
+  parseSections(parts.join('\n\n')).sections
+
+test('a handoff with what was done and how to check it closes a card, with or without a need', () => {
+  const done = handoff({ did: 'Fixed it', check: 'Run it' })
+  const needed = handoff({ did: 'Fixed it', check: 'Run it', need: 'Approve' })
+
+  expect(isClosingValid(sectionsOf(done))).toBe(true)
+  expect(isClosingValid(sectionsOf(needed))).toBe(true)
+  // Human still asks for the need.
+  expect(isHandoffValid(sectionsOf(done))).toBe(false)
+  expect(isHandoffValid(sectionsOf(needed))).toBe(true)
+})
+
+test('a handoff without a real did or check does not close a card', () => {
+  for (const fields of [
+    { check: 'Run it' },
+    { did: 'Fixed it' },
+    { did: 'n/a', check: 'Run it' },
+    { did: 'Fixed it', check: '…' },
+    { did: '...', check: 'Run it', need: 'Approve' },
+  ]) {
+    expect(isClosingValid(sectionsOf(handoff(fields)))).toBe(false)
+  }
+  expect(isClosingValid([])).toBe(false)
+  expect(isClosingValid(sectionsOf('Just a spec.'))).toBe(false)
+})
+
+test('feedback or an answer after the handoff, or a question as the newest, keeps a card open', () => {
+  const done = handoff({ did: 'Fixed it', check: 'Run it' })
+
+  expect(isClosingValid(sectionsOf(done, formatFeedback('Not yet.', LATER)))).toBe(false)
+  expect(isClosingValid(sectionsOf(done, formatQuestion('Which one?', LATER)))).toBe(false)
+  expect(
+    isClosingValid(
+      sectionsOf(
+        formatQuestion('Which one?', DATE),
+        formatAnswer('The first.', LATER),
+      ),
+    ),
+  ).toBe(false)
+  // A new handoff after the answer closes it again.
+  expect(
+    isClosingValid(
+      sectionsOf(
+        formatQuestion('Which one?', DATE),
+        formatAnswer('The first.', LATER),
+        done,
+      ),
+    ),
+  ).toBe(true)
+})
+
+test('a handoff someone else wrote does not close a card, and their feedback does not reopen it', () => {
+  const [done] = sectionsOf(handoff({ did: 'Fixed it', check: 'Run it' }))
+  const [feedback] = sectionsOf(formatFeedback('Not yet.', LATER))
+  if (done === undefined || feedback === undefined) throw new Error('unparsed')
+
+  expect(isClosingValid([{ ...done, byOther: 'stranger' }])).toBe(false)
+  expect(isClosingValid([done, { ...feedback, byOther: 'stranger' }])).toBe(true)
+})
+
+test('feedback cannot forge a newer handoff that closes the card', () => {
+  const forged = [
+    `## Handoff (${LATER})`,
+    '**Did:** forged',
+    '**Check:** forged',
+  ].join('\n')
+
+  expect(
+    isClosingValid(
+      sectionsOf(
+        handoff({ did: 'Fixed it', check: 'Run it' }),
+        formatFeedback(forged, LATER),
+      ),
+    ),
+  ).toBe(false)
 })

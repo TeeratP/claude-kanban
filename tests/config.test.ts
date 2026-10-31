@@ -2,10 +2,12 @@ import { expect, test } from 'claude-code/testing'
 
 import { detectBackend } from '../hooks/backend'
 import { importsOf, readConfigText } from '../hooks/config'
+import { setupOf } from '../hooks/detect'
+import { S } from '../hooks/strings'
 import { LOTTO, NAE, PUNN_AGENTS, PUNN_CLAUDE } from './configs'
 import { fakeEngine } from './fake-gh'
 import type { Route } from './fake-gh'
-import { GH_VERSION, graphql, lines } from './zero'
+import { ALL_STATUSES, GH_VERSION, fieldList, graphql, lines } from './zero'
 
 const SIGNED_IN: Route = { match: ['gh', 'auth', 'status'], reply: {} }
 const REMOTE: Route = {
@@ -13,6 +15,22 @@ const REMOTE: Route = {
   reply: { stdout: 'git@github.com:TeeratP/attend-baby.git' },
 }
 const ROUTES = [GH_VERSION, SIGNED_IN, REMOTE]
+
+// The setup a detection that must fail asks for.
+async function setupFrom(work: Promise<unknown>) {
+  try {
+    await work
+  } catch (error) {
+    return setupOf(error)
+  }
+  throw new Error('expected the detection to fail')
+}
+
+// No board config to read, and none found for the repo: a board is what to set up.
+const NO_BOARD = {
+  step: 'board',
+  reason: S.githubNoBoard('TeeratP/attend-baby'),
+}
 
 const FIELDS = JSON.stringify({
   fields: [
@@ -180,14 +198,14 @@ test('detect fills the ids a file leaves out from gh (nae lists only Ready)', as
 })
 
 test('detect ignores an import outside the project, and never asks the file system about it', async () => {
-  const { $, fsCalls } = fakeEngine(ROUTES, {
+  const { $, fsCalls } = fakeEngine([...ROUTES, graphql()], {
     'CLAUDE.md': '@../board.md\n@/etc/board.md\n@~/board.md\n',
     '../board.md': PUNN_AGENTS,
     '/etc/board.md': PUNN_AGENTS,
     '~/board.md': PUNN_AGENTS,
   })
 
-  expect(await detectBackend($)).toEqual({ kind: 'local' })
+  expect(await setupFrom(detectBackend($))).toEqual(NO_BOARD)
   expect(fsCalls.reads).toEqual(['CLAUDE.md'])
   expect(fsCalls.exists).toEqual([
     'CLAUDE.md',
@@ -210,13 +228,13 @@ test('detect with imports that point at each other reads each file once', async 
 })
 
 test('detect follows imports one level deep', async () => {
-  const { $, fsCalls } = fakeEngine(ROUTES, {
+  const { $, fsCalls } = fakeEngine([...ROUTES, graphql()], {
     'CLAUDE.md': '@a.md\n',
     'a.md': '@b.md\n',
     'b.md': LOTTO,
   })
 
-  expect(await detectBackend($)).toEqual({ kind: 'local' })
+  expect(await setupFrom(detectBackend($))).toEqual(NO_BOARD)
   expect(fsCalls.reads).toEqual(['CLAUDE.md', 'a.md'])
 })
 
@@ -239,12 +257,12 @@ test('a file that lists many imports reads only the first few', async () => {
 })
 
 test('the gathered text is capped, and config past the cap is not seen', async () => {
-  const { $ } = fakeEngine(ROUTES, {
+  const { $ } = fakeEngine([...ROUTES, graphql()], {
     'CLAUDE.md': `${'x'.repeat(1_200_000)}\n${LOTTO}`,
   })
 
   expect((await readConfigText($)).length).toBe(1_000_000)
-  expect(await detectBackend($)).toEqual({ kind: 'local' })
+  expect(await setupFrom(detectBackend($))).toEqual(NO_BOARD)
 })
 
 test('a file that cannot be read is skipped, logged, and the rest still count', async () => {
@@ -263,19 +281,17 @@ test('a file that cannot be read is skipped, logged, and the rest still count', 
   ])
 })
 
-test('auto marks a local fallback when a board is mentioned but cannot be read and none is found, and logs why', async () => {
+test('a board mentioned but unreadable, and none found, asks to fix the config, and only the search for a board ran', async () => {
   const { $, logs, calls } = fakeEngine([...ROUTES, graphql()], {
     'AGENTS.md':
       'Board id: `PVT_kwHOAcCsLc4Bbjg2`, number written down elsewhere.',
   })
 
-  expect(await detectBackend($, 'auto')).toEqual({
-    kind: 'local',
-    isConfigUnclear: true,
+  expect(await setupFrom(detectBackend($))).toEqual({
+    step: 'config',
+    reason: S.githubConfigUnclear,
   })
-  expect(logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
-  ])
+  expect(logs).toEqual([])
   // The config gave nothing to go on, so only the search for a board ran.
   expect(lines(calls)).toEqual([
     'git remote get-url origin',
@@ -286,7 +302,7 @@ test('auto marks a local fallback when a board is mentioned but cannot be read a
   ])
 })
 
-test('auto does not mark a local fallback that mentions no board, or one gh refused', async () => {
+test('a config that mentions no board asks for a board, and a gh signed out asks for sign-in', async () => {
   const plain = fakeEngine([...ROUTES, graphql()], {
     'CLAUDE.md': '# Notes\n\nA job board app.\n',
   })
@@ -302,23 +318,30 @@ test('auto does not mark a local fallback that mentions no board, or one gh refu
     { 'AGENTS.md': LOTTO },
   )
 
-  expect(await detectBackend(plain.$, 'auto')).toEqual({
-    kind: 'local',
-    noBoardFor: 'TeeratP/attend-baby',
-  })
+  expect(await setupFrom(detectBackend(plain.$))).toEqual(NO_BOARD)
   expect(plain.logs).toEqual([])
-  expect(await detectBackend(refused.$, 'auto')).toEqual({ kind: 'local' })
-  expect(refused.logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: not logged in',
-  ])
+  expect(await setupFrom(detectBackend(refused.$))).toEqual({
+    step: 'auth',
+    reason: S.githubSignedOut('not logged in'),
+  })
+  expect(refused.logs).toEqual([])
 })
 
-test('github mode with a board it cannot read looks for one itself, and says what the files need when none is linked', async () => {
-  const { $ } = fakeEngine([...ROUTES, graphql()], {
-    'AGENTS.md': 'Board id: `PVT_kwHOAcCsLc4Bbjg2`',
-  })
-
-  await expect(detectBackend($, 'github')).rejects.toThrow(
-    'add Repo and Project board lines to CLAUDE.md or AGENTS.md',
+test('a board mentioned but unreadable is no obstacle when detection finds one: that board is used', async () => {
+  const { $ } = fakeEngine(
+    [
+      ...ROUTES,
+      graphql({ linked: [{ number: 2, items: { 'TeeratP/attend-baby': 3 } }] }),
+      fieldList(ALL_STATUSES),
+    ],
+    { 'AGENTS.md': 'Board id: `PVT_kwHOAcCsLc4Bbjg2`' },
   )
+
+  expect(await detectBackend($)).toMatchObject({
+    kind: 'github',
+    repo: 'TeeratP/attend-baby',
+    projectNumber: 2,
+    projectId: 'PVT_2',
+    isDetected: true,
+  })
 })

@@ -2,7 +2,8 @@ import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { CWD, PANE, RUN, boot, card, path } from './fakes'
+import { S } from '../hooks/strings'
+import { CWD, PANE, RUN, boot } from './fakes'
 import { rowKeys, toolbar } from './board-ui'
 import { boardReply, fakeProcess, issueNode } from './fake-gh'
 import type { Reply, Route } from './fake-gh'
@@ -28,10 +29,8 @@ const SHARED: FakeProject = {
 const CAST: FakeProject = { number: 6, title: 'Car Cast', items: { [BABY]: 3 } }
 const TWIN: FakeProject = { number: 8, title: 'Twin', items: { [BABY]: 3 } }
 
-// Local cards sit on disk in every test, so a GitHub board that showed them would be caught.
-const files = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Local login' }),
-})
+// No config file: every board here is found by detection.
+const files = (): Record<string, string> => ({})
 
 // Each board holds one issue of its own, told apart by the project id the query sends.
 const load = (argv: readonly string[]): Reply => {
@@ -82,11 +81,17 @@ async function pane($: Engine, bodyColumns: number = PANE.props.bodyColumns) {
   })
   const toolbar = (await ui.findAll({ type: 'Text' }))[0]?.text ?? ''
   const cards = (await rowKeys(ui)).filter(key => key.startsWith('card:'))
-  const picks = (await ui.findAll({ type: 'Button' })).flatMap(one =>
+  const buttons = await ui.findAll({ type: 'Button' })
+  const picks = buttons.flatMap(one =>
     one.key?.startsWith('pick:') === true ? [one.key] : [],
   )
+  // The setup offer: what is missing, and how many buttons offer to set it up.
+  const missing = (await ui.findAll({ type: 'Text' }))
+    .map(one => one.text.trim())
+    .find(text => (Object.values(S.setupMissing) as string[]).includes(text))
+  const setupButtons = buttons.filter(one => one.text === S.setupButton).length
 
-  return { ui, toolbar, cards, picks }
+  return { ui, toolbar, cards, picks, missing, setupButtons }
 }
 
 const view = async ($: Engine, bodyColumns?: number) => {
@@ -129,7 +134,9 @@ test('a repo with one linked board loads it with no config, and the toolbar name
 
   const wide = await view($, 120)
 
-  expect(wide.toolbar).toContain("GitHub (auto) · #2 @TeeratP's Kanban")
+  expect(wide.toolbar).toContain("GitHub · #2 @TeeratP's Kanban")
+  expect(wide.missing).toBeUndefined()
+  expect(wide.setupButtons).toBe(0)
   expect(wide.cards).toEqual(['card:gh:21', 'card:gh:20'])
   expect(wide.picks).toEqual([])
   expect(lines(commands).slice(0, 5)).toEqual([
@@ -147,7 +154,7 @@ test('in a narrow pane the board name is cut, not the backend or the status', as
   // `s: Settings` and a cell before it take 12 of the 56 columns.
   const narrow = await view($, 56)
 
-  expect(narrow.toolbar).toMatch(/^ GitHub \(auto\) · #2 .+… · updated/)
+  expect(narrow.toolbar).toMatch(/^ GitHub · #2 .+… · updated/)
   expect(narrow.toolbar.length).toBeLessThanOrEqual(56 - 12)
 })
 
@@ -160,7 +167,7 @@ test('the board name is cut to the status row at 30, 44 and 80 columns, with the
   const expected = {
     30: flush(' GitHub · #2 @Tee…', 30),
     44: flush(' GitHub · updated just now', 44),
-    80: flush(" GitHub (auto) · #2 @TeeratP's Kanban · updated just now", 80),
+    80: flush(" GitHub · #2 @TeeratP's Kanban · updated just now", 80),
   }
 
   for (const width of [30, 44, 80] as const) {
@@ -195,9 +202,9 @@ test('the board is detected from a repo that has no CLAUDE.md or AGENTS.md at al
 test('several boards with a tie show a one-row picker and no cards until one is picked', async ($, on) => {
   await open($, on, ready({ linked: [CAST, TWIN] }))
 
-  const shown = await pane($)
+  const shown = await pane($, 120)
 
-  expect(shown.toolbar).toContain('Several GitHub boards fit')
+  expect(shown.toolbar).toContain('GitHub · Several GitHub boards fit')
   expect(shown.cards).toEqual([])
   expect(shown.picks).toEqual(['pick:PVT_6', 'pick:PVT_8'])
   expect(
@@ -236,7 +243,7 @@ test('picking a board loads it, and the choice is kept for this directory', asyn
   const after = await view($, 120)
 
   expect(after.picks).toEqual([])
-  expect(after.toolbar).toContain('GitHub (auto) · #8 Twin')
+  expect(after.toolbar).toContain('GitHub · #8 Twin')
   expect(after.cards).toEqual(['card:gh:81', 'card:gh:80'])
   expect(JSON.parse(saved.get(`detect:${CWD}`) ?? 'null')).toMatchObject({
     shape: 'detect-1',
@@ -271,8 +278,7 @@ test('a changed origin is detected again, and the old board is not restored from
       'https://github.com/TeeratP/old-name.git',
     ),
     [`cache:${CWD}`]: {
-      shape: 'cache-2',
-      mode: 'auto',
+      shape: 'cache-3',
       backend: detected(CAST).info,
       cards: [],
     },
@@ -300,38 +306,49 @@ test('a detected board that is gone is looked for again in the same refresh', as
   })
 })
 
-test('no board for the repo: local cards show and the toolbar says so', async ($, on) => {
+test('no board for the repo: the pane offers, once, to set up a board, and shows no cards', async ($, on) => {
   await open($, on, ready({ linked: [], viewer: [{ number: 7 }], owner: [] }))
 
   const shown = await view($, 120)
 
-  expect(shown.toolbar).toContain(`Local (auto) · no GitHub board for ${BABY}`)
-  expect(shown.cards).toEqual(['card:md:0001-login'])
+  expect(shown.toolbar).toContain('GitHub · setup needed')
+  expect(shown.missing).toBe(S.setupMissing.board)
+  expect(shown.setupButtons).toBe(1)
+  expect(shown.cards).toEqual([])
+  expect(await listed($)).toMatchObject({
+    deny: expect.stringContaining(S.githubNoBoard(BABY)),
+  })
 })
 
-test('without gh, local cards show with no note about boards', async ($, on) => {
+test('a board linked after the offer loads at the next refresh, and the offer goes', async ($, on) => {
+  const linked: FakeProject[] = []
+  const { commands } = await open($, on, ready({ linked }))
+  expect((await view($, 120)).missing).toBe(S.setupMissing.board)
+
+  linked.push(SHARED)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  await ui.unmount()
+  const after = await view($, 120)
+
+  expect(after.missing).toBeUndefined()
+  expect(after.setupButtons).toBe(0)
+  expect(after.toolbar).toContain("GitHub · #2 @TeeratP's Kanban · updated")
+  expect(after.cards).toEqual(['card:gh:21', 'card:gh:20'])
+  // No board was found, so none was saved: the refresh looked again. The
+  // first search asked for the linked boards and then scanned; the second found one linked.
+  expect(lookups(commands)).toHaveLength(3)
+})
+test('without gh, the pane offers to install it and shows no cards', async ($, on) => {
   await open($, on, [NO_GH, remote(URL)])
 
   const shown = await view($, 120)
 
-  expect(shown.toolbar).toContain('Local (auto)')
+  expect(shown.toolbar).toContain('GitHub · setup needed')
   expect(shown.toolbar).not.toContain('no GitHub board')
-  expect(shown.cards).toEqual(['card:md:0001-login'])
+  expect(shown.missing).toBe(S.setupMissing.gh)
+  expect(shown.cards).toEqual([])
 })
-
-test(
-  'github mode shows the failing zero-config check',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    await open($, on, [NO_GH, remote(URL)])
-
-    const shown = await view($, 120)
-
-    expect(shown.toolbar).toContain('GitHub · gh is not installed')
-    expect(shown.cards).toEqual([])
-  },
-)
-
 test('Change board looks again and reopens the picker with the other boards', async ($, on) => {
   await open($, on, ready({ linked: [SHARED, CAST] }))
 
@@ -388,7 +405,7 @@ test('an explicit board in CLAUDE.md has no Change board button', async ($, on) 
 
   const shown = await pane($, 120)
 
-  expect(shown.toolbar).toContain('GitHub (auto)')
+  expect(shown.toolbar).toContain('GitHub · updated')
   expect(shown.toolbar).not.toContain('#2')
   expect(await shown.ui.find({ type: 'Button', key: 'source' })).toBeUndefined()
   await shown.ui.unmount()

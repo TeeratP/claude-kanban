@@ -2,9 +2,13 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 import type { On, RenderSurface } from 'claude-code'
 
-import { group, rowIndex } from './board-ui'
-import { CWD, NOW, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
+import { TOOLBAR_ROWS, group, rowIndex } from './board-ui'
+import { bootGithub, issue } from './fake-github'
+import type { FakeCard } from './fake-github'
+import { CWD, NOW, PANE, RUN, SYNC_PAUSE } from './fakes'
 import { overflow, renderPane } from './render'
+import { truncate } from '../hooks/model'
+import { S } from '../hooks/strings'
 
 // The board as a terminal would show it, at the widths the pane is used at,
 // in the states it is seen in. The exact frames are at 44 columns; every state
@@ -14,31 +18,28 @@ const WIDTHS = [24, 30, 44, 80] as const
 const MINUTE = 60_000
 const ago = (minutes: number) => new Date(NOW - minutes * MINUTE).toISOString()
 
+// A board, its issues in board order, and when GitHub last saw each change.
+type Board = { cards: FakeCard[]; updated: Record<number, string> }
+
 // A board with every section filled, the Claude card with a second row.
-function board() {
-  const files: Record<string, string> = {}
+function board(): Board {
+  const cards: FakeCard[] = []
+  const updated: Record<number, string> = {}
   const add = (
     n: number,
-    status: string,
+    column: NonNullable<Parameters<typeof issue>[1]>['column'],
     title: string,
     minutes: number,
-    body?: string,
+    comments?: string[],
   ) => {
-    files[path(n, `c${n}`)] = card(
-      n,
-      { status, title, updated: ago(minutes), order: n },
-      body,
-    )
+    cards.push(issue(n, { column, title, ...(comments && { comments }) }))
+    updated[n] = ago(minutes)
   }
-  add(12, 'human', 'Fix login redirect loop on Safari', 12)
   add(7, 'human', 'Rewrite the onboarding flow so that it is short', 24 * 60)
-  add(
-    23,
-    'human',
-    'Which auth provider?',
-    600,
-    'Spec.\n\n## Question (2026-10-25)\nWhich provider should we use?\n',
-  )
+  add(12, 'human', 'Fix login redirect loop on Safari', 12)
+  add(23, 'human', 'Which auth provider?', 600, [
+    '## Question (2026-10-25)\nWhich provider should we use?',
+  ])
   add(31, 'claude', 'Build the sync API', 3)
   add(32, 'claude', 'Add a dark theme', 180)
   const backlog = [
@@ -54,22 +55,55 @@ function board() {
   backlog.forEach((title, i) =>
     add(40 + i, 'backlog', title, 20 * 60 + i * 24 * 60),
   )
+  add(56, 'suspended', 'Keyboard help overlay v2', 14 * 24 * 60)
+  add(57, 'cancelled', 'Export to CSV', 21 * 24 * 60)
   for (let i = 0; i < 12; i += 1) {
     add(100 + i, 'done', `Finished task ${i}`, 24 * 60 * (i + 1))
   }
-  add(56, 'suspended', 'Keyboard help overlay v2', 14 * 24 * 60)
-  add(57, 'cancelled', 'Export to CSV', 21 * 24 * 60)
 
-  return files
+  return { cards, updated }
+}
+
+const EMPTY: Board = { cards: [], updated: {} }
+
+const blank = (rows: number): string[] => Array.from({ length: rows }, () => '')
+
+type Hook = (...args: unknown[]) => unknown
+
+// Gives each issue the board query reports the time `updated` holds for it,
+// which the shared fake leaves at one date per number: the plugin's `on`, with
+// the fake's `process.run` hook wrapped.
+function withUpdated(on: On, updated: Record<number, string>): On {
+  const stamp = (node: unknown): void => {
+    if (typeof node !== 'object' || node === null) return
+    const one = node as Record<string, unknown>
+    const at = typeof one.number === 'number' ? updated[one.number] : undefined
+    if (at !== undefined && 'updatedAt' in one) one.updatedAt = at
+    Object.values(one).forEach(stamp)
+  }
+  const wrapped = (pattern: string, hook: Hook) => {
+    if (pattern !== 'process.run') return (on as unknown as Hook)(pattern, hook)
+
+    return (on as unknown as Hook)(pattern, async (...args: unknown[]) => {
+      const reply = (await hook(...args)) as { value: { stdout: string } }
+      if (!reply.value.stdout.startsWith('{"data"')) return reply
+      const data: unknown = JSON.parse(reply.value.stdout)
+      stamp(data)
+
+      return { value: { ...reply.value, stdout: JSON.stringify(data) } }
+    })
+  }
+
+  return wrapped as unknown as On
 }
 
 // Claude has worked on card 31: two agents, 12 minutes, 48k tokens, idle for three.
 const store = () => ({
-  [`activity:${CWD}:md:0031-c31`]: {
+  [`activity:${CWD}:gh:31`]: {
     shape: 'activity-1',
     cwd: CWD,
     card: {
-      cardId: 'md:0031-c31',
+      cardId: 'gh:31',
       rounds: [
         {
           startedAt: 0,
@@ -94,10 +128,10 @@ const store = () => ({
 async function start<S extends RenderSurface>(
   $: Engine,
   on: On,
-  files: Record<string, string>,
+  { cards, updated }: Board,
   surface: S = 'terminal' as S,
 ) {
-  const world = boot(on, files, store())
+  const world = bootGithub(withUpdated(on, updated), cards, store())
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -138,7 +172,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
   const ui = await mount($, 44)
 
   expect(await fits(ui, 44, 'active open')).toEqual([
-    ' Local (auto) · updated just now s: Settings',
+    ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 8 ────────────────────────────────',
@@ -172,13 +206,13 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
   await ui.unmount()
 })
 
-test('Active open at 30 columns drops (auto), the Refresh label stays and the long titles are cut', async ($, on) => {
+test('Active open at 30 columns drops the age, the Refresh label stays and the long titles are cut', async ($, on) => {
   await start($, on, board())
   const ui = await mount($, 30)
   const lines = await fits(ui, 30, 'active open')
 
   expect(lines.slice(0, 7)).toEqual([
-    ' Local             s: Settings',
+    ' GitHub            s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 8 ──────────────────',
@@ -201,7 +235,7 @@ test('Inactive open: Active is a summary, the dim cards keep the title column an
   await group(ui, 'inactive')
 
   expect(await fits(ui, 44, 'inactive open')).toEqual([
-    ' Local (auto) · updated just now s: Settings',
+    ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▸ Active      8 Backlog · 2 Claude · 3 Human',
     '▾ Inactive',
@@ -241,7 +275,7 @@ test('both groups folded: two summaries and the line that says to press one, whi
   await group(ui, 'active')
 
   expect(await fits(ui, 44, 'both folded')).toEqual([
-    ' Local (auto) · updated just now s: Settings',
+    ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▸ Active      8 Backlog · 2 Claude · 3 Human',
     '▸ Inactive                         12D 1C 1S',
@@ -257,64 +291,79 @@ test('both groups folded: two summaries and the line that says to press one, whi
   }
 })
 
-test('an empty board says what each section is for, and where cards live', async ($, on) => {
-  await start($, on, {})
+test('an empty board says what each section is for, and that the board has no issues yet', async ($, on) => {
+  await start($, on, EMPTY)
   const ui = await mount($, 44)
 
   expect(await fits(ui, 44, 'empty')).toEqual([
-    ' Local (auto) · updated just now s: Settings',
+    ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog 0 ────────────────────────────────',
     '       Nothing yet · n adds a card',
-    '',
-    '',
-    '',
-    '',
-    '',
+    ...blank(6),
     '  Claude 0 ─────────────────────────────────',
     '       Idle · drag a card here',
-    '',
-    '',
-    '',
-    '',
-    '',
+    ...blank(6),
     '  Human 0 ──────────────────────────────────',
     '       ✓ All clear, nothing needs you',
-    '',
-    '',
-    '',
-    '',
-    '',
+    ...blank(6),
     '▸ Inactive                             empty',
     '',
-    '',
-    '  Cards live in .kanban/*.md here.',
-    '  On GitHub? Link a Project to the repo',
-    '  or set backend: github to see why.',
+    '  No issues on this board yet.',
   ])
   await ui.unmount()
 
-  const narrow = await mount($, 30)
-  const lines = await fits(narrow, 30, 'empty')
-  expect(lines.slice(-3)).toEqual([
-    '  Cards live in .kanban/',
-    '  GitHub? Link a Project',
-    '  or set backend: github',
-  ])
-  await narrow.unmount()
+  // The note fits 30 columns whole, and is cut short below.
+  for (const [columns, note] of [
+    [30, '  No issues on this board yet.'],
+    [24, '  No issues yet.'],
+  ] as const) {
+    const narrow = await mount($, columns)
+    const lines = await fits(narrow, columns, 'empty')
+    expect(lines.slice(-1)).toEqual([note])
+    await narrow.unmount()
+  }
+})
+
+test('a board GitHub is not set up for flags it on row 1, offers setup under the toolbar and says where cards will show', async ($, on) => {
+  const world = bootGithub(on, board().cards)
+  world.github.fail['--version'] = {
+    exitCode: 127,
+    stderr: 'gh: command not found',
+  }
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...RUN })
+  await world.clock.settle()
+
+  for (const columns of WIDTHS) {
+    const ui = await mount($, columns)
+    const lines = await fits(ui, columns, 'setup needed')
+
+    // Cut where the row is narrow.
+    expect(lines[0]).toMatch(/^ GitHub · s(etup n|…)/)
+    expect(lines.slice(2, 4)).toEqual([
+      truncate(` ${S.setupMissing.gh}`, columns),
+      ' g: Set up with Claude',
+    ])
+    const long = `  ${S.notSetUp.long}`
+    expect(lines.at(-1)).toBe(
+      long.length <= columns ? long : `  ${S.notSetUp.short}`,
+    )
+    await ui.unmount()
+  }
 })
 
 test('the first load draws bars where the cards will be, never an empty board', async ($, on) => {
-  const world = boot(on, board(), store())
-  world.calls.holdList = new Promise(() => {})
+  const world = bootGithub(on, board().cards, store())
+  world.github.holdReads = new Promise(() => {})
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await mount($, 44)
 
   expect(await fits(ui, 44, 'loading')).toEqual([
-    ' Local (auto) · loading…         s: Settings',
+    ' GitHub · loading…               s: Settings',
     ' r: Refresh   n: New   f: Find',
     '▾ Active',
     '  Backlog ──────────────────────────────────',
@@ -350,7 +399,10 @@ test('the first load draws bars where the cards will be, never an empty board', 
     const shown = await mount($, columns)
     const lines = await fits(shown, columns, 'loading')
 
-    expect(lines.join('\n')).not.toMatch(/No cards|Cards live|GitHub/)
+    // Nothing below the toolbar says the board is empty or not set up.
+    expect(lines.slice(TOOLBAR_ROWS).join('\n')).not.toMatch(
+      /No issues|set up|All clear|Idle/,
+    )
     await shown.unmount()
   }
 })
@@ -358,8 +410,8 @@ test('the first load draws bars where the cards will be, never an empty board', 
 test('a card on its way shows the mark before its age, a failed one the cross and a red number, and neither moves the title column', async ($, on) => {
   const world = await start($, on, board())
   const first = await mount($, 44)
-  world.calls.hold = new Promise(() => {})
-  await first.post({ type: 'drop', cardId: 'md:0040-c40', column: 'claude' })
+  world.github.hold = new Promise(() => {})
+  await first.post({ type: 'drop', cardId: 'gh:40', column: 'claude' })
   await world.clock.advance(SYNC_PAUSE)
   await first.unmount()
 
@@ -381,8 +433,11 @@ test('a card on its way shows the mark before its age, a failed one the cross an
 test('a failed move keeps the cross and the age flush right', async ($, on) => {
   const world = await start($, on, board())
   const first = await mount($, 44)
-  world.calls.denyWrite = 'EIO: disk error'
-  await first.post({ type: 'drop', cardId: 'md:0041-c41', column: 'human' })
+  world.github.fail['project item-edit'] = {
+    exitCode: 1,
+    stderr: 'HTTP 403: Resource not accessible',
+  }
+  await first.post({ type: 'drop', cardId: 'gh:41', column: 'claude' })
   await world.clock.advance(SYNC_PAUSE)
   await world.clock.advance(SYNC_PAUSE)
   await first.unmount()
@@ -400,7 +455,7 @@ test('a failed move keeps the cross and the age flush right', async ($, on) => {
 test('dragging a card over a folded group draws its sections as chips, and the card is pointed at', async ($, on) => {
   await start($, on, board())
   const ui = await mount($, 44)
-  const from = await rowIndex(ui, 'card:md:0042-c42')
+  const from = await rowIndex(ui, 'card:gh:42')
   const over = await rowIndex(ui, 'grp:inactive')
   await ui.pointer({ type: 'down', x: 4, y: from, button: 'left' })
   await ui.pointer({ type: 'move', x: 14, y: over, button: 'left' })
@@ -442,8 +497,7 @@ for (const surface of ['vscode', 'mobile'] as const) {
 
 for (const columns of WIDTHS) {
   test(`every state fits ${columns} columns: first load, empty, Inactive open, folded`, async ($, on) => {
-    const files = board()
-    await start($, on, files)
+    await start($, on, board())
     const ui = await mount($, columns)
     await fits(ui, columns, 'active')
     await group(ui, 'inactive')

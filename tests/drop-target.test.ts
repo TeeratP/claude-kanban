@@ -155,12 +155,12 @@ test('rows that belong to no section, and rows past either end, take no drop', (
 })
 
 test('the board messages carry a place only when it is a good one', () => {
-  const drop = { type: 'drop', cardId: 'md:1', column: 'claude' }
+  const drop = { type: 'drop', cardId: 'gh:1', column: 'claude' }
 
   expect(parseBoardMessage(drop)).toEqual(drop)
   expect(
-    parseBoardMessage({ ...drop, place: { at: 'before', cardId: 'md:2' } }),
-  ).toEqual({ ...drop, place: { at: 'before', cardId: 'md:2' } })
+    parseBoardMessage({ ...drop, place: { at: 'before', cardId: 'gh:2' } }),
+  ).toEqual({ ...drop, place: { at: 'before', cardId: 'gh:2' } })
   expect(parseBoardMessage({ ...drop, place: { at: 'top' } })).toEqual({
     ...drop,
     place: { at: 'top' },
@@ -177,10 +177,10 @@ test('the board messages carry a place only when it is a good one', () => {
   }
 
   expect(
-    parseBoardMessage({ type: 'shift', cardId: 'md:1', dir: 'up' }),
-  ).toEqual({ type: 'shift', cardId: 'md:1', dir: 'up' })
+    parseBoardMessage({ type: 'shift', cardId: 'gh:1', dir: 'up' }),
+  ).toEqual({ type: 'shift', cardId: 'gh:1', dir: 'up' })
   expect(
-    parseBoardMessage({ type: 'shift', cardId: 'md:1', dir: 'left' }),
+    parseBoardMessage({ type: 'shift', cardId: 'gh:1', dir: 'left' }),
   ).toBeUndefined()
   expect(parseBoardMessage({ type: 'shift', dir: 'up' })).toBeUndefined()
 })
@@ -360,6 +360,6 @@ test('the board messages name a group to toggle', () => {
   // The old section toggle is gone.
   expect(parseBoardMessage({ type: 'toggle', column: 'done' })).toBeUndefined()
   expect(
-    parseBoardMessage({ type: 'drop', cardId: 'md:1', column: 'suspended' }),
-  ).toEqual({ type: 'drop', cardId: 'md:1', column: 'suspended' })
+    parseBoardMessage({ type: 'drop', cardId: 'gh:1', column: 'suspended' }),
+  ).toEqual({ type: 'drop', cardId: 'gh:1', column: 'suspended' })
 })

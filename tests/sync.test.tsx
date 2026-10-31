@@ -4,48 +4,60 @@ import { expect, test } from 'claude-code/testing'
 import { cellWidth } from '../hooks/model'
 import { moveOptions } from '../hooks/sync'
 import { click, group, marks, row, under } from './board-ui'
-import { HANDED_OFF, PANE, RUN, boot, card, path } from './fakes'
+import { PANE, RUN } from './fakes'
+import type { FakeCard } from './fake-github'
+import { HANDOFF, OPTION, bootGithub, issue } from './fake-github'
+import type { fakeGithub } from './fake-github'
 
-const cards = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
+const cards = () => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API' }),
   // Card 3 is moved to Human by these tests, which needs a handoff.
-  [path(3, 'docs')]: card(
-    3,
-    { status: 'backlog', title: 'Write docs' },
-    HANDED_OFF,
-  ),
-})
+  issue(3, { column: 'backlog', title: 'Write docs', comments: [HANDOFF] }),
+]
 
-const DOCS = 'card:md:0003-docs'
+const DOCS = 'card:gh:3'
 const MOVE = { tool: 'mcp__kanban__kanban_move' } as const
+const DENIED = { exitCode: 1, stderr: 'GraphQL: Resource not accessible by integration' }
+
+/** Every Status the board was told to set, as `#n Status`: one per move sent. */
+function edits(github: ReturnType<typeof fakeGithub>): string[] {
+  return github.commands
+    .filter(call => call.argv[1] === 'project' && call.argv[2] === 'item-edit')
+    .map(call => {
+      const { argv } = call
+      const item = argv[argv.indexOf('--id') + 1] ?? ''
+      const option = argv[argv.indexOf('--single-select-option-id') + 1]
+      const name = Object.entries(OPTION).find(([, id]) => id === option)?.[0]
+
+      return `#${item.replace('PVTI_', '')} ${name ?? option}`
+    })
+}
 
 /** The session, the loaded board and a mounted pane. */
 async function open(
   $: Engine,
-  on: Parameters<typeof boot>[0],
-  files: Record<string, string>,
+  on: Parameters<typeof bootGithub>[0],
+  issues: FakeCard[],
 ) {
-  const kit = boot(on, files)
+  const kit = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await kit.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-
   return { ...kit, ui }
 }
 
 test('a move is pending, then confirmed, then gone after two seconds', async ($, on) => {
-  const files = cards()
-  const { clock, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   expect((await row(ui, DOCS))?.text).toContain('⟳')
   expect(await under(ui, 'hdr:claude')).toContain(DOCS)
-  expect(files[path(3, 'docs')]).toContain('status: backlog')
+  expect(github.card(3).status).toBe('Backlog')
 
   await clock.advance(300)
-  expect(files[path(3, 'docs')]).toContain('status: claude')
+  expect(github.card(3).status).toBe('In progress')
   expect((await row(ui, DOCS))?.text).toContain('✓')
   const bright = (await marks(ui, '✓'))[0]?.props
   expect(bright).toMatchObject({ color: 'success' })
@@ -65,9 +77,9 @@ test('a move is pending, then confirmed, then gone after two seconds', async ($,
 })
 
 test('the pending mark pulses with the ticker', async ($, on) => {
-  const { clock, calls, ui } = await open($, on, cards())
+  const { clock, ui, github } = await open($, on, cards())
   let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
+  github.hold = new Promise<void>(resolve => {
     release = resolve
   })
 
@@ -88,14 +100,13 @@ test('the pending mark pulses with the ticker', async ($, on) => {
 })
 
 test('the ticker stops itself once nothing is syncing', async ($, on) => {
-  const files = cards()
   const ticks: number[] = []
   on('state.set', ($, e, next) => {
     if (e.key === 'tick') ticks.push(1)
 
     return next(e)
   })
-  const { clock, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(2800)
@@ -127,7 +138,7 @@ test('a move made as the ticker reads that nothing shows keeps the ticker going'
 
     return read
   })
-  const { clock, ui } = await open($, on, cards())
+  const { clock, ui, github } = await open($, on, cards())
   let release = () => {}
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
@@ -151,9 +162,8 @@ test('a move made as the ticker reads that nothing shows keeps the ticker going'
 })
 
 test('a refused move shows a cross and a Retry that sends it again', async ($, on) => {
-  const files = cards()
-  const { clock, calls, toasts, ui } = await open($, on, files)
-  calls.denyWrite = 'EACCES: read-only'
+  const { clock, toasts, ui, github } = await open($, on, cards())
+  github.fail['project item-edit'] = DENIED
 
   await click(ui, DOCS)
   await ui.press({ key: 'move:claude' })
@@ -161,15 +171,15 @@ test('a refused move shows a cross and a Retry that sends it again', async ($, o
 
   expect(toasts).toEqual([])
   expect((await ui.find({ type: 'Text', text: /^Claude/ }))?.text).toContain(
-    'EACCES: read-only (attempt 1/4)',
+    'GraphQL: Resource not accessible by integration (attempt 1/4)',
   )
   expect(await ui.find({ key: 'retry' })).toBeDefined()
 
-  calls.denyWrite = undefined
+  delete github.fail['project item-edit']
   await ui.press({ key: 'retry' })
   await clock.settle()
 
-  expect(files[path(3, 'docs')]).toContain('status: claude')
+  expect(github.card(3).status).toBe('In progress')
   expect(await ui.find({ key: 'retry' })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^Claude/ }))?.text).toContain(
     '✓ saved',
@@ -179,9 +189,8 @@ test('a refused move shows a cross and a Retry that sends it again', async ($, o
 })
 
 test('the toolbar counts failed moves and retries them all', async ($, on) => {
-  const files = cards()
-  const { clock, calls, ui } = await open($, on, files)
-  calls.denyWrite = 'EIO: disk error'
+  const { clock, ui, github } = await open($, on, cards())
+  github.fail['project item-edit'] = DENIED
 
   await $.tool.call({ ...MOVE, card: 3, to: 'human' })
   await $.tool.call({ ...MOVE, card: 1, to: 'claude' })
@@ -195,7 +204,7 @@ test('the toolbar counts failed moves and retries them all', async ($, on) => {
 
   const toolbar = [
     await ui.find({ key: 'refresh' }),
-    await ui.find({ type: 'Text', text: /local/ }),
+    await ui.find({ type: 'Text', text: /GitHub/ }),
     await ui.find({ key: 'retry-all' }),
   ]
   expect(
@@ -206,20 +215,20 @@ test('the toolbar counts failed moves and retries them all', async ($, on) => {
   await clock.settle()
   expect((await ui.find({ key: 'retry-all' }))?.text).toContain('✕2 retry')
 
-  calls.denyWrite = undefined
+  delete github.fail['project item-edit']
   await ui.press({ key: 'retry-all' })
   await clock.settle()
 
   expect(await ui.find({ key: 'retry-all' })).toBeUndefined()
-  expect(files[path(3, 'docs')]).toContain('status: human')
-  expect(files[path(1, 'login')]).toContain('status: claude')
+  expect(github.card(3).status).toBe('In review')
+  expect(github.card(1).status).toBe('In progress')
   await clock.advance(2000)
   await ui.unmount()
 })
 
 test('after the first try and three retries the card goes back, with the reason', async ($, on) => {
-  const { clock, calls, toasts, ui } = await open($, on, cards())
-  calls.denyWrite = 'EACCES: read-only'
+  const { clock, toasts, ui, github } = await open($, on, cards())
+  github.fail['project item-edit'] = DENIED
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(300)
@@ -236,7 +245,7 @@ test('after the first try and three retries the card goes back, with the reason'
 
   expect(toasts).toHaveLength(1)
   expect(toasts[0]).toMatch(
-    /^Could not move #3 to Claude, so it is back in Backlog: .*EACCES: read-only$/,
+    /^Could not move #3 to Claude, so it is back in Backlog: .*Resource not accessible by integration$/,
   )
   expect(await under(ui, 'hdr:claude')).not.toContain(DOCS)
   expect(await under(ui, 'hdr:backlog')).toEqual([DOCS])
@@ -246,15 +255,15 @@ test('after the first try and three retries the card goes back, with the reason'
 })
 
 test('a card that went back returns to its old place, not the bottom', async ($, on) => {
-  const files = {
-    ...cards(),
-    [path(4, 'one')]: card(4, { status: 'backlog', title: 'One', order: 1 }),
-    [path(5, 'two')]: card(5, { status: 'backlog', title: 'Two', order: 9 }),
-  }
-  const { clock, calls, ui } = await open($, on, files)
+  // Docs sits between One and Two on the board.
+  const { clock, ui, github } = await open($, on, [
+    issue(4, { title: 'One' }),
+    issue(3, { title: 'Write docs' }),
+    issue(5, { title: 'Two' }),
+  ])
   const backlog = () => under(ui, 'hdr:backlog')
   const before = await backlog()
-  calls.denyWrite = 'EACCES: read-only'
+  github.fail['project item-edit'] = DENIED
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(300)
@@ -263,14 +272,13 @@ test('a card that went back returns to its old place, not the bottom', async ($,
     await clock.settle()
   }
 
-  expect(before).toEqual(['card:md:0004-one', DOCS, 'card:md:0005-two'])
+  expect(before).toEqual(['card:gh:4', DOCS, 'card:gh:5'])
   expect(await backlog()).toEqual(before)
   await ui.unmount()
 })
 
 test('three moves within the pause send one, to the last column', async ($, on) => {
-  const files = cards()
-  const { clock, calls, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(100)
@@ -278,20 +286,19 @@ test('three moves within the pause send one, to the last column', async ($, on) 
   await clock.advance(100)
   await $.tool.call({ ...MOVE, card: 3, to: 'done' })
   await clock.advance(299)
-  expect(calls.writes).toEqual([])
+  expect(edits(github)).toEqual([])
 
   await clock.advance(1)
-  expect(calls.writes).toEqual([path(3, 'docs')])
-  expect(files[path(3, 'docs')]).toContain('status: done')
+  expect(edits(github)).toEqual(['#3 Done'])
+  expect(github.card(3).status).toBe('Done')
   await clock.advance(2000)
   await ui.unmount()
 })
 
 test('a move made while one is out is sent after it, once', async ($, on) => {
-  const files = cards()
-  const { clock, calls, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
   let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
+  github.hold = new Promise<void>(resolve => {
     release = resolve
   })
 
@@ -300,25 +307,24 @@ test('a move made while one is out is sent after it, once', async ($, on) => {
   await $.tool.call({ ...MOVE, card: 3, to: 'done' })
   await $.tool.call({ ...MOVE, card: 3, to: 'human' })
   await clock.advance(1000)
-  expect(calls.writes).toEqual([])
+  expect(edits(github)).toEqual([])
   expect((await row(ui, DOCS))?.text).toContain('⟳')
   expect(await under(ui, 'hdr:human')).toContain(DOCS)
 
   release()
   await clock.settle()
 
-  expect(calls.writes).toEqual([path(3, 'docs'), path(3, 'docs')])
-  expect(files[path(3, 'docs')]).toContain('status: human')
+  expect(edits(github)).toEqual(['#3 In progress', '#3 In review'])
+  expect(github.card(3).status).toBe('In review')
   expect(await under(ui, 'hdr:human')).toContain(DOCS)
   await clock.advance(2000)
   await ui.unmount()
 })
 
 test('moving back to the column a call is already sending to sends nothing more', async ($, on) => {
-  const files = cards()
-  const { clock, calls, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
   let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
+  github.hold = new Promise<void>(resolve => {
     release = resolve
   })
 
@@ -329,15 +335,14 @@ test('moving back to the column a call is already sending to sends nothing more'
   release()
   await clock.settle()
 
-  expect(calls.writes).toEqual([path(3, 'docs')])
-  expect(files[path(3, 'docs')]).toContain('status: claude')
+  expect(edits(github)).toEqual(['#3 In progress'])
+  expect(github.card(3).status).toBe('In progress')
   await clock.advance(2000)
   await ui.unmount()
 })
 
 test('a move undone before it is sent makes no call', async ($, on) => {
-  const files = cards()
-  const { clock, calls, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(100)
@@ -345,37 +350,36 @@ test('a move undone before it is sent makes no call', async ($, on) => {
   await $.tool.call({ ...MOVE, card: 3, to: 'backlog' })
   await clock.advance(1000)
 
-  expect(calls.writes).toEqual([])
-  expect(files[path(3, 'docs')]).toContain('status: backlog')
+  expect(edits(github)).toEqual([])
+  expect(github.card(3).status).toBe('Backlog')
   expect((await row(ui, DOCS))?.text).not.toMatch(/[⟳✓✕]/)
   expect(await under(ui, 'hdr:backlog')).toEqual([DOCS])
   await ui.unmount()
 })
 
 test('a move that fails after another was asked for sends the newer one', async ($, on) => {
-  const files = cards()
-  const { clock, calls, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
   let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
+  github.hold = new Promise<void>(resolve => {
     release = resolve
   })
-  calls.denyWrite = 'EACCES: read-only'
+  github.fail['project item-edit'] = DENIED
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(300)
   await $.tool.call({ ...MOVE, card: 3, to: 'human' })
   release()
   await clock.settle()
-  calls.denyWrite = undefined
+  delete github.fail['project item-edit']
 
   await click(ui, DOCS)
   expect((await ui.find({ type: 'Text', text: /^Human/ }))?.text).toContain(
-    'EACCES: read-only (attempt 1/4)',
+    'GraphQL: Resource not accessible by integration (attempt 1/4)',
   )
   await ui.press({ key: 'retry' })
   await clock.settle()
 
-  expect(files[path(3, 'docs')]).toContain('status: human')
+  expect(github.card(3).status).toBe('In review')
   await clock.advance(2000)
   await ui.unmount()
 })
@@ -383,9 +387,9 @@ test('a move that fails after another was asked for sends the newer one', async 
 test(
   'the work prompt goes out only once the backend has confirmed',
   async ($, on) => {
-    const { clock, calls, prompts, ui } = await open($, on, cards())
+    const { clock, prompts, ui, github } = await open($, on, cards())
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
 
@@ -398,7 +402,7 @@ test(
     await clock.settle()
 
     expect(prompts).toEqual([
-      'Work on kanban card #3 "Write docs": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it to human with mcp__kanban__kanban_move.',
+      'Work on kanban card #3 "Write docs": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it with mcp__kanban__kanban_move: to done when finished, to human only if it needs the person\'s approval or input.',
     ])
     await clock.advance(2000)
     await ui.unmount()
@@ -428,17 +432,16 @@ for (const status of ['suspended', 'cancelled', 'done'] as const) {
   test(
     `a card the person takes up from ${status} gets the work prompt once the backend confirms`,
     async ($, on) => {
-      const files = {
-        [path(1, 'a')]: card(1, { status, title: 'Old idea' }, HANDED_OFF),
-      }
-      const { clock, calls, prompts, ui } = await open($, on, files)
+      const { clock, prompts, ui, github } = await open($, on, [
+        issue(1, { column: status, title: 'Old idea', comments: [HANDOFF] }),
+      ])
       let release = () => {}
-      calls.hold = new Promise<void>(resolve => {
+      github.hold = new Promise<void>(resolve => {
         release = resolve
       })
 
       await group(ui, 'inactive')
-      await click(ui, 'card:md:0001-a')
+      await click(ui, 'card:gh:1')
       await ui.press({ key: 'move:claude' })
       await clock.advance(300)
       expect(prompts).toEqual([])
@@ -446,7 +449,11 @@ for (const status of ['suspended', 'cancelled', 'done'] as const) {
       release()
       await clock.settle()
 
-      expect(files[path(1, 'a')]).toContain('status: claude')
+      expect(github.card(1)).toMatchObject({
+        status: 'In progress',
+        state: 'OPEN',
+        labels: ['ai'],
+      })
       expect(prompts).toEqual([
         expect.stringMatching(/^Work on kanban card #1 "Old idea"/),
       ])
@@ -458,9 +465,8 @@ for (const status of ['suspended', 'cancelled', 'done'] as const) {
 }
 
 test('a refused move submits no prompt, and nor does a move by Claude', async ($, on) => {
-  const files = cards()
-  const { clock, calls, prompts, ui } = await open($, on, files)
-  calls.denyWrite = 'EACCES: read-only'
+  const { clock, prompts, ui, github } = await open($, on, cards())
+  github.fail['project item-edit'] = DENIED
 
   await click(ui, DOCS)
   await ui.press({ key: 'move:claude' })
@@ -470,32 +476,31 @@ test('a refused move submits no prompt, and nor does a move by Claude', async ($
     await clock.settle()
   }
   // The card is back in Backlog; the same move by the person would send the work prompt.
-  calls.denyWrite = undefined
+  delete github.fail['project item-edit']
   expect(
     await $.tool.call({ tool: 'mcp__kanban__kanban_list', column: 'backlog' }),
   ).toMatchObject({ result: expect.stringContaining('#3 [backlog]') })
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(300)
 
-  expect(files[path(3, 'docs')]).toContain('status: claude')
+  expect(github.card(3).status).toBe('In progress')
   expect(prompts).toEqual([])
   await clock.advance(2000)
   await ui.unmount()
 })
 
 test('a move the session start finds still waiting is sent at once', async ($, on) => {
-  const files = cards()
-  const { clock, calls, ui } = await open($, on, files)
+  const { clock, ui, github } = await open($, on, cards())
 
   await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
   await clock.advance(100)
-  expect(calls.writes).toEqual([])
+  expect(edits(github)).toEqual([])
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
-  expect(calls.writes).toEqual([path(3, 'docs')])
-  expect(files[path(3, 'docs')]).toContain('status: claude')
+  expect(edits(github)).toEqual(['#3 In progress'])
+  expect(github.card(3).status).toBe('In progress')
   await clock.advance(2000)
   await ui.unmount()
 })

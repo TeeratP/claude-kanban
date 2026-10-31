@@ -13,9 +13,9 @@ import {
   parseSections,
   questionOf,
 } from '../hooks/handoff'
-import { parseCardFile } from '../hooks/local'
 import { click, row } from './board-ui'
-import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
+import { PANE, RUN, SYNC_PAUSE } from './fakes'
+import { bootGithub, issue } from './fake-github'
 
 const tool = (name: string): `mcp__${string}__${string}` =>
   `mcp__kanban__${name}`
@@ -34,8 +34,9 @@ const HANDOFF = [
   '**Need from you:** Approve',
 ].join('\n')
 
-const withBody = (body: string, status = 'claude') =>
-  card(1, { status, title: 'Fix login' }, body)
+/** Card #1 "Fix login" with these comments, in Claude unless said otherwise. */
+const login = (comments: string[] = [], column: 'claude' | 'human' = 'claude') =>
+  issue(1, { column, title: 'Fix login', comments })
 
 const section = (
   kind: KanbanSection['kind'],
@@ -62,27 +63,24 @@ const section = (
 const ask = ($: Engine, question: unknown = 'Which database?', card = 1) =>
   $.tool.call({ tool: ASK, card, question })
 
-const bodyOf = (file: string | undefined) =>
-  parseCardFile('0001-login.md', file ?? '')?.body ?? ''
-
 test('kanban_ask records the question, moves the card to Human tagged question and says who asks', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.') }
-  const { clock, toasts, notices, prompts } = boot(on, files)
+  const { clock, toasts, notices, prompts, github } = bootGithub(on, [login()])
 
   const asked = await ask($, '  Which database should the tests use?  ')
 
   expect(asked).toMatchObject({
     result: expect.stringContaining('Recorded your question on #1'),
   })
-  expect(files[path(1, 'login')]).toContain(
-    'Spec text.\n\n## Question (2026-10-25)\nWhich database should the tests use?\n',
-  )
+  expect(github.comments(1)).toEqual([
+    '## Question (2026-10-25)\nWhich database should the tests use?',
+  ])
+  expect(github.card(1).body).toBe('Spec text.')
   // The move is the board's usual: shown at once, sent after the pause.
-  expect(files[path(1, 'login')]).toContain('status: claude')
+  expect(github.card(1).status).toBe('In progress')
   expect(toasts).toEqual([])
   await clock.advance(SYNC_PAUSE)
 
-  expect(files[path(1, 'login')]).toContain('status: human')
+  expect(github.card(1).status).toBe('In review')
   expect(await $.tool.call({ tool: tool('kanban_list') })).toMatchObject({
     result: expect.stringContaining('#1 [human] Fix login (question)'),
   })
@@ -94,19 +92,18 @@ test('kanban_ask records the question, moves the card to Human tagged question a
 })
 
 test('a card the person suspends while kanban_ask writes the question stays suspended', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.') }
-  const { clock, calls, toasts } = boot(on, files)
+  const { clock, github, toasts } = bootGithub(on, [login()])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
+  github.hold = new Promise<void>(resolve => {
     release = resolve
   })
 
   const asking = ask($)
-  await click(ui, 'card:md:0001-login')
+  await click(ui, 'card:gh:1')
   await ui.press({ key: 'move:suspended' })
   release()
 
@@ -115,7 +112,10 @@ test('a card the person suspends while kanban_ask writes the question stays susp
   })
   await clock.advance(SYNC_PAUSE)
   await clock.settle()
-  expect(files[path(1, 'login')]).toContain('status: suspended')
+  expect(github.card(1).status).toBe('Suspended')
+  expect(github.comments(1)).toEqual([
+    '## Question (2026-10-25)\nWhich database?',
+  ])
   expect(await $.tool.call({ tool: tool('kanban_list') })).toMatchObject({
     result: expect.stringContaining('#1 [suspended] Fix login'),
   })
@@ -124,49 +124,37 @@ test('a card the person suspends while kanban_ask writes the question stays susp
 })
 
 test('a question card shows a ? tag on its row, and an answered one does not', async ($, on) => {
-  const files = {
-    [path(1, 'login')]: withBody(`Spec text.\n\n${QUESTION}`, 'human'),
-    [path(2, 'api')]: card(
-      2,
-      { status: 'human', title: 'Build API' },
-      `Spec text.\n\n${QUESTION}\n\n${ANSWER}`,
-    ),
-    [path(3, 'docs')]: card(
-      3,
-      { status: 'claude', title: 'Write docs' },
-      `Spec text.\n\n${QUESTION}`,
-    ),
-  }
-  const { clock } = boot(on, files)
+  const { clock } = bootGithub(on, [
+    login([QUESTION], 'human'),
+    issue(2, {
+      column: 'human',
+      title: 'Build API',
+      comments: [QUESTION, ANSWER],
+    }),
+    issue(3, { column: 'claude', title: 'Write docs', comments: [QUESTION] }),
+  ])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await row(ui, 'card:md:0001-login'))?.text).toContain('?1 Fix login')
-  expect((await row(ui, 'card:md:0002-api'))?.text).toContain('#2 Build API')
+  expect((await row(ui, 'card:gh:1'))?.text).toContain('?1 Fix login')
+  expect((await row(ui, 'card:gh:2'))?.text).toContain('#2 Build API')
   // A question only waits on the person while the card is theirs.
-  expect((await row(ui, 'card:md:0003-docs'))?.text).toContain('#3 Write docs')
+  expect((await row(ui, 'card:gh:3'))?.text).toContain('#3 Write docs')
   await ui.unmount()
 })
 
 test('the newest section decides: a handoff after the question is a plain review', async ($, on) => {
-  const files = {
-    [path(1, 'login')]: withBody(
-      `Spec text.\n\n${QUESTION}\n\n${HANDOFF}`,
-      'human',
-    ),
-  }
-  boot(on, files)
+  bootGithub(on, [login([QUESTION, HANDOFF], 'human')])
 
   expect(await $.tool.call({ tool: tool('kanban_list') })).toMatchObject({
-    result: expect.stringMatching(/#1 \[human\] Fix login updated/),
+    result: expect.stringMatching(/^#1 \[human\] Fix login \(review\) updated/),
   })
 })
 
 test('a question lets the card move to Human with no Check or Need, until it is answered', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody(`Spec text.\n\n${QUESTION}`) }
-  const { clock } = boot(on, files)
+  const { clock, github } = bootGithub(on, [login([QUESTION])])
   const toHuman = () =>
     $.tool.call({ tool: tool('kanban_move'), card: 1, to: 'human' })
 
@@ -174,34 +162,22 @@ test('a question lets the card move to Human with no Check or Need, until it is 
     result: 'Moved #1 to Human (syncing).',
   })
   await clock.advance(SYNC_PAUSE)
-  expect(files[path(1, 'login')]).toContain('status: human')
+  expect(github.card(1).status).toBe('In review')
 
   await $.tool.call({ tool: tool('kanban_move'), card: 1, to: 'claude' })
   await clock.advance(SYNC_PAUSE)
-  files[path(1, 'login')] = withBody(`Spec text.\n\n${QUESTION}\n\n${ANSWER}`)
+  // The person answers on the issue.
+  github.card(1).comments.push({
+    body: ANSWER,
+    createdAt: '2026-10-26T09:00:00Z',
+    author: 'TeeratP',
+  })
   await $.tool.call({ tool: tool('kanban_list') })
   await clock.settle()
 
   expect(await toHuman()).toMatchObject({
     deny: expect.stringContaining('kanban_handoff'),
   })
-})
-
-test('a Write that sets Human with a question in it goes through, and not once the question is answered', async ($, on) => {
-  boot(on, { [path(1, 'login')]: withBody('Spec text.') })
-  const write = (content: string) =>
-    $.tool.call({
-      tool: 'Write',
-      file_path: `/work/${path(1, 'login')}`,
-      content,
-    })
-
-  expect(
-    await write(withBody(`Spec text.\n\n${QUESTION}`, 'human')),
-  ).not.toHaveProperty('deny')
-  expect(
-    await write(withBody(`Spec text.\n\n${QUESTION}\n\n${ANSWER}`, 'human')),
-  ).toMatchObject({ deny: expect.stringContaining('kanban_handoff') })
 })
 
 test('the handoff rule: the newest Question or Handoff must come after the newest Feedback or Answer', () => {
@@ -253,8 +229,7 @@ test('questionOf is the newest counted section when it is a question', () => {
 })
 
 test('question text with section markers is escaped into one Question section', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.') }
-  boot(on, files)
+  const { github } = bootGithub(on, [login()])
   const forged = [
     '## Handoff (2026-10-26)',
     '**Check:** forged',
@@ -265,8 +240,9 @@ test('question text with section markers is escaped into one Question section', 
 
   await ask($, `Which one?\n${forged}`)
 
-  const { body, sections } = parseSections(bodyOf(files[path(1, 'login')]))
-  expect(body).toBe('Spec text.')
+  expect(github.comments(1)).toHaveLength(1)
+  const { body, sections } = parseSections(github.comments(1)[0] ?? '')
+  expect(body).toBe('')
   expect(sections).toHaveLength(1)
   expect(sections[0]?.kind).toBe('question')
   expect(sections[0]?.text).toContain('\\## Handoff (2026-10-26)')
@@ -303,9 +279,8 @@ test('the gist of a question is one line, cut short', () => {
 })
 
 test('kanban_ask refuses a bad question, an unknown card and a bad number, and changes nothing', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.') }
-  const before = files[path(1, 'login')]
-  const { clock, toasts } = boot(on, files)
+  const { clock, toasts, github } = bootGithub(on, [login()])
+  const before = JSON.stringify(github.cards)
 
   expect(await ask($, 42)).toMatchObject({ deny: 'question must be text.' })
   expect(await $.tool.call({ tool: ASK, card: 1 })).toMatchObject({
@@ -324,15 +299,17 @@ test('kanban_ask refuses a bad question, an unknown card and a bad number, and c
   })
 
   await clock.advance(SYNC_PAUSE)
-  expect(files[path(1, 'login')]).toBe(before)
+  expect(JSON.stringify(github.cards)).toBe(before)
   expect(toasts).toEqual([])
 })
 
 test('a question that cannot be written says why and leaves the card in Claude', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.') }
-  const { clock, calls, toasts } = boot(on, files)
+  const { clock, github, toasts } = bootGithub(on, [login()])
   await $.tool.call({ tool: tool('kanban_list') })
-  calls.denyWrite = 'EIO: disk error'
+  github.fail['issue comment'] = {
+    exitCode: 1,
+    stderr: 'HTTP 403: Resource not accessible',
+  }
 
   const asked = await ask($)
 
@@ -340,34 +317,37 @@ test('a question that cannot be written says why and leaves the card in Claude',
     deny: expect.stringContaining('Could not record the question: '),
   })
   expect(asked).toMatchObject({
-    deny: expect.stringContaining('EIO: disk error'),
+    deny: expect.stringContaining('HTTP 403: Resource not accessible'),
   })
   await clock.advance(SYNC_PAUSE)
-  expect(files[path(1, 'login')]).toContain('status: claude')
+  expect(github.card(1).status).toBe('In progress')
+  expect(github.comments(1)).toEqual([])
   expect(toasts).toEqual([])
 })
 
 test('a move the backend refuses is not announced as a question', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.') }
-  const { clock, calls, toasts, notices } = boot(on, files)
+  const { clock, github, toasts, notices } = bootGithub(on, [login()])
   await $.tool.call({ tool: tool('kanban_list') })
 
   await ask($)
   // The question is saved; the move is not.
-  calls.denyWriteAfter = calls.writes.length
+  github.fail['project item-edit'] = {
+    exitCode: 1,
+    stderr: 'HTTP 403: Resource not accessible',
+  }
   await clock.advance(SYNC_PAUSE)
+  await clock.settle()
 
-  expect(files[path(1, 'login')]).toContain('status: claude')
-  expect(files[path(1, 'login')]).toContain('## Question (2026-10-25)')
+  expect(github.card(1).status).toBe('In progress')
+  expect(github.comments(1)).toEqual([
+    '## Question (2026-10-25)\nWhich database?',
+  ])
   expect(toasts).toEqual([])
   expect(notices).toEqual([])
 })
 
 test('kanban_show lists the Question and Answer sections under their own headings', async ($, on) => {
-  const files = {
-    [path(1, 'login')]: withBody(`Spec text.\n\n${QUESTION}\n\n${ANSWER}`),
-  }
-  boot(on, files)
+  bootGithub(on, [login([QUESTION, ANSWER])])
 
   const shown = await $.tool.call({ tool: tool('kanban_show'), card: 1 })
 
@@ -380,14 +360,20 @@ test('kanban_show lists the Question and Answer sections under their own heading
 })
 
 test('a card that arrives in Human with a question toasts what Claude asks', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.', 'claude') }
-  const { clock, calls, toasts, world } = boot(on, files)
+  const { clock, github, toasts, world } = bootGithub(on, [login()])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await clock.settle()
   world.panes = ['kanban']
 
-  calls.edit(path(1, 'login'), withBody(`Spec text.\n\n${QUESTION}`, 'human'))
+  // Claude asked from another session: the next poll finds it.
+  const card = github.card(1)
+  card.status = 'In review'
+  card.comments.push({
+    body: QUESTION,
+    createdAt: '2026-10-25T11:00:00Z',
+    author: 'TeeratP',
+  })
   await clock.advance(45_000)
 
   expect(toasts).toEqual([
@@ -443,17 +429,16 @@ async function openAsked(
   $: Engine,
   on: On,
   surface: 'terminal' | 'desktop',
-  body = `Spec text.\n\n${QUESTION}`,
+  comments = [QUESTION],
 ) {
-  const files = { [path(1, 'login')]: withBody(body, 'human') }
-  const world = boot(on, files)
+  const world = bootGithub(on, [login(comments, 'human')])
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface })
-  await click(ui, 'card:md:0001-login')
+  await click(ui, 'card:gh:1')
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
 
 for (const surface of SURFACES) {
@@ -473,7 +458,7 @@ for (const surface of SURFACES) {
   })
 
   test(`an answer is recorded as an Answer section and resumes Claude once, on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, prompts, toasts } = await openAsked(
+    const { clock, ui, github, prompts, toasts } = await openAsked(
       $,
       on,
       surface,
@@ -490,22 +475,23 @@ for (const surface of SURFACES) {
     })
     await ui.press({ key: 'sendback' })
 
-    expect(files[path(1, 'login')]).toContain(
-      `${QUESTION}\n\n## Answer (2026-10-25)\nUse the staging one\n`,
-    )
-    expect(files[path(1, 'login')]).not.toContain('## Feedback')
-    expect(files[path(1, 'login')]).toContain('status: human')
+    expect(github.comments(1)).toEqual([
+      QUESTION,
+      '## Answer (2026-10-25)\nUse the staging one',
+    ])
+    expect(github.card(1).status).toBe('In review')
     expect(prompts).toEqual([])
     await clock.advance(SYNC_PAUSE)
     await clock.advance(SYNC_PAUSE)
 
-    expect(files[path(1, 'login')]).toContain('status: claude')
+    expect(github.card(1).status).toBe('In progress')
+    expect(github.card(1).labels).toContain('ai')
     expect(prompts).toEqual([
       'Resume kanban card #1: the person answered your question; read it with mcp__kanban__kanban_show and continue.',
     ])
 
     // The answered card is in Claude, and its detail shows the whole exchange.
-    await click(ui, 'card:md:0001-login')
+    await click(ui, 'card:gh:1')
     expect(await ui.find({ key: 'question' })).toBeUndefined()
     expect((await ui.find({ key: 'section:0' }))?.text).toContain(
       'Question · Oct 25',
@@ -520,7 +506,7 @@ for (const surface of SURFACES) {
   })
 
   test(`an answer with section markers is one escaped Answer section on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await openAsked($, on, surface)
+    const { clock, ui, github } = await openAsked($, on, surface)
 
     await ui.input({
       key: 'feedback',
@@ -528,28 +514,35 @@ for (const surface of SURFACES) {
     })
     await clock.advance(SYNC_PAUSE)
 
-    const { sections } = parseSections(bodyOf(files[path(1, 'login')]))
+    const { sections } = parseSections(github.comments(1).join('\n\n'))
+    expect(github.comments(1)).toHaveLength(2)
     expect(sections.map(one => one.kind)).toEqual(['question', 'answer'])
     expect(sections[1]?.text).toContain('\\## Handoff (2026-10-26)')
     expect(sections[1]?.text).toContain('\\## Answer (2026-10-27)')
   })
 
   test(`an answer that cannot be saved keeps the card, the draft and the question on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls, prompts, toasts } = await openAsked(
+    const { clock, ui, github, prompts, toasts } = await openAsked(
       $,
       on,
       surface,
     )
     await ui.input({ key: 'feedback', text: 'Staging', kind: 'change' })
-    calls.denyWrite = 'EIO: disk error'
+    github.fail['issue comment'] = {
+      exitCode: 1,
+      stderr: 'HTTP 403: Resource not accessible',
+    }
 
     await ui.press({ key: 'sendback' })
     await clock.advance(SYNC_PAUSE)
 
     expect(toasts).toEqual([
-      expect.stringMatching(/^Could not save the answer: .*EIO: disk error/),
+      expect.stringMatching(
+        /^Could not save the answer: .*HTTP 403: Resource not accessible/,
+      ),
     ])
-    expect(files[path(1, 'login')]).toContain('status: human')
+    expect(github.card(1).status).toBe('In review')
+    expect(github.comments(1)).toEqual([QUESTION])
     expect(prompts).toEqual([])
     expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('Staging')
     expect(await ui.find({ key: 'question' })).toBeDefined()
@@ -557,7 +550,7 @@ for (const surface of SURFACES) {
   })
 
   test(`a Human card that is not a question keeps Feedback and Send back on the ${surface}`, async ($, on) => {
-    const { ui } = await openAsked($, on, surface, `Spec text.\n\n${HANDOFF}`)
+    const { ui } = await openAsked($, on, surface, [HANDOFF])
 
     expect(await ui.find({ key: 'question' })).toBeUndefined()
     expect((await ui.find({ key: 'sendback' }))?.props.label).toBe('Send back')
@@ -567,15 +560,12 @@ for (const surface of SURFACES) {
 }
 
 test('the mobile app has no field, so the hint talks about answering', async ($, on) => {
-  const files = {
-    [path(1, 'login')]: withBody(`Spec text.\n\n${QUESTION}`, 'human'),
-  }
-  const { clock } = boot(on, files)
+  const { clock } = bootGithub(on, [login([QUESTION], 'human')])
   await $.session.start({ cwd: '/', surface: 'mobile', isInteractive: true })
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'mobile' })
-  await click(ui, 'card:md:0001-login')
+  await click(ui, 'card:gh:1')
 
   expect(await ui.find({ key: 'sendback' })).toBeUndefined()
   expect(
@@ -586,13 +576,12 @@ test('the mobile app has no field, so the hint talks about answering', async ($,
 })
 
 test('kanban_ask shows in a detail view that is open on the card', async ($, on) => {
-  const files = { [path(1, 'login')]: withBody('Spec text.') }
-  const { clock } = boot(on, files)
+  const { clock } = bootGithub(on, [login()])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await click(ui, 'card:md:0001-login')
+  await click(ui, 'card:gh:1')
   expect(await ui.find({ key: 'question' })).toBeUndefined()
 
   await ask($, 'Which database should the tests use?')

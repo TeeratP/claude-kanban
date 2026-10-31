@@ -7,44 +7,43 @@ import { queueAfter, queueAt, queueStep } from '../hooks/layout'
 import { SETTLE_MS } from '../hooks/model'
 import { focusFeedback } from '../hooks/view-detail'
 import { click, rowKeys } from './board-ui'
-import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
+import { PANE, RUN, SYNC_PAUSE } from './fakes'
+import type { FakeCard } from './fake-github'
+import { bootGithub, issue } from './fake-github'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const MOVE = { tool: 'mcp__kanban__kanban_move' } as const
 
-// The Human queue runs by order, not by number: Build API, Write docs, Fix login.
-const cards = () => ({
-  [path(1, 'login')]: card(1, {
-    status: 'human',
-    title: 'Fix login',
-    order: 3,
-  }),
-  [path(2, 'api')]: card(2, { status: 'human', title: 'Build API', order: 1 }),
-  [path(3, 'docs')]: card(3, {
-    status: 'human',
-    title: 'Write docs',
-    order: 2,
-  }),
-  [path(4, 'tests')]: card(4, { status: 'claude', title: 'Add tests' }),
-})
+// The Human queue runs in board order, not by number: Build API, Write docs, Fix login.
+// `api` is the spec and sections of Build API, which some tests change.
+const cards = (api: { body?: string; comments?: string[] } = {}) => [
+  issue(
+    2,
+    { column: 'human', title: 'Build API', comments: api.comments ?? [] },
+    api.body,
+  ),
+  issue(3, { column: 'human', title: 'Write docs' }),
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(4, { column: 'claude', title: 'Add tests' }),
+]
 
-const LOGIN = 'card:md:0001-login'
-const API = 'card:md:0002-api'
-const TESTS = 'card:md:0004-tests'
+const LOGIN = 'card:gh:1'
+const API = 'card:gh:2'
+const TESTS = 'card:gh:4'
 
 async function open<P extends 'terminal' | 'desktop' | 'mobile'>(
   $: Engine,
   on: On,
   surface: P,
-  files: Record<string, string> = cards(),
+  issues: FakeCard[] = cards(),
 ) {
-  const world = boot(on, files)
+  const world = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
 
 type Ui = Pick<Mounted, 'find'>
@@ -121,7 +120,7 @@ for (const surface of SURFACES) {
   })
 
   test(`approve and park open the next Human card, and the last one returns to the board on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, prompts } = await open($, on, surface)
+    const { clock, ui, github, prompts } = await open($, on, surface)
     await click(ui, API)
 
     await ui.press({ key: 'approve' })
@@ -144,15 +143,15 @@ for (const surface of SURFACES) {
     expect(await ui.find({ key: 'back' })).toBeUndefined()
     expect(await rowKeys(ui)).toContain('hdr:human')
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(2, 'api')]).toContain('status: done')
-    expect(files[path(3, 'docs')]).toContain('status: backlog')
-    expect(files[path(1, 'login')]).toContain('status: done')
+    expect(github.card(2)).toMatchObject({ status: 'Done', state: 'CLOSED' })
+    expect(github.card(3)).toMatchObject({ status: 'Backlog', state: 'OPEN' })
+    expect(github.card(1)).toMatchObject({ status: 'Done', state: 'CLOSED' })
     expect(prompts).toEqual([])
     await ui.unmount()
   })
 
   test(`a decision pressed again as the review moves on is ignored for a moment, and the keys that walk are not on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await open($, on, surface)
+    const { clock, ui, github } = await open($, on, surface)
     await click(ui, API)
 
     await ui.press({ key: 'approve' })
@@ -177,10 +176,10 @@ for (const surface of SURFACES) {
     await ui.press({ key: 'approve' })
     expect((await shown(ui)).title).toBe('#1 Fix login')
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(2, 'api')]).toContain('status: done')
-    expect(files[path(3, 'docs')]).toContain('status: done')
-    expect(files[path(3, 'docs')]).not.toContain('Too soon')
-    expect(files[path(1, 'login')]).toContain('status: human')
+    expect(github.card(2).status).toBe('Done')
+    expect(github.card(3).status).toBe('Done')
+    expect(github.comments(3)).toEqual([])
+    expect(github.card(1).status).toBe('In review')
     await ui.unmount()
   })
 
@@ -213,9 +212,8 @@ for (const surface of SURFACES) {
 
   test(
     `send back opens the next Human card with an empty draft on the ${surface}`,
-    // Add tests is already in Claude: at the default limit of one the prompt would be held.
     async ($, on) => {
-      const { clock, ui, files, prompts } = await open($, on, surface)
+      const { clock, ui, github, prompts } = await open($, on, surface)
       await click(ui, API)
 
       await ui.input({ key: 'feedback', text: 'Use the staging DB' })
@@ -227,17 +225,22 @@ for (const surface of SURFACES) {
       })
       expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
       await clock.advance(SYNC_PAUSE)
-      expect(files[path(2, 'api')]).toContain('status: claude')
-      expect(files[path(2, 'api')]).toContain('Use the staging DB')
+      expect(github.card(2).status).toBe('In progress')
+      expect(github.comments(2)).toEqual([
+        '## Feedback (2026-10-25)\nUse the staging DB',
+      ])
       expect(prompts).toHaveLength(1)
       await ui.unmount()
     },
   )
 
   test(`a send back that fails stays on the card on the ${surface}`, async ($, on) => {
-    const { ui, calls, toasts } = await open($, on, surface)
+    const { ui, github, toasts } = await open($, on, surface)
     await click(ui, API)
-    calls.denyWrite = 'EACCES: read-only'
+    github.fail['issue comment'] = {
+      exitCode: 1,
+      stderr: 'HTTP 403: Resource not accessible',
+    }
 
     await ui.input({ key: 'feedback', text: 'Use the staging DB' })
 
@@ -309,10 +312,10 @@ for (const surface of SURFACES) {
   })
 
   test(`a decision does not move the person on from a card they have since left on the ${surface}`, async ($, on) => {
-    const { clock, ui, calls, files } = await open($, on, surface)
+    const { clock, ui, github } = await open($, on, surface)
     await click(ui, API)
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
 
@@ -324,28 +327,21 @@ for (const surface of SURFACES) {
     await sending
     await clock.advance(SYNC_PAUSE)
 
-    expect(files[path(2, 'api')]).toContain('status: claude')
+    expect(github.card(2).status).toBe('In progress')
     expect((await shown(ui)).title).toBe('#1 Fix login')
     await ui.unmount()
   })
 }
 
 // Card 2 is a question Claude asked; answering it is a decision like Send back.
-const withQuestion = () => ({
-  ...cards(),
-  [path(2, 'api')]: card(
-    2,
-    { status: 'human', title: 'Build API', order: 1 },
-    'Spec text.\n\n## Question (2026-10-25)\nWhich database?',
-  ),
-})
+const withQuestion = () =>
+  cards({ comments: ['## Question (2026-10-25)\nWhich database?'] })
 
 for (const surface of SURFACES) {
   test(
     `answering a question opens the next Human card like a send back does on the ${surface}`,
-    // Add tests is already in Claude: at the default limit of one the prompt would be held.
     async ($, on) => {
-      const { clock, ui, files, prompts } = await open(
+      const { clock, ui, github, prompts } = await open(
         $,
         on,
         surface,
@@ -367,10 +363,11 @@ for (const surface of SURFACES) {
       expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
       await clock.advance(SYNC_PAUSE)
       await clock.advance(SYNC_PAUSE)
-      expect(files[path(2, 'api')]).toContain(
+      expect(github.comments(2)).toEqual([
+        '## Question (2026-10-25)\nWhich database?',
         '## Answer (2026-10-25)\nThe staging one',
-      )
-      expect(files[path(2, 'api')]).toContain('status: claude')
+      ])
+      expect(github.card(2).status).toBe('In progress')
       expect(prompts).toEqual([
         expect.stringMatching(/^Resume kanban card #2: the person answered/),
       ])
@@ -380,7 +377,7 @@ for (const surface of SURFACES) {
 }
 
 test('the mobile app walks and decides the queue without a field', async ($, on) => {
-  const { clock, ui, files } = await open($, on, 'mobile')
+  const { clock, ui, github } = await open($, on, 'mobile')
   await click(ui, API)
 
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
@@ -397,7 +394,7 @@ test('the mobile app walks and decides the queue without a field', async ($, on)
     place: '2/2',
   })
   await clock.advance(SYNC_PAUSE)
-  expect(files[path(3, 'docs')]).toContain('status: done')
+  expect(github.card(3)).toMatchObject({ status: 'Done', state: 'CLOSED' })
   await ui.unmount()
 })
 
@@ -406,7 +403,7 @@ const at = (
   column: KanbanCard['column'],
   order: number,
 ): KanbanCard => ({
-  id: `md:${id}`,
+  id: `gh:${id}`,
   number: id,
   title: `Card ${id}`,
   column,
@@ -423,28 +420,28 @@ test('the queue is the Human section: by order, then number', () => {
     at(4, 'human', 2),
   ]
 
-  expect(queueAt(board, 'md:3')).toEqual({ index: 0, total: 3 })
-  expect(queueAt(board, 'md:4')).toEqual({ index: 2, total: 3 })
-  expect(queueAt(board, 'md:2')).toBeUndefined()
-  expect(queueStep(board, 'md:3', 1)).toBe('md:1')
-  expect(queueStep(board, 'md:4', 1)).toBe('md:3')
-  expect(queueStep(board, 'md:3', -1)).toBe('md:4')
-  expect(queueStep(board, 'md:2', 1)).toBeUndefined()
+  expect(queueAt(board, 'gh:3')).toEqual({ index: 0, total: 3 })
+  expect(queueAt(board, 'gh:4')).toEqual({ index: 2, total: 3 })
+  expect(queueAt(board, 'gh:2')).toBeUndefined()
+  expect(queueStep(board, 'gh:3', 1)).toBe('gh:1')
+  expect(queueStep(board, 'gh:4', 1)).toBe('gh:3')
+  expect(queueStep(board, 'gh:3', -1)).toBe('gh:4')
+  expect(queueStep(board, 'gh:2', 1)).toBeUndefined()
 })
 
 test('a queue of one has no other card to step to', () => {
   const board = [at(1, 'human', 1), at(2, 'done', 1)]
 
-  expect(queueStep(board, 'md:1', 1)).toBeUndefined()
-  expect(queueStep(board, 'md:1', -1)).toBeUndefined()
+  expect(queueStep(board, 'gh:1', 1)).toBeUndefined()
+  expect(queueStep(board, 'gh:1', -1)).toBeUndefined()
 })
 
 test('the card after a decided one is found even though it has left Human', () => {
   const board = [at(1, 'human', 1), at(2, 'done', 2), at(3, 'human', 3)]
 
-  expect(queueAfter(board, at(2, 'human', 2))).toBe('md:3')
-  expect(queueAfter(board, at(3, 'human', 3))).toBe('md:1')
-  expect(queueAfter(board, at(1, 'human', 1))).toBe('md:3')
+  expect(queueAfter(board, at(2, 'human', 2))).toBe('gh:3')
+  expect(queueAfter(board, at(3, 'human', 3))).toBe('gh:1')
+  expect(queueAfter(board, at(1, 'human', 1))).toBe('gh:3')
   expect(queueAfter([at(2, 'done', 2)], at(2, 'human', 2))).toBeUndefined()
 })
 
@@ -490,22 +487,22 @@ test('a focus the engine refuses is said, not dropped', async () => {
 
 for (const surface of SURFACES) {
   test(`no two buttons of the review detail share a key, and the Check buttons take none on the ${surface}`, async ($, on) => {
-    const { ui } = await open($, on, surface, {
-      ...cards(),
-      [path(2, 'api')]: card(
-        2,
-        { status: 'human', title: 'Build API', order: 1 },
-        [
-          'Spec text.',
-          '',
-          '## Handoff (2026-10-25)',
-          '**Did:** Wrote the API',
-          '**Check:** Run `npm test` and read the output',
-          '**Changed:** api.ts',
-          '**Need from you:** Approve',
-        ].join('\n'),
-      ),
-    })
+    const { ui } = await open(
+      $,
+      on,
+      surface,
+      cards({
+        comments: [
+          [
+            '## Handoff (2026-10-25)',
+            '**Did:** Wrote the API',
+            '**Check:** Run `npm test` and read the output',
+            '**Changed:** api.ts',
+            '**Need from you:** Approve',
+          ].join('\n'),
+        ],
+      }),
+    )
     await click(ui, API)
 
     const run = await ui.find({ key: 'check:run:0' })

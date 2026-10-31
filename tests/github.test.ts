@@ -19,7 +19,9 @@ import {
   planPosition,
   withStatusOptions,
 } from '../hooks/github'
+import { SetupNeeded, setupOf } from '../hooks/detect'
 import { isHandoffValid } from '../hooks/handoff'
+import { S } from '../hooks/strings'
 import { click } from './board-ui'
 import { LOTTO, NAE, PUNN_AGENTS, PUNN_CLAUDE } from './configs'
 import { CWD, NOW, PANE, RUN, SYNC_PAUSE, boot } from './fakes'
@@ -1829,29 +1831,33 @@ test('the diff is the first linked pull request, and absent without one', async 
   expect(calls).toHaveLength(2)
 })
 
-test('a local board has no diff', async () => {
-  const { $, calls } = fakeEngine([])
-
-  expect(
-    await readDiff($, { kind: 'local' }, ghCard({ prNumbers: [21] })),
-  ).toBeUndefined()
-  expect(calls).toHaveLength(0)
-})
-
 const AUTH: Route = { match: ['gh', 'auth', 'status'], reply: {} }
 const REMOTE: Route = {
   match: ['git', 'remote', 'get-url', 'origin'],
   reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
 }
 
+// What a detection that must fail threw.
+async function failureOf(work: Promise<unknown>): Promise<unknown> {
+  try {
+    await work
+  } catch (error) {
+    return error
+  }
+  throw new Error('expected the detection to fail')
+}
+
 test('detect without a CLAUDE.md that names a project looks for a board itself, and finds none to go on', async () => {
   const routes = [GH_VERSION, AUTH, REMOTE, graphql({ linked: [] })]
   const none = fakeEngine(routes)
   const plain = fakeEngine(routes, { 'CLAUDE.md': '# Notes\n' })
-  const noBoard = { kind: 'local', noBoardFor: 'TeeratP/claude-kanban' }
+  const noBoard = {
+    step: 'board',
+    reason: S.githubNoBoard('TeeratP/claude-kanban'),
+  }
 
-  expect(await detectBackend(none.$)).toEqual(noBoard)
-  expect(await detectBackend(plain.$)).toEqual(noBoard)
+  expect(setupOf(await failureOf(detectBackend(none.$)))).toEqual(noBoard)
+  expect(setupOf(await failureOf(detectBackend(plain.$)))).toEqual(noBoard)
   expect(none.calls.map(call => call.argv[0])).toEqual([
     'git',
     'gh',
@@ -2033,7 +2039,7 @@ test('detect leaves a board with no Ready option without one', async () => {
   })
 })
 
-test('detect goes local, and says why, when gh is not signed in', async () => {
+test('detect with a board in CLAUDE.md asks for sign-in, and says why, when gh is not signed in', async () => {
   const { $, logs } = fakeEngine(
     [
       GH_VERSION,
@@ -2049,13 +2055,17 @@ test('detect goes local, and says why, when gh is not signed in', async () => {
     { 'CLAUDE.md': KANBAN },
   )
 
-  expect(await detectBackend($)).toEqual({ kind: 'local' })
-  expect(logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: You are not logged into any GitHub hosts.',
-  ])
+  const error = await failureOf(detectBackend($))
+
+  expect(error).toBeInstanceOf(SetupNeeded)
+  expect(setupOf(error)).toEqual({
+    step: 'auth',
+    reason: S.githubSignedOut('You are not logged into any GitHub hosts.'),
+  })
+  expect(logs).toEqual([])
 })
 
-test('detect goes local when the directory has no origin remote', async () => {
+test('detect with a board in CLAUDE.md asks for an origin when the directory has none', async () => {
   const { $, logs } = fakeEngine(
     [
       GH_VERSION,
@@ -2068,11 +2078,14 @@ test('detect goes local when the directory has no origin remote', async () => {
     { 'CLAUDE.md': KANBAN },
   )
 
-  expect(await detectBackend($)).toEqual({ kind: 'local' })
-  expect(logs[0]).toContain("No such remote 'origin'")
+  expect(setupOf(await failureOf(detectBackend($)))).toEqual({
+    step: 'remote',
+    reason: S.githubNoRemote("error: No such remote 'origin'"),
+  })
+  expect(logs).toEqual([])
 })
 
-test('detect goes local when the project has no Status option it needs', async () => {
+test('detect fails, with no setup to offer, when the project has no Status option it needs', async () => {
   const { $, logs } = fakeEngine(
     [
       GH_VERSION,
@@ -2097,8 +2110,11 @@ test('detect goes local when the project has no Status option it needs', async (
     { 'CLAUDE.md': '- Repo: `a/b`\n- Project: #1\n' },
   )
 
-  expect(await detectBackend($)).toEqual({ kind: 'local' })
-  expect(logs[0]).toContain('no "Backlog" option')
+  const error = await failureOf(detectBackend($))
+
+  expect(String(error)).toContain('no "Backlog" option')
+  expect(setupOf(error)).toBeUndefined()
+  expect(logs).toEqual([])
 })
 
 test('through the board: a CLAUDE.md names the project, cards load from gh, a move runs its plan', async ($, on) => {

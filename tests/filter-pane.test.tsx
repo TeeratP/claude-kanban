@@ -16,55 +16,33 @@ import {
   toolbar,
 } from './board-ui'
 import type { BoardUi } from './board-ui'
-import { boardReply, fakeProcess, issueNode, queryOf } from './fake-gh'
-import type { Route } from './fake-gh'
-import { KANBAN } from './github-board'
-import { PANE, RUN, SCROLL, SYNC_PAUSE, boot, card, path } from './fakes'
-import type { Files } from './fakes'
-import { GH_VERSION } from './zero'
+import { queryOf } from './fake-gh'
+import { bootGithub, issue } from './fake-github'
+import type { FakeCard, StatusName } from './fake-github'
+import { PANE, RUN, SCROLL, SYNC_PAUSE } from './fakes'
 
 const SURFACES = ['terminal', 'desktop', 'vscode'] as const
 const WITH_CLIENT = ['terminal', 'desktop'] as const
 
-// Human has one card and Claude one. Backlog holds four, ten apart, with one the
-// filter `fix` hides between the first and the second. Done holds two.
-const board = (): Files => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
-  [path(10, 'alpha')]: card(10, {
-    status: 'backlog',
-    title: 'Alpha fix',
-    order: 10,
-  }),
-  [path(11, 'hidden')]: card(11, {
-    status: 'backlog',
-    title: 'Hidden thing',
-    order: 20,
-  }),
-  [path(12, 'beta')]: card(12, {
-    status: 'backlog',
-    title: 'Beta fix',
-    order: 30,
-  }),
-  [path(13, 'gamma')]: card(13, {
-    status: 'backlog',
-    title: 'Gamma fix',
-    order: 40,
-  }),
-  [path(20, 'old')]: card(20, { status: 'done', title: 'Old thing' }),
-  [path(21, 'older')]: card(21, {
-    status: 'done',
-    title: 'Fix the old thing',
-    updated: '2026-10-24T11:00:00Z',
-  }),
-})
+// Human has one card and Claude one. Backlog holds four in board order, with one
+// the filter `fix` hides between the first and the second. Done holds two.
+const board = (): FakeCard[] => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API' }),
+  issue(10, { column: 'backlog', title: 'Alpha fix' }),
+  issue(11, { column: 'backlog', title: 'Hidden thing' }),
+  issue(12, { column: 'backlog', title: 'Beta fix' }),
+  issue(13, { column: 'backlog', title: 'Gamma fix' }),
+  issue(20, { column: 'done', title: 'Old thing' }),
+  issue(21, { column: 'done', title: 'Fix the old thing' }),
+]
 
-const LOGIN = 'card:md:0001-login'
-const ALPHA = 'card:md:0010-alpha'
-const HIDDEN = 'card:md:0011-hidden'
-const BETA = 'card:md:0012-beta'
-const GAMMA = 'card:md:0013-gamma'
-const OLDER = 'card:md:0021-older'
+const LOGIN = 'card:gh:1'
+const ALPHA = 'card:gh:10'
+const HIDDEN = 'card:gh:11'
+const BETA = 'card:gh:12'
+const GAMMA = 'card:gh:13'
+const OLDER = 'card:gh:21'
 
 const FIELD = 'filter:text'
 
@@ -72,10 +50,10 @@ async function start<S extends RenderSurface>(
   $: Engine,
   on: On,
   surface: S,
-  files: Files = board(),
+  cards: FakeCard[] = board(),
   bodyRows: number = PANE.props.scroll.bodyRows,
 ) {
-  const world = boot(on, files)
+  const world = bootGithub(on, cards)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -85,7 +63,7 @@ async function start<S extends RenderSurface>(
     props: { ...PANE.props, scroll: { offset: 0, bodyRows } },
   })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
 
 type FilterUi = BoardUi & Pick<Mounted<'terminal'>, 'input'>
@@ -117,19 +95,34 @@ async function under(ui: BoardUi, header: string) {
 }
 
 // The cards of a section, in the order shown, on any surface: the section is
-// told by the status in the card's file.
-async function cardsIn(ui: BoardUi, files: Files, column: string) {
-  const members = Object.entries(files)
-    .filter(([, text]) => text.includes(`\nstatus: ${column}\n`))
-    .map(([file]) => `card:md:${file.slice('.kanban/'.length, -'.md'.length)}`)
+// told by the issue's Status on GitHub.
+async function cardsIn(ui: BoardUi, cards: FakeCard[], status: StatusName) {
+  const members = cards
+    .filter(one => one.status === status)
+    .map(one => `card:gh:${one.number}`)
 
   return (await rowKeys(ui)).filter(key => members.includes(key))
 }
 
 const textOf = async (ui: BoardUi, key: string) => (await row(ui, key))?.text
 
-const orderOf = (files: Files, id: number, slug: string) =>
-  Number(/\norder: (\S+)\n/.exec(files[path(id, slug)] ?? '')?.[1])
+const POSITION = 'updateProjectV2ItemPosition'
+
+// The board moves sent to GitHub, each the issue moved and the one it now
+// follows (none for the top of the board).
+const positions = (commands: readonly { argv: readonly string[] }[]) =>
+  commands
+    .filter(call => queryOf(call.argv).includes(POSITION))
+    .map(call => {
+      const field = (name: string) =>
+        call.argv.find(part => part.startsWith(`${name}=`))?.slice(name.length + 1)
+
+      return [field('itemId'), field('afterId')]
+    })
+
+// The Backlog issues in board order, as GitHub holds them.
+const backlogOrder = (cards: FakeCard[]) =>
+  cards.filter(one => one.status === 'Backlog').map(one => one.number)
 
 type Pointer = Mounted<'terminal'>['pointer']
 
@@ -157,7 +150,7 @@ async function walkTo(ui: BoardUi, key: string) {
 
 for (const surface of SURFACES) {
   test(`the filter button opens a field, and typing filters every section live on the ${surface}`, async ($, on) => {
-    const { ui, files } = await start($, on, surface)
+    const { ui, github } = await start($, on, surface)
     const button = await ui.find({ key: 'filter' })
     expect(button?.text).toBe('Find')
     expect(button?.props.hotkey).toBe('f')
@@ -198,18 +191,18 @@ for (const surface of SURFACES) {
     expect((await ui.find({ key: 'filter:clear' }))?.text).toBe('✕')
 
     await ui.input({ key: FIELD, text: 'fix login', kind: 'change' })
-    expect(await cardsIn(ui, files, 'human')).toEqual([LOGIN])
+    expect(await cardsIn(ui, github.cards, 'In review')).toEqual([LOGIN])
     expect(await header(ui, 'backlog')).toBe('Backlog 0/4')
     await ui.unmount()
   })
 
   test(`Enter keeps the filter and shuts the field, the button brings it back and the cross clears it on the ${surface}`, async ($, on) => {
-    const { ui, files } = await start($, on, surface)
+    const { ui, github } = await start($, on, surface)
     await typeFilter(ui, 'fix')
 
     await ui.input({ key: FIELD, text: 'fix' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
-    expect(await cardsIn(ui, files, 'backlog')).toEqual([ALPHA, BETA, GAMMA])
+    expect(await cardsIn(ui, github.cards, 'Backlog')).toEqual([ALPHA, BETA, GAMMA])
     expect((await ui.find({ key: 'filter' }))?.text).toBe('Find "fix"')
 
     await ui.press({ key: 'filter' })
@@ -217,13 +210,13 @@ for (const surface of SURFACES) {
     // The button shuts the field again; the filter stays.
     await ui.press({ key: 'filter' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
-    expect(await cardsIn(ui, files, 'backlog')).toEqual([ALPHA, BETA, GAMMA])
+    expect(await cardsIn(ui, github.cards, 'Backlog')).toEqual([ALPHA, BETA, GAMMA])
 
     await ui.press({ key: 'filter:clear' })
     expect(await ui.find({ key: FIELD })).toBeUndefined()
     expect(await ui.find({ key: 'filter:clear' })).toBeUndefined()
     expect((await ui.find({ key: 'filter' }))?.text).toBe('Find')
-    expect(await cardsIn(ui, files, 'backlog')).toEqual([
+    expect(await cardsIn(ui, github.cards, 'Backlog')).toEqual([
       ALPHA,
       HIDDEN,
       BETA,
@@ -238,7 +231,7 @@ for (const surface of SURFACES) {
   })
 
   test(`a section with no match says so and the cross brings the cards back on the ${surface}`, async ($, on) => {
-    const { ui, files } = await start($, on, surface)
+    const { ui, github } = await start($, on, surface)
 
     await typeFilter(ui, 'zzz')
     expect(await header(ui, 'human')).toBe('Human 0/1')
@@ -252,13 +245,13 @@ for (const surface of SURFACES) {
     }
 
     await ui.press({ key: 'filter:clear' })
-    expect(await cardsIn(ui, files, 'human')).toEqual([LOGIN])
+    expect(await cardsIn(ui, github.cards, 'In review')).toEqual([LOGIN])
     await ui.unmount()
   })
 
   // A group press under a filter changes what is shown, not the stored group.
   test(`a group pressed under a filter turns on screen, and clearing the filter gives the stored group back on the ${surface}`, async ($, on) => {
-    const { ui, files } = await start($, on, surface)
+    const { ui, github } = await start($, on, surface)
     await applyFilter(ui, 'fix')
     // Active has matches, so it is the one drawn open; Inactive says what it holds.
     expect((await row(ui, 'grp:active'))?.text).toBe('▾ Active')
@@ -266,7 +259,7 @@ for (const surface of SURFACES) {
 
     await group(ui, 'inactive')
     expect(await header(ui, 'done')).toBe('Done 1/2')
-    expect(await cardsIn(ui, files, 'done')).toEqual([OLDER])
+    expect(await cardsIn(ui, github.cards, 'Done')).toEqual([OLDER])
     expect((await row(ui, 'grp:active'))?.text).toMatch(
       /^▸ Active\s+4 matches$/,
     )
@@ -292,7 +285,7 @@ for (const surface of SURFACES) {
       /^▸ Inactive\s+2 Done$/,
     )
     expect(await header(ui, 'backlog')).toBe('Backlog 4')
-    expect(await cardsIn(ui, files, 'backlog')).toEqual([
+    expect(await cardsIn(ui, github.cards, 'Backlog')).toEqual([
       ALPHA,
       HIDDEN,
       BETA,
@@ -349,17 +342,14 @@ test('the filter stays through a visit to a card and is not saved', async ($, on
 })
 
 // Nine Human cards and eight Backlog ones; Backlog comes first on the board.
-const long = (): Files => {
-  const files: Files = {}
-  for (let n = 1; n <= 9; n += 1) {
-    files[path(n, 'h')] = card(n, { status: 'human', title: `Human ${n}` })
-  }
-  for (let n = 11; n <= 18; n += 1) {
-    files[path(n, 'b')] = card(n, { status: 'backlog', title: `Backlog ${n}` })
-  }
-
-  return files
-}
+const long = (): FakeCard[] => [
+  ...Array.from({ length: 9 }, (_, i) =>
+    issue(i + 1, { column: 'human', title: `Human ${i + 1}` }),
+  ),
+  ...Array.from({ length: 8 }, (_, i) =>
+    issue(i + 11, { column: 'backlog', title: `Backlog ${i + 11}` }),
+  ),
+]
 
 for (const surface of WITH_CLIENT) {
   test(`the wheel scrolls the section under it among the rows the filter leaves, and a change of text starts the sections over on the ${surface}`, async ($, on) => {
@@ -371,7 +361,7 @@ for (const surface of WITH_CLIENT) {
         // The toolbar is the first two rows of the tree.
         pointer: {
           column: 3,
-          row: (await rowIndex(ui, 'card:md:0013-b')) + TOOLBAR_ROWS,
+          row: (await rowIndex(ui, 'card:gh:13')) + TOOLBAR_ROWS,
         },
       })
 
@@ -446,23 +436,18 @@ for (const surface of WITH_CLIENT) {
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
 
     // The last card in sight goes a place down, past the edge: the window follows.
-    await walkTo(ui, 'card:md:0014-b')
+    await walkTo(ui, 'card:gh:14')
     await keys(ui, 'J')
     expect(await textOf(ui, 'more:backlog:up')).toMatch(/^ +↑ 2 more$/)
-    expect(await litRows(ui)).toEqual(['card:md:0014-b'])
+    expect(await litRows(ui)).toEqual(['card:gh:14'])
     await ui.unmount()
   })
 
   test(`the wheel scrolls a group the filter has opened on the ${surface}`, async ($, on) => {
-    const files: Files = {}
-    for (let n = 1; n <= 12; n += 1) {
-      files[path(n, 'o')] = card(n, {
-        status: 'done',
-        title: `Old ${n}`,
-        updated: `2026-10-25T11:${String(n).padStart(2, '0')}:00Z`,
-      })
-    }
-    const { ui, scrolls } = await start($, on, surface, files)
+    const cards = Array.from({ length: 12 }, (_, i) =>
+      issue(i + 1, { column: 'done', title: `Old ${i + 1}` }),
+    )
+    const { ui, scrolls } = await start($, on, surface, cards)
     expect((await row(ui, 'grp:inactive'))?.text).toMatch(
       /^▸ Inactive\s+12 Done$/,
     )
@@ -519,16 +504,16 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`m and a section key move the card under the cursor, not one the filter hides, on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     await applyFilter(ui, 'fix')
     await walkTo(ui, GAMMA)
 
     await keys(ui, 'm', 'd')
     await clock.advance(SYNC_PAUSE)
 
-    expect(files[path(13, 'gamma')]).toContain('status: done')
-    expect(files[path(11, 'hidden')]).toContain('status: backlog')
-    expect(files[path(12, 'beta')]).toContain('status: backlog')
+    expect(github.card(13)).toMatchObject({ status: 'Done', state: 'CLOSED' })
+    expect(github.card(11).status).toBe('Backlog')
+    expect(github.card(12).status).toBe('Backlog')
     expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, BETA])
     // It joined Done's older match in the folded group, which says so.
     expect((await row(ui, 'grp:inactive'))?.text).toMatch(/2 matches$/)
@@ -536,7 +521,7 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`shift-K puts a card above the visible card over it, ahead of the hidden ones, on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     await applyFilter(ui, 'fix')
     await walkTo(ui, BETA)
 
@@ -545,16 +530,16 @@ for (const surface of WITH_CLIENT) {
     expect(await litRows(ui)).toEqual([BETA])
     await clock.advance(SYNC_PAUSE)
 
-    // First of the section; no hidden card is rewritten.
-    expect(orderOf(files, 12, 'beta')).toBe(5)
-    expect(calls.writes).toEqual([path(12, 'beta')])
+    // First of the section; no hidden card is moved.
+    expect(positions(github.commands)).toEqual([['PVTI_12', undefined]])
+    expect(backlogOrder(github.cards)).toEqual([12, 10, 11, 13])
     await ui.press({ key: 'filter:clear' })
     expect(await under(ui, 'hdr:backlog')).toEqual([BETA, ALPHA, HIDDEN, GAMMA])
     await ui.unmount()
   })
 
   test(`shift-J puts a card below the visible card under it, the hidden card staying behind, on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     await applyFilter(ui, 'fix')
     await walkTo(ui, ALPHA)
 
@@ -562,8 +547,8 @@ for (const surface of WITH_CLIENT) {
     expect(await under(ui, 'hdr:backlog')).toEqual([BETA, ALPHA, GAMMA])
     await clock.advance(SYNC_PAUSE)
 
-    expect(orderOf(files, 10, 'alpha')).toBe(35)
-    expect(calls.writes).toEqual([path(10, 'alpha')])
+    expect(positions(github.commands)).toEqual([['PVTI_10', 'PVTI_12']])
+    expect(backlogOrder(github.cards)).toEqual([11, 12, 10, 13])
     await ui.press({ key: 'filter:clear' })
     expect(await under(ui, 'hdr:backlog')).toEqual([HIDDEN, BETA, ALPHA, GAMMA])
 
@@ -572,37 +557,38 @@ for (const surface of WITH_CLIENT) {
     await walkTo(ui, GAMMA)
     await keys(ui, 'J')
     await clock.advance(SYNC_PAUSE)
-    expect(calls.writes).toEqual([path(10, 'alpha')])
+    expect(positions(github.commands)).toEqual([['PVTI_10', 'PVTI_12']])
     await ui.unmount()
   })
 
   test(`a card dragged on a filtered board lands after the visible card above its place, ahead of hidden cards, on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     await applyFilter(ui, 'fix')
 
     // Up onto Beta: before it, so after Alpha, which is ahead of the hidden card.
     await drag(ui, GAMMA, BETA)
     expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, GAMMA, BETA])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 13, 'gamma')).toBe(15)
-    expect(calls.writes).toEqual([path(13, 'gamma')])
+    expect(positions(github.commands)).toEqual([['PVTI_13', 'PVTI_10']])
+    expect(backlogOrder(github.cards)).toEqual([10, 13, 11, 12])
 
     // Down onto Beta: after it, past nothing the person cannot see.
     await drag(ui, ALPHA, BETA)
     expect(await under(ui, 'hdr:backlog')).toEqual([GAMMA, BETA, ALPHA])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 10, 'alpha')).toBe(31)
+    expect(positions(github.commands).at(-1)).toEqual(['PVTI_10', 'PVTI_12'])
+    expect(backlogOrder(github.cards)).toEqual([13, 11, 12, 10])
 
     // On the header: first of the section, ahead of every hidden card.
     await drag(ui, BETA, 'hdr:backlog')
     expect(await under(ui, 'hdr:backlog')).toEqual([BETA, GAMMA, ALPHA])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 12, 'beta')).toBeLessThan(orderOf(files, 13, 'gamma'))
-    expect(calls.writes).toEqual([
-      path(13, 'gamma'),
-      path(10, 'alpha'),
-      path(12, 'beta'),
+    expect(positions(github.commands)).toEqual([
+      ['PVTI_13', 'PVTI_10'],
+      ['PVTI_10', 'PVTI_12'],
+      ['PVTI_12', undefined],
     ])
+    expect(backlogOrder(github.cards)).toEqual([12, 13, 11, 10])
 
     await ui.press({ key: 'filter:clear' })
     expect(await under(ui, 'hdr:backlog')).toEqual([BETA, GAMMA, HIDDEN, ALPHA])
@@ -610,14 +596,14 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a card dragged onto a chip of the folded group moves there from a filtered board on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     await applyFilter(ui, 'fix')
 
     // At 44 columns Done's chip is over cells 10 to 16.
     await drag(ui, BETA, 'grp:inactive', 12)
     await clock.advance(SYNC_PAUSE)
 
-    expect(files[path(12, 'beta')]).toContain('status: done')
+    expect(github.card(12)).toMatchObject({ status: 'Done', state: 'CLOSED' })
     expect(await under(ui, 'hdr:backlog')).toEqual([ALPHA, GAMMA])
     await group(ui, 'inactive')
     expect(await header(ui, 'done')).toBe('Done 2/3')
@@ -627,7 +613,7 @@ for (const surface of WITH_CLIENT) {
 }
 
 test("a card's own view moves it a place in its whole section, whatever the board's filter hides", async ($, on) => {
-  const { clock, ui, files } = await start($, on, 'vscode')
+  const { clock, ui, github } = await start($, on, 'vscode')
   await applyFilter(ui, 'fix')
 
   await click(ui, BETA)
@@ -635,11 +621,12 @@ test("a card's own view moves it a place in its whole section, whatever the boar
   await clock.advance(SYNC_PAUSE)
 
   // One place up is above the hidden card, not above Alpha.
-  expect(orderOf(files, 12, 'beta')).toBe(15)
+  expect(positions(github.commands)).toEqual([['PVTI_12', 'PVTI_10']])
+  expect(backlogOrder(github.cards)).toEqual([10, 12, 11, 13])
   await ui.press({ key: 'back' })
-  expect(await cardsIn(ui, files, 'backlog')).toEqual([ALPHA, BETA, GAMMA])
+  expect(await cardsIn(ui, github.cards, 'Backlog')).toEqual([ALPHA, BETA, GAMMA])
   await ui.press({ key: 'filter:clear' })
-  expect(await cardsIn(ui, files, 'backlog')).toEqual([
+  expect(await cardsIn(ui, github.cards, 'Backlog')).toEqual([
     ALPHA,
     BETA,
     HIDDEN,
@@ -648,37 +635,14 @@ test("a card's own view moves it a place in its whole section, whatever the boar
   await ui.unmount()
 })
 
-const NODES = [
-  issueNode({ number: 1, status: 'Backlog', labels: ['ai', 'docs'] }),
-  issueNode({ number: 2, status: 'Backlog', labels: ['ai'] }),
-  issueNode({ number: 3, status: 'Backlog', labels: ['ai', 'docs'] }),
-  issueNode({ number: 4, status: 'Backlog', labels: ['ai', 'docs'] }),
-  issueNode({ number: 5, status: 'In progress', labels: ['ai'] }),
-]
-
-const POSITION = 'updateProjectV2ItemPosition'
-
-const github = (): Route[] => [
-  GH_VERSION,
-  { match: ['gh', 'auth', 'status'], reply: {} },
-  {
-    match: ['git', 'remote', 'get-url', 'origin'],
-    reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
-  },
-  {
-    match: ['gh', 'api', 'graphql'],
-    reply: argv =>
-      queryOf(argv).includes(POSITION)
-        ? { stdout: '{"data":{"updateProjectV2ItemPosition":{}}}' }
-        : boardReply(NODES)(argv),
-  },
-  { match: ['gh', 'issue', 'edit'], reply: {} },
-  { match: ['gh', 'project', 'item-edit'], reply: {} },
-]
-
 test('label filters read the GitHub labels, and a reorder goes after the nearest visible card', async ($, on) => {
-  const world = boot(on, { 'CLAUDE.md': KANBAN })
-  const commands = fakeProcess(on, github())
+  const world = bootGithub(on, [
+    issue(1, { labels: ['ai', 'docs'] }),
+    issue(2, { labels: ['ai'] }),
+    issue(3, { labels: ['ai', 'docs'] }),
+    issue(4, { labels: ['ai', 'docs'] }),
+    issue(5, { column: 'claude' }),
+  ])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -711,7 +675,7 @@ test('label filters read the GitHub labels, and a reorder goes after the nearest
   await world.clock.advance(SYNC_PAUSE)
   await world.clock.settle()
 
-  const moves = commands
+  const moves = world.github.commands
     .map(command => command.argv)
     .filter(argv => queryOf(argv).includes(POSITION))
   expect(moves).toHaveLength(1)
@@ -728,6 +692,7 @@ test('label filters read the GitHub labels, and a reorder goes after the nearest
     'card:gh:4',
     'card:gh:3',
   ])
+  expect(backlogOrder(world.github.cards)).toEqual([1, 4, 2, 3])
   await ui.press({ key: 'filter:clear' })
   expect(await under(ui, 'hdr:backlog')).toEqual([
     'card:gh:1',

@@ -17,7 +17,7 @@ function cardOf(
   tag?: KanbanTag,
 ): KanbanCard {
   return {
-    id: `md:${number}`,
+    id: `gh:${number}`,
     number,
     title,
     column,
@@ -52,7 +52,7 @@ const input = (
   cards: CARDS,
   canDrag: true,
   canType: true,
-  isGithub: false,
+  needsSetup: false,
   ...extra,
 })
 
@@ -555,42 +555,34 @@ test('the legend lists the cursor keys once a key has brought the cursor up, and
   )
 })
 
-test('an empty board explains itself in one form at 44 columns and a short one at 30, never cut mid-word', () => {
+test('an empty board says it has no issues, or that GitHub is yet to be set up, in one form at 44 columns and a short one at 30, never cut mid-word', () => {
   const lines = (columns: number, extra: Partial<RowViewInput> = {}) =>
     toRowViews(
       input(
-        layoutBoard({
-          cards: [],
-          ui: open('active'),
-          bodyRows: 30,
-          hint: true,
-        }),
+        layoutBoard({ cards: [], ui: open('active'), bodyRows: 30 }),
         columns,
         { cards: [], ...extra },
       ),
     )
-      .filter(view => view.key === 'note' || view.key.startsWith('hint:'))
+      .filter(view => view.key === 'note')
       .map(view => textOf(view.segs))
 
-  expect(lines(44)).toEqual([
-    '  Cards live in .kanban/*.md here.',
-    '  On GitHub? Link a Project to the repo',
-    '  or set backend: github to see why.',
+  expect(lines(44)).toEqual(['  No issues on this board yet.'])
+  expect(lines(44, { needsSetup: true })).toEqual([
+    '  Cards show here once GitHub is set up.',
   ])
-  expect(lines(30)).toEqual([
-    '  Cards live in .kanban/',
-    '  GitHub? Link a Project',
-    '  or set backend: github',
-  ])
+  expect(lines(30)).toEqual(['  No issues on this board yet.'])
+  expect(lines(24)).toEqual(['  No issues yet.'])
+  expect(lines(30, { needsSetup: true })).toEqual(['  Not set up yet.'])
   for (const columns of WIDTHS) {
-    for (const line of lines(columns)) {
+    for (const line of [
+      ...lines(columns),
+      ...lines(columns, { needsSetup: true }),
+    ]) {
       expect(cellWidth(line)).toBeLessThanOrEqual(columns)
       expect(line).not.toContain('…')
     }
   }
-  expect(lines(44, { isGithub: true })[0]).toBe(
-    '  No issues on this board yet.',
-  )
 })
 
 test('a message from the Client is taken only whole: a group of the two, a column of the six, a place that exists', () => {
@@ -606,10 +598,10 @@ test('a message from the Client is taken only whole: a group of the two, a colum
   expect(parseBoardMessage({ type: 'toggleGroup' })).toBeUndefined()
 
   for (const column of COLUMNS) {
-    expect(parseBoardMessage({ type: 'drop', cardId: 'md:1', column })).toEqual(
+    expect(parseBoardMessage({ type: 'drop', cardId: 'gh:1', column })).toEqual(
       {
         type: 'drop',
-        cardId: 'md:1',
+        cardId: 'gh:1',
         column,
       },
     )
@@ -620,25 +612,25 @@ test('a message from the Client is taken only whole: a group of the two, a colum
     })
   }
   expect(
-    parseBoardMessage({ type: 'drop', cardId: 'md:1', column: 'later' }),
+    parseBoardMessage({ type: 'drop', cardId: 'gh:1', column: 'later' }),
   ).toBeUndefined()
   expect(
     parseBoardMessage({
       type: 'drop',
-      cardId: 'md:1',
+      cardId: 'gh:1',
       column: 'suspended',
-      place: { at: 'after', cardId: 'md:2' },
+      place: { at: 'after', cardId: 'gh:2' },
     }),
   ).toEqual({
     type: 'drop',
-    cardId: 'md:1',
+    cardId: 'gh:1',
     column: 'suspended',
-    place: { at: 'after', cardId: 'md:2' },
+    place: { at: 'after', cardId: 'gh:2' },
   })
   expect(
     parseBoardMessage({
       type: 'drop',
-      cardId: 'md:1',
+      cardId: 'gh:1',
       column: 'suspended',
       place: { at: 'middle' },
     }),

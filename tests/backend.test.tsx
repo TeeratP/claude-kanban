@@ -3,9 +3,11 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import type { KanbanBoard, KanbanCard } from '../types'
-import { backendMode, detectBackend } from '../hooks/backend'
+import { detectBackend } from '../hooks/backend'
+import { SetupNeeded, setupOf } from '../hooks/detect'
+import { S } from '../hooks/strings'
 import { LOTTO, PUNN_AGENTS, PUNN_CLAUDE } from './configs'
-import { CWD, PANE, RUN, boot, card, path } from './fakes'
+import { CWD, PANE, RUN, boot } from './fakes'
 import { row, rowKeys } from './board-ui'
 import { boardRoute, fakeEngine, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
@@ -29,6 +31,10 @@ const REMOTE: Route = {
   match: ['git', 'remote', 'get-url', 'origin'],
   reply: { stdout: 'git@github.com:TeeratP/claude-kanban.git' },
 }
+const NO_REMOTE: Route = {
+  match: ['git', 'remote'],
+  reply: { exitCode: 2, stderr: "error: No such remote 'origin'" },
+}
 const LOAD: Route[] = [
   boardRoute([
     issueNode({ number: 1, status: 'In progress', labels: ['ai'] }),
@@ -36,13 +42,7 @@ const LOAD: Route[] = [
   ]),
 ]
 
-// Local cards sit on disk in every test, so a GitHub board that showed them
-// would be caught.
-const files = () => ({
-  'CLAUDE.md': KANBAN_MD,
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Local login' }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Local API' }),
-})
+const files = (): Record<string, string> => ({ 'CLAUDE.md': KANBAN_MD })
 
 // The board's cards, in the repo the config names.
 const loadFor = (repo: string): Route[] => [
@@ -53,7 +53,6 @@ const loadFor = (repo: string): Route[] => [
 ]
 
 const GITHUB_CARD = 'card:gh:1'
-const LOCAL_CARD = 'card:md:0001-login'
 
 async function open($: Engine, on: On, extra: Route[], withFiles = files()) {
   const world = boot(on, withFiles)
@@ -65,233 +64,205 @@ async function open($: Engine, on: On, extra: Route[], withFiles = files()) {
   return { ...world, files: withFiles, commands: calls }
 }
 
-/** The toolbar's text and which cards the pane draws, and the note and hint rows under an empty board. */
+const MISSING: readonly string[] = Object.values(S.setupMissing)
+
+/**
+ * The toolbar's text, which cards the pane draws, the note rows under an empty
+ * board, and the setup offer: what is missing, and whether its button shows.
+ */
 async function board($: Engine, bodyColumns: number = PANE.props.bodyColumns) {
   const ui = await $.ui.mount({
     ...PANE,
     props: { ...PANE.props, bodyColumns },
     surface: 'terminal',
   })
-  const toolbar = (await ui.findAll({ type: 'Text' }))[0]?.text ?? ''
+  const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+  const toolbar = texts[0] ?? ''
   const keys = await rowKeys(ui)
   const cards = keys.filter(key => key.startsWith('card:'))
-  const notes = keys.filter(key => /^(note|hint)\b/.test(key))
-  const hints = await Promise.all(
+  const notes = keys.filter(key => /^note\b/.test(key))
+  const noteText = await Promise.all(
     notes.map(async key => (await row(ui, key))?.text ?? ''),
   )
+  const missing = texts
+    .map(text => text.trim())
+    .find(text => MISSING.includes(text))
+  const hasButton =
+    (await ui.find({ type: 'Button', text: S.setupButton })) !== undefined
   await ui.unmount()
 
-  return { toolbar, cards, notes, hints }
+  return { toolbar, cards, notes, noteText, setup: { missing, hasButton } }
 }
+
+const NO_SETUP = { missing: undefined, hasButton: false }
 
 const listed = ($: Engine) => $.tool.call({ tool: 'mcp__kanban__kanban_list' })
 
-test('with no setting, GitHub is used when it is available and the label says auto', async ($, on) => {
+test('the GitHub cards load and the label names GitHub', async ($, on) => {
   await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
-
-  const shown = await board($, 56)
-
-  expect(shown.toolbar).toContain('GitHub (auto)')
-  expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
-})
-
-test('with no setting and no GitHub, the local cards show and the label says auto', async ($, on) => {
-  await open($, on, [], { ...files(), 'CLAUDE.md': '# Notes\n' })
 
   const shown = await board($)
 
-  expect(shown.toolbar).toContain('Local (auto)')
-  expect(shown.cards).toContain(LOCAL_CARD)
+  expect(shown.toolbar).toContain('GitHub · updated')
+  expect(shown.toolbar).not.toContain('auto')
+  expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
+  expect(shown.setup).toEqual(NO_SETUP)
 })
 
-test(
-  'a value outside the options counts as unset',
-  { options: { backend: 'sometimes' } },
-  async ($, on) => {
-    await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
+test('gh signed out offers setup for sign-in, flags it in the toolbar, and shows no cards', async ($, on) => {
+  const { logs } = await open($, on, [GH_VERSION, SIGNED_OUT, REMOTE, ...LOAD])
 
-    const shown = await board($, 56)
+  const shown = await board($)
 
-    expect(shown.toolbar).toContain('GitHub (auto)')
-    expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
-  },
-)
+  expect(shown.toolbar).toContain('GitHub · setup needed')
+  expect(shown.setup).toEqual({
+    missing: S.setupMissing.auth,
+    hasButton: true,
+  })
+  expect(shown.cards).toEqual([])
+  expect(logs).toEqual([
+    'kanban: could not refresh the board: gh auth status failed: run gh auth login (You are not logged into any GitHub hosts.)',
+  ])
+})
 
-test(
-  'the auto setting behaves as with no setting',
-  { options: { backend: 'auto' } },
-  async ($, on) => {
-    await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
+for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
+  test(`the setup offer shows once under the toolbar on the ${surface}`, async ($, on) => {
+    const world = boot(on, files())
+    fakeProcess(on, [GH_VERSION, SIGNED_OUT, REMOTE, ...LOAD])
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run({ ...RUN })
+    await world.clock.settle()
 
-    expect((await board($, 56)).toolbar).toContain('GitHub (auto)')
-  },
-)
-
-test(
-  'github loads the GitHub cards and the label does not say auto',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
-
-    const shown = await board($)
-
-    expect(shown.toolbar).toContain('GitHub · updated')
-    expect(shown.toolbar).not.toContain('auto')
-    expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
-  },
-)
-
-test(
-  'local shows only the local cards even when GitHub is available, and never calls gh or git',
-  { options: { backend: 'local' } },
-  async ($, on) => {
-    const { commands } = await open($, on, [
-      GH_VERSION,
-      SIGNED_IN,
-      REMOTE,
-      ...LOAD,
-    ])
-
-    const shown = await board($)
-
-    expect(shown.toolbar).toContain('Local · updated')
-    expect(shown.toolbar).not.toContain('auto')
-    expect(shown.cards).toEqual(['card:md:0002-api', LOCAL_CARD])
-    expect(commands).toEqual([])
-    expect(await listed($)).toMatchObject({
-      result: expect.stringContaining('#1 [human] Local login'),
-    })
-  },
-)
-
-test(
-  'github with gh signed out shows the failing check and the fix, and no local cards',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const { logs } = await open($, on, [
-      GH_VERSION,
-      SIGNED_OUT,
-      REMOTE,
-      ...LOAD,
-    ])
-
-    const shown = await board($)
-
-    expect(shown.toolbar).toContain('GitHub · gh auth status failed')
-    expect(shown.toolbar).not.toContain('Local')
-    expect(shown.cards).toEqual([])
-    expect(logs).toEqual([
-      'kanban: could not refresh the board: gh auth status failed: run gh auth login (You are not logged into any GitHub hosts.)',
-    ])
-  },
-)
-
-test(
-  'github with gh signed out says why to Claude, and lists no local cards',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    await open($, on, [GH_VERSION, SIGNED_OUT, REMOTE, ...LOAD])
-
-    const answer = await listed($)
-
-    expect(answer).toMatchObject({
-      deny: expect.stringContaining('run gh auth login'),
-    })
-    expect(JSON.stringify(answer)).not.toContain('Local login')
-  },
-)
-
-test(
-  'github recovers on the next refresh once gh is signed in again',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const routes: Route[] = [GH_VERSION, SIGNED_OUT, REMOTE, ...LOAD]
-    await open($, on, routes)
-    expect((await board($)).cards).toEqual([])
-
-    routes[1] = SIGNED_IN
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'refresh' })
-    const keys = await rowKeys(ui)
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+    const buttons = await ui.findAll({ type: 'Button', text: S.setupButton })
     await ui.unmount()
 
-    expect(keys).toContain(GITHUB_CARD)
-  },
-)
+    expect(
+      texts.filter(text => text.trim() === S.setupMissing.auth),
+    ).toHaveLength(1)
+    expect(buttons).toHaveLength(1)
+  })
+}
 
-test(
-  'github with a configured board and no gh says gh is not installed, not that sign-in failed',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const { logs, commands } = await open($, on, [NO_GH, SIGNED_OUT, REMOTE])
+test('gh signed out says why to Claude', async ($, on) => {
+  await open($, on, [GH_VERSION, SIGNED_OUT, REMOTE, ...LOAD])
 
-    const shown = await board($, 120)
+  expect(await listed($)).toMatchObject({
+    deny: expect.stringContaining('run gh auth login'),
+  })
+})
 
-    expect(shown.toolbar).toContain('GitHub · gh is not installed')
-    expect(shown.toolbar).not.toContain('auth status')
-    expect(shown.cards).toEqual([])
-    expect(logs).toEqual([
-      'kanban: could not refresh the board: gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (gh: command not found)',
-    ])
-    expect(lines(commands)).toEqual(['gh --version'])
-  },
-)
+test('a refresh once gh is signed in again loads the cards and drops the setup offer', async ($, on) => {
+  const routes: Route[] = [GH_VERSION, SIGNED_OUT, REMOTE, ...LOAD]
+  await open($, on, routes)
+  const before = await board($)
+  expect(before.cards).toEqual([])
+  expect(before.setup.missing).toBe(S.setupMissing.auth)
 
-test(
-  'github with no CLAUDE.md project and no linked board says what to add, and does not fall back',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, graphql()], {
-      ...files(),
-      'CLAUDE.md': '# Notes\n',
-    })
+  routes[1] = SIGNED_IN
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  await ui.unmount()
 
-    const shown = await board($, 120)
+  const after = await board($)
+  expect(after.cards).toEqual(['card:gh:2', GITHUB_CARD])
+  expect(after.setup).toEqual(NO_SETUP)
+  expect(after.toolbar).toContain('GitHub · updated')
+  expect(after.toolbar).not.toContain('setup needed')
+  expect(await listed($)).toMatchObject({
+    result: expect.stringContaining('#1 [claude]'),
+  })
+})
 
-    expect(shown.toolbar).toContain(
-      'GitHub · no GitHub Project is linked to TeeratP/claude-kanban',
-    )
-    expect(shown.cards).toEqual([])
-  },
-)
+test('a refresh that fails for another reason swaps the setup offer for the error', async ($, on) => {
+  const failing: Route = {
+    match: ['gh', 'api', 'graphql'],
+    reply: { exitCode: 1, stderr: 'HTTP 502: Bad Gateway' },
+  }
+  const routes: Route[] = [GH_VERSION, SIGNED_OUT, REMOTE, failing]
+  await open($, on, routes)
+  expect((await board($)).setup.missing).toBe(S.setupMissing.auth)
 
-test(
-  'github with no origin remote says to add one',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const NO_REMOTE: Route = {
-      match: ['git', 'remote'],
-      reply: { exitCode: 2, stderr: "error: No such remote 'origin'" },
-    }
-    await open($, on, [GH_VERSION, SIGNED_IN, NO_REMOTE, ...LOAD])
+  routes[1] = SIGNED_IN
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  await ui.unmount()
 
-    const shown = await board($)
+  const after = await board($, 120)
+  expect(after.setup).toEqual(NO_SETUP)
+  expect(after.toolbar).toContain('HTTP 502')
+  expect(after.toolbar).not.toContain('setup needed')
+})
 
-    expect(shown.toolbar).toContain('GitHub · no origin remote')
-    expect(shown.cards).toEqual([])
-  },
-)
+test('a configured board and no gh offers to install gh, not to sign in', async ($, on) => {
+  const { logs, commands } = await open($, on, [NO_GH, SIGNED_OUT, REMOTE])
+
+  const shown = await board($, 120)
+
+  expect(shown.toolbar).toContain('GitHub · setup needed')
+  expect(shown.setup).toEqual({ missing: S.setupMissing.gh, hasButton: true })
+  expect(shown.cards).toEqual([])
+  expect(logs).toEqual([
+    'kanban: could not refresh the board: gh is not installed: install it from https://cli.github.com (gh: command not found)',
+  ])
+  expect(lines(commands)).toEqual(['gh --version'])
+})
+
+test('no CLAUDE.md project and no linked board offers to set up a board, and tells Claude what to add', async ($, on) => {
+  await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, graphql()], {
+    'CLAUDE.md': '# Notes\n',
+  })
+
+  const shown = await board($, 120)
+
+  expect(shown.toolbar).toContain('GitHub · setup needed')
+  expect(shown.setup).toEqual({
+    missing: S.setupMissing.board,
+    hasButton: true,
+  })
+  expect(shown.cards).toEqual([])
+  expect(await listed($)).toMatchObject({
+    deny: expect.stringContaining(S.githubNoBoard(REPO)),
+  })
+})
+
+test('no origin remote offers to set up the repo', async ($, on) => {
+  await open($, on, [GH_VERSION, SIGNED_IN, NO_REMOTE, ...LOAD])
+
+  const shown = await board($)
+
+  expect(shown.toolbar).toContain('GitHub · setup needed')
+  expect(shown.setup).toEqual({
+    missing: S.setupMissing.remote,
+    hasButton: true,
+  })
+  expect(shown.cards).toEqual([])
+  expect(await listed($)).toMatchObject({
+    deny: expect.stringContaining('no origin remote'),
+  })
+})
 
 const detect = (routes: Route[], text: string) =>
   fakeEngine(routes, text === '' ? {} : { 'CLAUDE.md': text })
 
-test('detect in github mode names each failing check and how to fix it', async () => {
+// What a detection that must fail threw.
+async function failureOf(work: Promise<unknown>): Promise<unknown> {
+  try {
+    await work
+  } catch (error) {
+    return error
+  }
+  throw new Error('expected the detection to fail')
+}
+
+test('detect names each failing check and how to fix it, and which are setup', async () => {
   const noProject = detect(
     [GH_VERSION, SIGNED_IN, REMOTE, graphql()],
     '# Notes\n',
   )
   const signedOut = detect([GH_VERSION, SIGNED_OUT, REMOTE], KANBAN_MD)
-  const noRemote = detect(
-    [
-      GH_VERSION,
-      SIGNED_IN,
-      {
-        match: ['git', 'remote'],
-        reply: { exitCode: 2, stderr: "error: No such remote 'origin'" },
-      },
-    ],
-    KANBAN_MD,
-  )
+  const noRemote = detect([GH_VERSION, SIGNED_IN, NO_REMOTE], KANBAN_MD)
   const noStatus = detect(
     [
       GH_VERSION,
@@ -306,31 +277,42 @@ test('detect in github mode names each failing check and how to fix it', async (
     '- Repo: `a/b`\n- Project: #1\n',
   )
 
-  await expect(detectBackend(noProject.$, 'github')).rejects.toThrow(
-    'no GitHub Project is linked to TeeratP/claude-kanban: link one on GitHub, or add Repo and Project board lines to CLAUDE.md or AGENTS.md',
-  )
-  await expect(detectBackend(signedOut.$, 'github')).rejects.toThrow(
-    'gh auth status failed: run gh auth login (You are not logged into any GitHub hosts.)',
-  )
-  await expect(detectBackend(noRemote.$, 'github')).rejects.toThrow(
-    "no origin remote: run git remote add origin <url> (error: No such remote 'origin')",
-  )
-  await expect(detectBackend(noStatus.$, 'github')).rejects.toThrow(
+  expect(setupOf(await failureOf(detectBackend(noProject.$)))).toEqual({
+    step: 'board',
+    reason:
+      'no GitHub Project is linked to TeeratP/claude-kanban: link one on GitHub, or add Repo and Project board lines to CLAUDE.md or AGENTS.md',
+  })
+  expect(setupOf(await failureOf(detectBackend(signedOut.$)))).toEqual({
+    step: 'auth',
+    reason:
+      'gh auth status failed: run gh auth login (You are not logged into any GitHub hosts.)',
+  })
+  expect(setupOf(await failureOf(detectBackend(noRemote.$)))).toEqual({
+    step: 'remote',
+    reason:
+      "no origin remote: run git remote add origin <url> (error: No such remote 'origin')",
+  })
+  const badBoard = await failureOf(detectBackend(noStatus.$))
+  expect((badBoard as Error).message).toBe(
     'project board: Project #1 has no Status field.; check the IDs in CLAUDE.md',
   )
+  expect(badBoard).not.toBeInstanceOf(SetupNeeded)
+  expect(setupOf(badBoard)).toBeUndefined()
   expect(signedOut.logs).toEqual([])
 })
 
-test('detect in github mode with a configured board checks gh is installed before it is signed in', async () => {
+test('detect with a configured board checks gh is installed before it is signed in', async () => {
   const { $, calls } = detect([NO_GH, SIGNED_OUT, REMOTE], KANBAN_MD)
 
-  await expect(detectBackend($, 'github')).rejects.toThrow(
-    'gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (gh: command not found)',
-  )
+  expect(setupOf(await failureOf(detectBackend($)))).toEqual({
+    step: 'gh',
+    reason:
+      'gh is not installed: install it from https://cli.github.com (gh: command not found)',
+  })
   expect(lines(calls)).toEqual(['gh --version'])
 })
 
-test('detect in github mode says gh is not installed when gh cannot even start', async () => {
+test('detect says gh is not installed when gh cannot even start', async () => {
   const { $ } = detect(
     [
       {
@@ -346,54 +328,33 @@ test('detect in github mode says gh is not installed when gh cannot even start',
     KANBAN_MD,
   )
 
-  await expect(detectBackend($, 'github')).rejects.toThrow(
-    'gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (kanban: $.process.run(gh) failed to start',
+  const failure = await failureOf(detectBackend($))
+
+  expect(setupOf(failure)?.step).toBe('gh')
+  expect((failure as Error).message).toContain(
+    'gh is not installed: install it from https://cli.github.com (kanban: $.process.run(gh) failed to start',
   )
 })
 
-test('detect in github mode returns the GitHub backend when every check passes', async () => {
+test('detect returns the GitHub backend when every check passes', async () => {
   const { $ } = detect([GH_VERSION, SIGNED_IN, REMOTE], KANBAN_MD)
 
-  expect(await detectBackend($, 'github')).toMatchObject({
+  expect(await detectBackend($)).toMatchObject({
     kind: 'github',
     repo: REPO,
     projectNumber: 7,
   })
 })
 
-test('detect in local mode answers local without reading anything', async () => {
-  const { $, calls, logs } = detect([GH_VERSION, SIGNED_IN, REMOTE], KANBAN_MD)
-
-  expect(await detectBackend($, 'local')).toEqual({ kind: 'local' })
-  expect(calls).toEqual([])
-  expect(logs).toEqual([])
-})
-
-test('detect in auto mode still falls back to local and logs why', async () => {
-  const { $, logs } = detect([GH_VERSION, SIGNED_OUT, REMOTE], KANBAN_MD)
-
-  expect(await detectBackend($, 'auto')).toEqual({ kind: 'local' })
-  expect(logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: You are not logged into any GitHub hosts.',
-  ])
-})
-
-test('detect in auto mode with a configured board and no gh falls back to local and logs the reason as it is', async () => {
-  const { $, logs } = detect([NO_GH, SIGNED_OUT, REMOTE], KANBAN_MD)
-
-  expect(await detectBackend($, 'auto')).toEqual({ kind: 'local' })
-  expect(logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: gh: command not found',
-  ])
-})
-
-test('a setting that is not one of the three counts as auto', () => {
-  expect(backendMode('github')).toBe('github')
-  expect(backendMode('local')).toBe('local')
-  expect(backendMode('auto')).toBe('auto')
-  expect(backendMode('sometimes')).toBe('auto')
-  expect(backendMode(undefined)).toBe('auto')
-  expect(backendMode(['github'])).toBe('auto')
+test('setupOf reads the step and reason of a SetupNeeded, and nothing from any other failure', () => {
+  for (const step of ['gh', 'auth', 'remote', 'board', 'config'] as const) {
+    const error = new SetupNeeded(step, `missing ${step}`)
+    expect(error).toBeInstanceOf(Error)
+    expect(setupOf(error)).toEqual({ step, reason: `missing ${step}` })
+  }
+  expect(setupOf(new Error('HTTP 502'))).toBeUndefined()
+  expect(setupOf('gh auth status failed')).toBeUndefined()
+  expect(setupOf(undefined)).toBeUndefined()
 })
 
 const SAVED_GITHUB = {
@@ -411,10 +372,13 @@ const SAVED_GITHUB = {
   },
 }
 
-const cached = (mode: string, backend: unknown, key = `cache:${CWD}`) => ({
+const cached = (
+  backend: unknown,
+  shape = 'cache-3',
+  key = `cache:${CWD}`,
+) => ({
   [key]: {
-    shape: 'cache-2',
-    mode,
+    shape,
     backend,
     cards: [
       {
@@ -455,59 +419,35 @@ async function openFromCache(
   return { whileLoading, loaded: await board($, columns) }
 }
 
-test(
-  'the saved board shows while the first load runs when it was saved under the same setting',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const { whileLoading, loaded } = await openFromCache(
-      $,
-      on,
-      cached('github', SAVED_GITHUB),
-      [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD],
-    )
+test('the saved board shows while the first load runs', async ($, on) => {
+  const { whileLoading, loaded } = await openFromCache(
+    $,
+    on,
+    cached(SAVED_GITHUB),
+    [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD],
+  )
 
-    expect(whileLoading.cards).toEqual(['card:gh:9'])
-    expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
-  },
-)
+  expect(whileLoading.cards).toEqual(['card:gh:9'])
+  expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
+})
 
-test(
-  'a board saved under another setting is not shown after the setting changes',
-  { options: { backend: 'local' } },
-  async ($, on) => {
-    const { whileLoading, loaded } = await openFromCache(
-      $,
-      on,
-      cached('auto', SAVED_GITHUB),
-    )
+test('a board saved in an older shape is ignored, the one with a backend setting included', async ($, on) => {
+  const old = cached(SAVED_GITHUB, 'cache-2')
+  ;(old[`cache:${CWD}`] as Record<string, unknown>).mode = 'github'
 
-    expect(whileLoading.cards).toEqual([])
-    expect(whileLoading.toolbar).toContain('Local')
-    expect(loaded.cards).toEqual(['card:md:0002-api', LOCAL_CARD])
-  },
-)
+  const { whileLoading, loaded } = await openFromCache($, on, old, [
+    GH_VERSION,
+    SIGNED_IN,
+    REMOTE,
+    ...LOAD,
+  ])
 
-test(
-  'a board saved under auto is not shown under github',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const { whileLoading, loaded } = await openFromCache(
-      $,
-      on,
-      cached('auto', { kind: 'local' }),
-      [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD],
-    )
-
-    expect(whileLoading.cards).toEqual([])
-    expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
-  },
-)
+  expect(whileLoading.cards).toEqual([])
+  expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
+})
 
 test('a saved board without a setting recorded is ignored', async ($, on) => {
-  const old = cached('auto', { kind: 'local' })
-  const entry = old[`cache:${CWD}`] as Record<string, unknown>
-  delete entry.mode
-  entry.shape = 'cache-1'
+  const old = cached({ kind: 'local' }, 'cache-1')
 
   const { whileLoading } = await openFromCache($, on, old, [
     GH_VERSION,
@@ -519,32 +459,23 @@ test('a saved board without a setting recorded is ignored', async ($, on) => {
   expect(whileLoading.cards).toEqual([])
 })
 
-test(
-  'a load saves the board with the setting it was loaded under',
-  { options: { backend: 'local' } },
-  async ($, on) => {
-    const { saved } = await open($, on, [
-      GH_VERSION,
-      SIGNED_IN,
-      REMOTE,
-      ...LOAD,
-    ])
+test('a load saves the board with its GitHub backend and no setting', async ($, on) => {
+  const { saved } = await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD])
 
-    const entry = JSON.parse(saved.get(`cache:${CWD}`) ?? 'null')
+  const entry = JSON.parse(saved.get(`cache:${CWD}`) ?? 'null')
 
-    expect(entry).toMatchObject({
-      shape: 'cache-2',
-      mode: 'local',
-      backend: { kind: 'local' },
-    })
-    expect(entry.cards.map((one: KanbanCard) => one.id)).toEqual([
-      'md:0001-login',
-      'md:0002-api',
-    ])
-  },
-)
+  expect(entry).toMatchObject({
+    shape: 'cache-3',
+    backend: { kind: 'github', repo: REPO, projectNumber: 7 },
+  })
+  expect(entry).not.toHaveProperty('mode')
+  expect(entry.cards.map((one: KanbanCard) => one.id)).toEqual([
+    'gh:1',
+    'gh:2',
+  ])
+})
 
-// What the engine kept of the board when the plugin reloaded with another setting.
+// What the engine kept of the board when the plugin reloaded.
 function keepBoard(on: On, kept: KanbanBoard) {
   on('state.get', async (_, e, next) => {
     const answer = await next(e)
@@ -562,7 +493,6 @@ function keepBoard(on: On, kept: KanbanBoard) {
 }
 
 const KEPT_GITHUB_BOARD: KanbanBoard = {
-  mode: 'auto',
   backend: SAVED_GITHUB as KanbanBoard['backend'],
   cards: [
     {
@@ -579,124 +509,67 @@ const KEPT_GITHUB_BOARD: KanbanBoard = {
   isLoading: false,
 }
 
-test(
-  'a reload with another setting drops the board kept from the old one, GitHub cards and backend included',
-  { options: { backend: 'local' } },
-  async ($, on) => {
-    const world = boot(on, files())
-    const commands = fakeProcess(on, [])
-    keepBoard(on, KEPT_GITHUB_BOARD)
-    world.world.panes = ['kanban']
-    await $.session.start({
-      cwd: '/',
-      surface: 'terminal',
-      isInteractive: true,
-    })
-    await world.clock.settle()
+test('a reload keeps the board', async ($, on) => {
+  const world = boot(on, files())
+  fakeProcess(on, [])
+  keepBoard(on, KEPT_GITHUB_BOARD)
+  await $.session.start({
+    cwd: '/',
+    surface: 'terminal',
+    isInteractive: true,
+  })
+  await world.clock.settle()
 
-    const shown = await board($)
-
-    expect(shown.cards).toEqual(['card:md:0002-api', LOCAL_CARD])
-    expect(shown.toolbar).toContain('Local · updated')
-    expect(commands).toEqual([])
-    expect(world.statuses.at(-1)).toBe('1 card waiting on you')
-    expect(JSON.stringify(await listed($))).not.toContain('Kept remote')
-  },
-)
-
-test(
-  'a reload with the same setting keeps the board',
-  { options: { backend: 'auto' } },
-  async ($, on) => {
-    const world = boot(on, files())
-    fakeProcess(on, [])
-    keepBoard(on, KEPT_GITHUB_BOARD)
-    await $.session.start({
-      cwd: '/',
-      surface: 'terminal',
-      isInteractive: true,
-    })
-    await world.clock.settle()
-
-    expect(await listed($)).toMatchObject({
-      result: expect.stringContaining('#9 [human] Kept remote'),
-    })
-    expect(world.calls.lists).toBe(0)
-  },
-)
+  expect(await listed($)).toMatchObject({
+    result: expect.stringContaining('#9 [human] Kept remote'),
+  })
+  expect(world.calls.lists).toBe(0)
+})
 
 const UNCLEAR_MD =
   '## Task tracking\n- Board id `PVT_kwHOAcCsLc4Bbjg2`; the repo is not written down.\n'
 
-test('with a board mentioned that cannot be read and none found, the toolbar says so and the debug log says why', async ($, on) => {
-  const { logs } = await open(
-    $,
-    on,
-    [GH_VERSION, SIGNED_IN, REMOTE, graphql()],
-    { ...files(), 'CLAUDE.md': UNCLEAR_MD },
-  )
+test('with a board mentioned that cannot be read and none found, the pane offers to fix the config and the debug log says why', async ($, on) => {
+  const { logs } = await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, graphql()], {
+    'CLAUDE.md': UNCLEAR_MD,
+  })
 
   const shown = await board($, 120)
 
-  expect(shown.toolbar).toContain(
-    'Local (auto) \u00b7 board config not understood',
-  )
-  expect(shown.cards).toContain(LOCAL_CARD)
+  expect(shown.toolbar).toContain('GitHub · setup needed')
+  expect(shown.setup).toEqual({
+    missing: S.setupMissing.config,
+    hasButton: true,
+  })
+  expect(shown.cards).toEqual([])
   expect(logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
+    'kanban: could not refresh the board: CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
   ])
 })
 
-test('in a narrow pane the toolbar keeps the unclear-config note over the age', async ($, on) => {
-  await open($, on, [], { ...files(), 'CLAUDE.md': UNCLEAR_MD })
-
-  const shown = await board($)
-
-  // `s: Settings` takes the room " (auto)" had; the note stays, cut, and the age goes.
-  expect(shown.toolbar).toContain('Local · board config not')
-  expect(shown.toolbar).not.toContain('updated')
-})
-
-test('without a board in the config the toolbar has no unclear-config note', async ($, on) => {
-  await open($, on, [], { ...files(), 'CLAUDE.md': '# Notes\n' })
-
-  const shown = await board($, 120)
-
-  expect(shown.toolbar).toContain('Local (auto)')
-  expect(shown.toolbar).not.toContain('not understood')
-})
-
-test('an empty local board under auto says how to point the mod at GitHub', async ($, on) => {
-  await open($, on, [], { 'CLAUDE.md': UNCLEAR_MD })
+test('a board that is not set up says so under the empty sections', async ($, on) => {
+  await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, graphql()], {
+    'CLAUDE.md': UNCLEAR_MD,
+  })
 
   const shown = await board($, 120)
 
   expect(shown.cards).toEqual([])
-  expect(shown.notes).toEqual(['note', 'hint:0', 'hint:1'])
-  expect(shown.hints[0]).toContain('Cards live in .kanban/*.md here.')
-  expect(shown.hints[1]).toContain('Link a Project to the repo')
-  expect(shown.hints[2]).toContain('set backend: github')
+  expect(shown.notes).toEqual(['note'])
+  expect(shown.noteText[0]).toContain(S.notSetUp.long)
 })
 
-test(
-  'an empty local board that was asked for has no GitHub hint',
-  { options: { backend: 'local' } },
-  async ($, on) => {
-    await open($, on, [], { 'CLAUDE.md': KANBAN_MD })
-
-    expect((await board($, 120)).notes).toEqual(['note'])
-  },
-)
-
-test('an empty GitHub board has no GitHub hint', async ($, on) => {
+test('an empty GitHub board says it has no issues, with no setup offer', async ($, on) => {
   await open($, on, [GH_VERSION, SIGNED_IN, REMOTE, boardRoute([])], {
     'CLAUDE.md': KANBAN_MD,
   })
 
   const shown = await board($, 120)
 
-  expect(shown.toolbar).toContain('GitHub (auto)')
+  expect(shown.toolbar).toContain('GitHub · updated')
   expect(shown.notes).toEqual(['note'])
+  expect(shown.noteText[0]).toContain(S.noIssues.long)
+  expect(shown.setup).toEqual(NO_SETUP)
 })
 
 test('AGENTS.md behind a CLAUDE.md import loads the GitHub cards (punn)', async ($, on) => {
@@ -713,7 +586,7 @@ test('AGENTS.md behind a CLAUDE.md import loads the GitHub cards (punn)', async 
 
   const shown = await board($, 120)
 
-  expect(shown.toolbar).toContain('GitHub (auto)')
+  expect(shown.toolbar).toContain('GitHub · updated')
   expect(shown.cards).toEqual(['card:gh:2', GITHUB_CARD])
   expect(await listed($)).toMatchObject({
     result: expect.stringContaining('#1 [claude]'),
@@ -733,18 +606,4 @@ test('a lone AGENTS.md loads the GitHub cards (lotto)', async ($, on) => {
   )
 
   expect((await board($, 120)).cards).toEqual(['card:gh:2', GITHUB_CARD])
-})
-
-test('a local backend saved by an earlier start is detected again, so a config fixed since shows its board', async ($, on) => {
-  const { whileLoading, loaded } = await openFromCache(
-    $,
-    on,
-    cached('auto', { kind: 'local' }),
-    [GH_VERSION, SIGNED_IN, REMOTE, ...LOAD],
-    56,
-  )
-
-  expect(whileLoading.cards).toEqual(['card:gh:9'])
-  expect(loaded.toolbar).toContain('GitHub (auto)')
-  expect(loaded.cards).toEqual(['card:gh:2', GITHUB_CARD])
 })

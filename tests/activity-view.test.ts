@@ -38,7 +38,7 @@ const round = (extra: Partial<KanbanRound> = {}): KanbanRound => ({
 const activityOf = (
   extra: Partial<KanbanCardActivity> = {},
 ): KanbanCardActivity => ({
-  cardId: 'md:2',
+  cardId: 'gh:2',
   rounds: [round()],
   lastAt: NOW,
   lastAgent: 'Claude',
@@ -50,7 +50,7 @@ const activityOf = (
 })
 
 const RUNNING: KanbanActivity['live'] = {
-  cardId: 'md:2',
+  cardId: 'gh:2',
   since: NOW,
   isRunning: true,
 }
@@ -240,7 +240,7 @@ test('the row is never wider than the pane, whatever the pane', () => {
 
 function cardOf(number: number, column: KanbanColumn): KanbanCard {
   return {
-    id: `md:${number}`,
+    id: `gh:${number}`,
     number,
     title: `Card ${number}`,
     column,
@@ -260,7 +260,7 @@ const content = (rows: Row[]) =>
 const worked = (...numbers: number[]): KanbanActivity => ({
   ...EMPTY_ACTIVITY,
   cards: Object.fromEntries(
-    numbers.map(n => [`md:${n}`, activityOf({ cardId: `md:${n}` })]),
+    numbers.map(n => [`gh:${n}`, activityOf({ cardId: `gh:${n}` })]),
   ),
 })
 
@@ -273,7 +273,7 @@ test('only a Claude card Claude has worked on has a second row', () => {
   ]
 
   // Card 3 has activity but sits in Human; card 2 sits in Claude with none.
-  expect([...detailIds(cards, worked(1, 3, 4))]).toEqual(['md:1'])
+  expect([...detailIds(cards, worked(1, 3, 4))]).toEqual(['gh:1'])
 })
 
 test('the second row follows its card and belongs to its section', () => {
@@ -282,7 +282,7 @@ test('the second row follows its card and belongs to its section', () => {
     cards,
     ui: open,
     bodyRows: 30,
-    details: new Set(['md:1']),
+    details: new Set(['gh:1']),
   })
 
   expect(content(rows)).toEqual([

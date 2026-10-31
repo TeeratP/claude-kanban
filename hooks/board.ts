@@ -530,7 +530,7 @@ export async function openBoard($: EngineInterface): Promise<void> {
 // With nothing saved to name the board from, detects it now, as
 // the pane's first load would, and saves it, so the system prompt can name it and
 // a later session needs no detection. No cards are loaded. A failure, a rate
-// limit among them, is only logged.
+// limit among them, is only logged; missing setup is left to the pane.
 async function findBackend($: EngineInterface): Promise<void> {
   const { backend } = await readBoard($)
   if (backend !== null) return
@@ -542,7 +542,11 @@ async function findBackend($: EngineInterface): Promise<void> {
     // began, before the backend was found.
     await saveCache($, await updateBoard($, board => board))
   } catch (error) {
-    $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+    // Missing setup is the pane's to show, and the load that shares this
+    // detection logs it: said here as well, it would be said twice.
+    if (setupOf(error) === undefined) {
+      $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+    }
   }
 }
 

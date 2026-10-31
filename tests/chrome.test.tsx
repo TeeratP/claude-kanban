@@ -1,35 +1,28 @@
 import { expect, test } from 'claude-code/testing'
-import type { Engine, Plugin } from 'claude-code/testing'
+import type { Engine, MockClock, Plugin } from 'claude-code/testing'
 
 import { row } from './board-ui'
-import { HANDED_OFF, NOW, PANE, RUN, boot, card, path } from './fakes'
+import { PANE, RUN } from './fakes'
+import { HANDOFF, bootGithub, issue } from './fake-github'
 
 const AGE = 30_000
-const LOGIN = 'card:md:0001-login'
+const LOGIN = 'card:gh:8'
 const MOVE = { tool: 'mcp__kanban__kanban_move' } as const
 
-// Card 1 turns an hour old 15 s after the board opens: 59m now, 1h at the first tick.
-const NEARLY_AN_HOUR = new Date(NOW - 59 * 60_000 - 45_000).toISOString()
+// The fake board says issue 8 was last updated at 2026-10-18 10:00, so it turns
+// 8 days old at 2026-10-26 10:00. `nearlyEightDays` sets the clock that long
+// before it: 7d now, 8d once that much time has passed.
+const EIGHT_DAYS = Date.parse('2026-10-26T10:00:00Z')
+const nearlyEightDays = (clock: MockClock, ms: number) =>
+  clock.set(EIGHT_DAYS - ms)
 
-const cards = () => ({
-  [path(1, 'login')]: card(1, {
-    status: 'human',
-    title: 'Fix login',
-    updated: NEARLY_AN_HOUR,
-  }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
+const cards = () => [
+  issue(8, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API' }),
   // Cards 3 and 4 are moved to Human by these tests, which needs a handoff.
-  [path(3, 'docs')]: card(
-    3,
-    { status: 'backlog', title: 'Write docs' },
-    HANDED_OFF,
-  ),
-  [path(4, 'ship')]: card(
-    4,
-    { status: 'backlog', title: 'Ship it' },
-    HANDED_OFF,
-  ),
-})
+  issue(3, { title: 'Write docs', comments: [HANDOFF] }),
+  issue(4, { title: 'Ship it', comments: [HANDOFF] }),
+]
 
 async function open($: Engine) {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -37,23 +30,25 @@ async function open($: Engine) {
 }
 
 test('the ages redraw every 30 seconds while the pane is open, before a poll would', async ($, on) => {
-  const { clock, world } = boot(on, cards())
+  const { clock, world } = bootGithub(on, cards())
+  await nearlyEightDays(clock, 15_000)
   await open($)
   await clock.settle()
   world.panes = ['kanban']
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await row(ui, LOGIN))?.text).toContain('59m')
+  expect((await row(ui, LOGIN))?.text).toContain('7d')
 
   await clock.advance(AGE - 1)
-  expect((await row(ui, LOGIN))?.text).toContain('59m')
+  expect((await row(ui, LOGIN))?.text).toContain('7d')
 
   await clock.advance(1)
-  expect((await row(ui, LOGIN))?.text).toContain('1h')
+  expect((await row(ui, LOGIN))?.text).toContain('8d')
   await ui.unmount()
 })
 
 test('the ticker ends with the pane and does not start again by itself', async ($, on) => {
-  const { clock, calls, world } = boot(on, cards())
+  const { clock, github, world } = bootGithub(on, cards())
+  await nearlyEightDays(clock, 15_000)
   await open($)
   await clock.settle()
   world.panes = ['kanban']
@@ -62,27 +57,20 @@ test('the ticker ends with the pane and does not start again by itself', async (
   // Both the poll and the ticker fire with the pane closed and end.
   world.panes = []
   await clock.advance(90_000)
-  expect((await row(ui, LOGIN))?.text).toContain('59m')
+  expect((await row(ui, LOGIN))?.text).toContain('7d')
 
   // Open again with no new open: nothing is left to redraw or reload.
   world.panes = ['kanban']
   await clock.advance(90_000)
-  expect((await row(ui, LOGIN))?.text).toContain('59m')
-  expect(calls.lists).toBe(1)
+  expect((await row(ui, LOGIN))?.text).toContain('7d')
+  expect(github.loads()).toBe(1)
   await ui.unmount()
 })
 
 test('a tick that was asking for the panes when the pane opened again does not end the new ticker', async ($, on) => {
-  // Card 1 turns an hour old 45 s after the board opens, between the two ticks.
-  const files = {
-    ...cards(),
-    [path(1, 'login')]: card(1, {
-      status: 'human',
-      title: 'Fix login',
-      updated: new Date(NOW - 59 * 60_000 - 15_000).toISOString(),
-    }),
-  }
-  const { clock, world } = boot(on, files)
+  // Card 8 turns eight days old 45 s after the board opens, between the two ticks.
+  const { clock, world } = bootGithub(on, cards())
+  await nearlyEightDays(clock, 45_000)
   await open($)
   await clock.settle()
   world.panes = ['kanban']
@@ -101,25 +89,26 @@ test('a tick that was asking for the panes when the pane opened again does not e
   await clock.settle()
   release()
   await clock.settle()
-  expect((await row(ui, LOGIN))?.text).toContain('59m')
+  expect((await row(ui, LOGIN))?.text).toContain('7d')
 
   await clock.advance(AGE)
-  expect((await row(ui, LOGIN))?.text).toContain('1h')
+  expect((await row(ui, LOGIN))?.text).toContain('8d')
   await ui.unmount()
 })
 
 test('a pane left open across a reload keeps redrawing its ages', async ($, on) => {
-  const { clock, world } = boot(on, cards())
+  const { clock, world } = bootGithub(on, cards())
+  await nearlyEightDays(clock, 15_000)
   world.panes = ['kanban']
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await row(ui, LOGIN))?.text).toContain('59m')
+  expect((await row(ui, LOGIN))?.text).toContain('7d')
 
   await clock.advance(AGE)
-  expect((await row(ui, LOGIN))?.text).toContain('1h')
+  expect((await row(ui, LOGIN))?.text).toContain('8d')
   await ui.unmount()
 })
 
@@ -127,7 +116,7 @@ test('a pane left open across a reload keeps redrawing its ages', async ($, on) 
 const titles = (opens: { title?: string }[]) => opens.map(one => one.title)
 
 test('the pane title carries the Human count, set again only when it changes', async ($, on) => {
-  const { clock, world } = boot(on, cards())
+  const { clock, world } = bootGithub(on, cards())
   world.panes = ['kanban']
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -148,7 +137,7 @@ test('the pane title carries the Human count, set again only when it changes', a
 
   await $.tool.call({ ...MOVE, card: 3, to: 'done' })
   await clock.settle()
-  await $.tool.call({ ...MOVE, card: 1, to: 'claude' })
+  await $.tool.call({ ...MOVE, card: 8, to: 'claude' })
   await clock.settle()
   expect(titles(world.opens)).toEqual([
     'Kanban · 1',
@@ -160,7 +149,7 @@ test('the pane title carries the Human count, set again only when it changes', a
 })
 
 test('the pane title is kept when the person opens the pane again', async ($, on) => {
-  const { clock, world } = boot(on, cards())
+  const { clock, world } = bootGithub(on, cards())
   world.panes = ['kanban']
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -174,7 +163,7 @@ test('the pane title is kept when the person opens the pane again', async ($, on
 })
 
 test('the title is left alone while the pane is closed or waits undrawn', async ($, on) => {
-  const { clock, world } = boot(on, cards())
+  const { clock, world } = bootGithub(on, cards())
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
   await $.tool.call({ ...MOVE, card: 3, to: 'human' })
@@ -195,7 +184,7 @@ test('the title is left alone while the pane is closed or waits undrawn', async 
 })
 
 test('a pane that closes while the retitle waits for the panes is not opened again', async ($, on) => {
-  const { clock, world } = boot(on, cards())
+  const { clock, world } = bootGithub(on, cards())
   world.panes = ['kanban']
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -230,7 +219,7 @@ test(
   'a pane that closes after the retitle asked for the panes again is not opened again',
   { plugins: [CLOSER] },
   async ($, on) => {
-    const { clock, world } = boot(on, cards())
+    const { clock, world } = bootGithub(on, cards())
     world.panes = ['kanban']
     await $.session.start({
       cwd: '/',

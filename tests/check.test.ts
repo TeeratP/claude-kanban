@@ -195,7 +195,7 @@ test('a long or multi-line command is summarised on one line', () => {
 })
 
 const RUN: KanbanCheckRun = {
-  cardId: 'md:0001-login',
+  cardId: 'gh:1',
   command: 'npm test',
   outcome: 'failed',
   startedAt: Date.parse('2026-10-26T09:00:00Z'),

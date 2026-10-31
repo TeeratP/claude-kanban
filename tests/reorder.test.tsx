@@ -15,69 +15,105 @@ import {
 } from './board-ui'
 import type { BoardUi } from './board-ui'
 import { boardReply, fakeProcess, issueNode, queryOf } from './fake-gh'
-import type { FakeIssue, Route } from './fake-gh'
-import { HANDED_OFF, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
-import type { Files } from './fakes'
+import type { FakeIssue, Reply, Route } from './fake-gh'
+import { HANDOFF, OPTION, bootGithub, issue } from './fake-github'
+import type { FakeCard, StatusName, fakeGithub } from './fake-github'
+import { PANE, RUN, SYNC_PAUSE, boot } from './fakes'
 import { GH_VERSION } from './zero'
 
 const WITH_CLIENT = ['terminal', 'desktop'] as const
 const WITHOUT_CLIENT = ['vscode', 'mobile'] as const
 
-// Orders ten apart, so a card dropped between two takes a number of its own.
-// Human is empty.
-const board = (): Files => ({
-  [path(2, 'api')]: card(2, {
-    status: 'claude',
-    title: 'Build API',
-    order: 20,
-  }),
-  [path(3, 'tests')]: card(3, {
-    status: 'claude',
-    title: 'Add tests',
-    order: 30,
-  }),
-  [path(4, 'docs')]: card(4, {
-    status: 'backlog',
-    title: 'Write docs',
-    order: 40,
-  }),
-  [path(5, 'lint')]: card(5, {
-    status: 'backlog',
-    title: 'Fix lint',
-    order: 50,
-  }),
-  [path(6, 'deps')]: card(6, {
-    status: 'backlog',
-    title: 'Bump deps',
-    order: 60,
-  }),
-  [path(7, 'old')]: card(7, { status: 'done', title: 'Old thing' }),
-})
+type Github = ReturnType<typeof fakeGithub>
 
-const API = 'card:md:0002-api'
-const TESTS = 'card:md:0003-tests'
-const DOCS = 'card:md:0004-docs'
-const LINT = 'card:md:0005-lint'
-const DEPS = 'card:md:0006-deps'
-const OLD = 'card:md:0007-old'
+// Two cards in Claude, three in Backlog and one in Done, in that board order.
+// Human is empty.
+const board = (): FakeCard[] => [
+  issue(2, { column: 'claude', title: 'Build API' }),
+  issue(3, { column: 'claude', title: 'Add tests' }),
+  issue(4, { title: 'Write docs' }),
+  issue(5, { title: 'Fix lint' }),
+  issue(6, { title: 'Bump deps' }),
+  issue(7, { column: 'done', title: 'Old thing' }),
+]
+
+const API = 'card:gh:2'
+const TESTS = 'card:gh:3'
+const DOCS = 'card:gh:4'
+const LINT = 'card:gh:5'
+const DEPS = 'card:gh:6'
+const OLD = 'card:gh:7'
 
 async function start<S extends RenderSurface>(
   $: Engine,
   on: On,
   surface: S,
-  files: Files = board(),
+  issues: FakeCard[] = board(),
 ) {
-  const world = boot(on, files)
+  const world = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
 
-const orderOf = (files: Files, id: number, slug: string) =>
-  Number(/\norder: (\S+)\n/.exec(files[path(id, slug)] ?? '')?.[1])
+const POSITION = 'updateProjectV2ItemPosition'
+
+const isPosition = (argv: readonly string[]) => queryOf(argv).includes(POSITION)
+
+const fieldOf = (argv: readonly string[], name: string) =>
+  argv.find(part => part.startsWith(`${name}=`))?.slice(name.length + 1)
+
+const numberOf = (item: string | undefined) => item?.replace('PVTI_', '#')
+
+/** The issues with this Status, in board order: the section as GitHub holds it. */
+const order = (github: Github, status: StatusName) =>
+  github.cards.filter(one => one.status === status).map(one => one.number)
+
+/**
+ * What the plugin changed on GitHub, in order: `#n Status` for a Status edit,
+ * `#n after #m` (or `#n first`) for a position, and the issue commands by name.
+ */
+function changes(github: Github): string[] {
+  return github.commands.flatMap(({ argv }) => {
+    if (argv[1] === 'project' && argv[2] === 'item-edit') {
+      const item = argv[argv.indexOf('--id') + 1]
+      const option = argv[argv.indexOf('--single-select-option-id') + 1]
+      const name = Object.entries(OPTION).find(([, id]) => id === option)?.[0]
+
+      return [`${numberOf(item)} ${name ?? option}`]
+    }
+    if (isPosition(argv)) {
+      const after = fieldOf(argv, 'afterId')
+
+      return [
+        `${numberOf(fieldOf(argv, 'itemId'))} ${after === undefined ? 'first' : `after ${numberOf(after)}`}`,
+      ]
+    }
+    if (
+      argv[1] === 'issue' &&
+      ['edit', 'close', 'reopen', 'comment'].includes(argv[2] ?? '')
+    ) {
+      return [`#${argv[3]} ${argv[2]}`]
+    }
+
+    return []
+  })
+}
+
+// GitHub refuses every position mutation with `reply`, and serves the rest: the
+// fake keys its failures by command, and the mutation shares `gh api graphql`
+// with the board query, so the key looks at the command being answered.
+function failPositions(github: Github, reply: Reply | undefined) {
+  github.fail = new Proxy({} as Record<string, Reply>, {
+    get: (_, key) =>
+      key === 'api graphql' && isPosition(github.commands.at(-1)?.argv ?? [])
+        ? reply
+        : undefined,
+  })
+}
 
 type Pointer = Mounted<'terminal'>['pointer']
 
@@ -128,36 +164,33 @@ async function walkTo(ui: BoardUi, key: string) {
   expect(await litRows(ui)).toEqual([key])
 }
 
-// Eight Backlog cards, ten apart: six show, a `more` row pages to the rest.
-const long = (): Files => {
-  const files: Files = {
-    [path(20, 'api')]: card(20, { status: 'claude', title: 'Build API' }),
-  }
-  for (let n = 1; n <= 8; n += 1) {
-    files[path(n, 'b')] = card(n, { title: `Backlog ${n}`, order: n * 10 })
-  }
+// Eight Backlog cards: six show, a `more` row pages to the rest.
+const long = (): FakeCard[] => [
+  issue(20, { column: 'claude', title: 'Build API' }),
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => issue(n, { title: `Backlog ${n}` })),
+]
 
-  return files
-}
-
-const B = (n: number) => `card:md:000${n}-b`
+const B = (n: number) => `card:gh:${n}`
 
 for (const surface of WITH_CLIENT) {
   test(
     `a card dropped on a card of the section below lands after it, and the work prompt follows a Backlog card to Claude on the ${surface}`,
-    // Claude already has a card; at the default limit of one the prompt would be held.
     async ($, on) => {
-      const { clock, ui, files, calls, prompts } = await start($, on, surface)
+      const { clock, ui, github, prompts } = await start($, on, surface)
 
       await drag(ui, DOCS, API)
 
       expect(await under(ui, 'hdr:claude')).toEqual([API, DOCS, TESTS])
       expect(await under(ui, 'hdr:backlog')).toEqual([LINT, DEPS])
       await clock.advance(SYNC_PAUSE)
-      // In the gap between 20 and 30: no other card is written.
-      expect(files[path(4, 'docs')]).toContain('status: claude')
-      expect(orderOf(files, 4, 'docs')).toBe(25)
-      expect(calls.writes).toEqual([path(4, 'docs')])
+      // Moved, then put after API: no other card is touched.
+      expect(order(github, 'In progress')).toEqual([2, 4, 3])
+      expect(github.card(4).labels).toContain('ai')
+      expect(changes(github)).toEqual([
+        '#4 edit',
+        '#4 In progress',
+        '#4 after #2',
+      ])
       expect(prompts).toEqual([
         expect.stringMatching(/^Work on kanban card #4 "Write docs"/),
       ])
@@ -166,7 +199,7 @@ for (const surface of WITH_CLIENT) {
   )
 
   test(`a card dropped on a header, or on an empty section, lands first on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     await drag(ui, LINT, 'hdr:claude')
     expect(await under(ui, 'hdr:claude')).toEqual([LINT, API, TESTS])
@@ -176,94 +209,85 @@ for (const surface of WITH_CLIENT) {
     expect(await row(ui, 'empty:human')).toBeUndefined()
 
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 5, 'lint')).toBe(10)
-    expect(files[path(5, 'lint')]).toContain('status: claude')
-    expect(files[path(2, 'api')]).toContain('status: human')
+    expect(order(github, 'In progress')).toEqual([5, 3])
+    expect(order(github, 'In review')).toEqual([2])
     await ui.unmount()
   })
 
   test(`a card dropped after a card, or before it, lands there on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     // What a drop in the lower half of a card posts.
-    await place(ui, 'md:0006-deps', 'backlog', {
-      at: 'after',
-      cardId: 'md:0004-docs',
-    })
+    await place(ui, 'gh:6', 'backlog', { at: 'after', cardId: 'gh:4' })
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, DEPS, LINT])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 6, 'deps')).toBe(45)
+    expect(order(github, 'Backlog')).toEqual([4, 6, 5])
 
-    await place(ui, 'md:0005-lint', 'backlog', {
-      at: 'before',
-      cardId: 'md:0004-docs',
-    })
+    await place(ui, 'gh:5', 'backlog', { at: 'before', cardId: 'gh:4' })
     expect(await under(ui, 'hdr:backlog')).toEqual([LINT, DOCS, DEPS])
     // The last place, which a drag reaches only below the last card.
-    await place(ui, 'md:0005-lint', 'backlog', {
-      at: 'after',
-      cardId: 'md:0006-deps',
-    })
+    await place(ui, 'gh:5', 'backlog', { at: 'after', cardId: 'gh:6' })
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, DEPS, LINT])
     await clock.advance(SYNC_PAUSE)
-    // It was after Deps on disk already, so the file is left as it was.
-    expect(orderOf(files, 5, 'lint')).toBeGreaterThan(orderOf(files, 6, 'deps'))
+    // It ends after Deps, where it was on GitHub already.
+    expect(order(github, 'Backlog')).toEqual([4, 6, 5])
     await ui.unmount()
   })
 
   test(`dragged down onto a card in its own section a card lands after it, dragged up it lands before on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls, prompts } = await start($, on, surface)
+    const { clock, ui, github, prompts } = await start($, on, surface)
 
     // Onto the last card: the end of the section, reachable without a finer pointer.
     await drag(ui, DOCS, DEPS)
     expect(await under(ui, 'hdr:backlog')).toEqual([LINT, DEPS, DOCS])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 4, 'docs')).toBe(61)
-    expect(calls.writes).toEqual([path(4, 'docs')])
+    expect(order(github, 'Backlog')).toEqual([5, 6, 4])
+    expect(changes(github)).toEqual(['#4 after #6'])
 
     // Up onto the first: before it.
     await drag(ui, DOCS, LINT)
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, LINT, DEPS])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 4, 'docs')).toBe(25)
+    expect(order(github, 'Backlog')).toEqual([4, 5, 6])
 
     // Down onto a card in the middle: after it, before the next.
     await drag(ui, DOCS, LINT)
     expect(await under(ui, 'hdr:backlog')).toEqual([LINT, DOCS, DEPS])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 4, 'docs')).toBe(55)
+    expect(order(github, 'Backlog')).toEqual([5, 4, 6])
+    expect(changes(github).at(-1)).toBe('#4 after #5')
     expect(prompts).toEqual([])
     await clock.advance(2000)
     await ui.unmount()
   })
 
   test(`dragged down onto a card in another section a card lands after it, dragged up it lands before on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     // Backlog is above Claude: up onto one of its cards puts the card before it.
     await drag(ui, API, DEPS)
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, LINT, API, DEPS])
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(2, 'api')]).toContain('status: backlog')
-    expect(orderOf(files, 2, 'api')).toBe(55)
+    expect(github.card(2).status).toBe('Backlog')
+    expect(order(github, 'Backlog')).toEqual([4, 5, 2, 6])
 
     // Claude is below Backlog: down onto its last card puts the card last there.
     await drag(ui, DOCS, TESTS)
     expect(await under(ui, 'hdr:claude')).toEqual([TESTS, DOCS])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 4, 'docs')).toBe(31)
+    expect(order(github, 'In progress')).toEqual([3, 4])
 
     // Up onto the first card of the section above, from the section below.
     await drag(ui, DOCS, LINT)
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, LINT, API, DEPS])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 4, 'docs')).toBe(25)
+    expect(order(github, 'Backlog')).toEqual([4, 5, 2, 6])
     await clock.advance(2000)
     await ui.unmount()
   })
 
-  test(`a card dragged within its section is reordered, written once and never prompts on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls, prompts } = await start($, on, surface)
+  test(`a card dragged within its section is reordered, sent once and never prompts on the ${surface}`, async ($, on) => {
+    const { clock, ui, github, prompts } = await start($, on, surface)
 
     await drag(ui, DEPS, DOCS)
 
@@ -271,50 +295,20 @@ for (const surface of WITH_CLIENT) {
     expect((await row(ui, DEPS))?.text).toContain('⟳')
     await clock.advance(SYNC_PAUSE)
 
-    expect(calls.writes).toEqual([path(6, 'deps')])
-    expect(orderOf(files, 6, 'deps')).toBe(20)
-    // A reorder is not an update: the card keeps its status and its age.
-    expect(files[path(6, 'deps')]).toContain('status: backlog')
-    expect(files[path(6, 'deps')]).toContain('updated: 2026-10-25T11:00:00Z')
+    // A reorder is only a position: the card keeps its Status and labels.
+    expect(changes(github)).toEqual(['#6 first'])
+    expect(order(github, 'Backlog')).toEqual([6, 4, 5])
+    expect(github.card(6)).toMatchObject({ status: 'Backlog', labels: [] })
     expect((await row(ui, DEPS))?.text).toContain('✓')
     expect(prompts).toEqual([])
 
     // Within Claude too, and a card sent back from Human is not a work prompt.
     await drag(ui, TESTS, API)
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 3, 'tests')).toBeLessThan(orderOf(files, 2, 'api'))
+    expect(order(github, 'In progress')).toEqual([3, 2])
     expect(prompts).toEqual([])
     await clock.advance(2000)
     expect(await under(ui, 'hdr:claude')).toEqual([TESTS, API])
-    await ui.unmount()
-  })
-
-  test(`a drop with no gap renumbers the section by tens and writes only the cards that changed on the ${surface}`, async ($, on) => {
-    const files = {
-      [path(1, 'a')]: card(1, { title: 'A', order: 10 }),
-      // A neighbour that is rewritten keeps its body and the fields the board does not own.
-      [path(2, 'b')]: card(2, { title: 'B', order: 11 }, 'Keep me.').replace(
-        '\n---\nKeep',
-        '\nowner: someone\n---\nKeep',
-      ),
-      [path(3, 'c')]: card(3, { title: 'C', order: 12 }),
-    }
-    const { clock, ui, calls } = await start($, on, surface, files)
-
-    await drag(ui, 'card:md:0003-c', 'card:md:0002-b')
-    expect(await under(ui, 'hdr:backlog')).toEqual([
-      'card:md:0001-a',
-      'card:md:0003-c',
-      'card:md:0002-b',
-    ])
-    await clock.advance(SYNC_PAUSE)
-
-    expect([orderOf(files, 1, 'a'), orderOf(files, 3, 'c')]).toEqual([10, 20])
-    expect(orderOf(files, 2, 'b')).toBe(30)
-    expect(files[path(2, 'b')]).toContain('owner: someone\n---\nKeep me.\n')
-    expect(files[path(2, 'b')]).toContain('updated: 2026-10-25T11:00:00Z')
-    // A keeps its 10 and is not written; the neighbour goes first, the card itself last.
-    expect(calls.writes).toEqual([path(2, 'b'), path(3, 'c')])
     await ui.unmount()
   })
 
@@ -381,79 +375,85 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`Suspended keeps a manual order that a drag and shift-J change, and Cancelled keeps none on the ${surface}`, async ($, on) => {
-    const files: Files = {
-      [path(31, 's')]: card(31, { status: 'suspended', order: 30 }),
-      [path(32, 's')]: card(32, { status: 'suspended', order: 40 }),
-      [path(33, 's')]: card(33, { status: 'suspended', order: 50 }),
-      [path(41, 'c')]: card(41, { status: 'cancelled' }),
-      [path(42, 'c')]: card(42, { status: 'cancelled' }),
-    }
-    const { clock, ui, calls } = await start($, on, surface, files)
-    const S = (n: number) => `card:md:00${n}-s`
-    const C = (n: number) => `card:md:00${n}-c`
+    const { clock, ui, github } = await start($, on, surface, [
+      issue(31, { column: 'suspended' }),
+      issue(32, { column: 'suspended' }),
+      issue(33, { column: 'suspended' }),
+      issue(41, { column: 'cancelled' }),
+      issue(42, { column: 'cancelled' }),
+    ])
+    const S = (n: number) => `card:gh:${n}`
+    const C = (n: number) => `card:gh:${n}`
     await group(ui, 'inactive')
 
     await drag(ui, S(33), S(31))
     expect(await under(ui, 'hdr:suspended')).toEqual([S(33), S(31), S(32)])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 33, 's')).toBe(15)
-    expect(files[path(33, 's')]).toContain('status: suspended')
+    expect(order(github, 'Suspended')).toEqual([33, 31, 32])
+    expect(changes(github)).toEqual(['#33 first'])
 
     await walkTo(ui, S(31))
     await keys(ui, 'J')
     expect(await under(ui, 'hdr:suspended')).toEqual([S(33), S(32), S(31)])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 31, 's')).toBe(41)
+    expect(order(github, 'Suspended')).toEqual([33, 32, 31])
 
-    // Cancelled lists by update time: shift-J does nothing and a drag within it nothing.
-    calls.writes.length = 0
+    // Cancelled keeps no order of its own: shift-J does nothing and a drag within it nothing.
+    const sent = changes(github)
     const cancelled = await under(ui, 'hdr:cancelled')
     await walkTo(ui, C(41))
     await keys(ui, 'J', 'K')
     await drag(ui, C(41), C(42))
     await clock.advance(SYNC_PAUSE)
-    expect(calls.writes).toEqual([])
+    expect(changes(github)).toEqual(sent)
     expect(await under(ui, 'hdr:cancelled')).toEqual(cancelled)
 
     // A card dropped on a card of Suspended from Cancelled takes its place there.
     await drag(ui, C(41), S(32))
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(41, 'c')]).toContain('status: suspended')
+    expect(github.card(41)).toMatchObject({
+      status: 'Suspended',
+      state: 'OPEN',
+    })
     expect(await under(ui, 'hdr:suspended')).toContain(C(41))
     await ui.unmount()
   })
 
   test(`a card dropped on the Done chip goes to Done, and one dropped in its own Done stays on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     await chipDrop(ui, LINT, 12)
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(5, 'lint')]).toContain('status: done')
-    expect(calls.writes).toEqual([path(5, 'lint')])
+    expect(github.card(5)).toMatchObject({
+      status: 'Done',
+      state: 'CLOSED',
+      stateReason: 'COMPLETED',
+    })
+    expect(changes(github)).toEqual(['#5 Done', '#5 close'])
 
     await chipDrop(ui, DEPS, 12)
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(6, 'deps')]).toContain('status: done')
+    expect(github.card(6).status).toBe('Done')
 
     await group(ui, 'inactive')
     expect((await under(ui, 'hdr:done')).sort()).toEqual([LINT, DEPS, OLD])
 
-    calls.writes.length = 0
+    const sent = changes(github)
     await drag(ui, OLD, LINT)
     await drag(ui, LINT, 'hdr:done')
     await clock.advance(SYNC_PAUSE)
-    expect(calls.writes).toEqual([])
+    expect(changes(github)).toEqual(sent)
     await ui.unmount()
   })
 
   test(`a drop on a more row lands at that edge of the window shown, and on a header at the very top on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface, long())
+    const { clock, ui, github } = await start($, on, surface, long())
     expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
 
     // Down: after the last card shown, before the two hidden.
-    await drag(ui, 'card:md:0020-api', 'more:backlog:down')
+    await drag(ui, 'card:gh:20', 'more:backlog:down')
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 20, 'api')).toBe(65)
+    expect(order(github, 'Backlog')).toEqual([1, 2, 3, 4, 5, 6, 20, 7, 8])
     expect(await under(ui, 'hdr:backlog')).toEqual([
       B(1),
       B(2),
@@ -472,26 +472,26 @@ for (const surface of WITH_CLIENT) {
     expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 3 more$/)
     await drag(ui, B(8), 'more:backlog:up')
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 8, 'b')).toBe(35)
+    expect(order(github, 'Backlog')).toEqual([1, 2, 3, 8, 4, 5, 6, 20, 7])
     expect(await under(ui, 'hdr:backlog')).toEqual([
       'more:backlog:up',
       B(8),
       B(4),
       B(5),
       B(6),
-      'card:md:0020-api',
+      'card:gh:20',
       B(7),
     ])
 
     // The header is the top of the whole section, past the cards hidden above.
     await drag(ui, B(6), 'hdr:backlog')
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 6, 'b')).toBe(5)
+    expect(order(github, 'Backlog')).toEqual([6, 1, 2, 3, 8, 4, 5, 20, 7])
     await ui.unmount()
   })
 
   test(`shift-K and shift-J move the card under the cursor a place up or down on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, prompts } = await start($, on, surface)
+    const { clock, ui, github, prompts } = await start($, on, surface)
     await walkTo(ui, LINT)
 
     await keys(ui, 'J')
@@ -499,7 +499,7 @@ for (const surface of WITH_CLIENT) {
     // The cursor goes with the card.
     expect(await litRows(ui)).toEqual([LINT])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 5, 'lint')).toBe(61)
+    expect(order(github, 'Backlog')).toEqual([4, 6, 5])
 
     await keys(ui, 'J')
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, DEPS, LINT])
@@ -507,8 +507,8 @@ for (const surface of WITH_CLIENT) {
     await keys(ui, 'K', 'K')
     expect(await under(ui, 'hdr:backlog')).toEqual([LINT, DOCS, DEPS])
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 5, 'lint')).toBe(20)
-    expect(files[path(5, 'lint')]).toContain('status: backlog')
+    expect(order(github, 'Backlog')).toEqual([5, 4, 6])
+    expect(github.card(5).status).toBe('Backlog')
 
     // At the top there is nowhere to go.
     await keys(ui, 'K')
@@ -531,8 +531,8 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`shift-J and shift-K do nothing on a header, in Done or with a ctrl held on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
-    const before = { ...files }
+    const { clock, ui, github } = await start($, on, surface)
+    const before = github.board()
 
     await walkTo(ui, 'grp:inactive')
     await keys(ui, 'J', 'K')
@@ -545,8 +545,8 @@ for (const surface of WITH_CLIENT) {
     await group(ui, 'active')
 
     await clock.advance(SYNC_PAUSE)
-    expect(calls.writes).toEqual([])
-    expect(files).toEqual(before)
+    expect(changes(github)).toEqual([])
+    expect(github.board()).toEqual(before)
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, LINT, DEPS])
     await ui.unmount()
   })
@@ -580,62 +580,64 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a drop naming a card that is gone lands last, and a drop in Done ignores its place on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     await ui.post({
       type: 'drop',
-      cardId: 'md:0004-docs',
+      cardId: 'gh:4',
       column: 'claude',
-      place: { at: 'before', cardId: 'md:9999-gone' },
+      place: { at: 'before', cardId: 'gh:9999' },
     })
     expect(await under(ui, 'hdr:claude')).toEqual([API, TESTS, DOCS])
     await ui.post({
       type: 'drop',
-      cardId: 'md:0005-lint',
+      cardId: 'gh:5',
       column: 'done',
       place: { at: 'top' },
     })
     await clock.advance(SYNC_PAUSE)
 
-    expect(orderOf(files, 4, 'docs')).toBe(31)
-    expect(files[path(5, 'lint')]).toContain('status: done')
+    expect(order(github, 'In progress')).toEqual([2, 3, 4])
+    expect(github.card(5).status).toBe('Done')
     // Its own section with no place, or a place it has: nothing to do.
-    const before = { ...files }
-    await ui.post({ type: 'drop', cardId: 'md:0002-api', column: 'claude' })
+    const before = github.board()
+    const sent = changes(github)
+    await ui.post({ type: 'drop', cardId: 'gh:2', column: 'claude' })
     await ui.post({
       type: 'drop',
-      cardId: 'md:0002-api',
+      cardId: 'gh:2',
       column: 'claude',
-      place: { at: 'before', cardId: 'md:0003-tests' },
+      place: { at: 'before', cardId: 'gh:3' },
     })
-    await ui.post({ type: 'shift', cardId: 'md:0002-api', dir: 'sideways' })
-    await ui.post({ type: 'shift', cardId: 'md:9999-gone', dir: 'up' })
+    await ui.post({ type: 'shift', cardId: 'gh:2', dir: 'sideways' })
+    await ui.post({ type: 'shift', cardId: 'gh:9999', dir: 'up' })
     await clock.advance(SYNC_PAUSE)
-    expect(files).toEqual(before)
+    expect(changes(github)).toEqual(sent)
+    expect(github.board()).toEqual(before)
     await ui.unmount()
   })
 
   test(`two reorders within the pause send one, to the last place, on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     await drag(ui, DEPS, 'hdr:backlog')
     await clock.advance(100)
     await drag(ui, DEPS, DOCS)
     await clock.advance(SYNC_PAUSE - 1)
-    expect(calls.writes).toEqual([])
+    expect(changes(github)).toEqual([])
 
     await clock.advance(1)
-    expect(calls.writes).toEqual([path(6, 'deps')])
-    expect(orderOf(files, 6, 'deps')).toBe(45)
+    expect(changes(github)).toEqual(['#6 after #4'])
+    expect(order(github, 'Backlog')).toEqual([4, 6, 5])
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, DEPS, LINT])
     await clock.advance(2000)
     await ui.unmount()
   })
 
   test(`a reorder back to the place a call is sending to sends nothing more, and one asked for while it is out follows it on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
 
@@ -646,34 +648,33 @@ for (const surface of WITH_CLIENT) {
     await drag(ui, DEPS, 'hdr:backlog')
     release()
     await clock.settle()
-    expect(calls.writes).toEqual([path(6, 'deps')])
-    expect(orderOf(files, 6, 'deps')).toBe(20)
+    expect(changes(github)).toEqual(['#6 first'])
+    expect(order(github, 'Backlog')).toEqual([6, 4, 5])
 
     // Out again: this time a different place is asked for, and sent after it.
-    calls.writes.length = 0
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
     await drag(ui, LINT, 'hdr:backlog')
     await clock.advance(SYNC_PAUSE)
-    await place(ui, 'md:0005-lint', 'backlog', {
-      at: 'after',
-      cardId: 'md:0004-docs',
-    })
+    await place(ui, 'gh:5', 'backlog', { at: 'after', cardId: 'gh:4' })
     expect(await under(ui, 'hdr:backlog')).toEqual([DEPS, DOCS, LINT])
     release()
     await clock.settle()
 
-    expect(calls.writes).toEqual([path(5, 'lint'), path(5, 'lint')])
-    expect(orderOf(files, 5, 'lint')).toBeGreaterThan(orderOf(files, 4, 'docs'))
+    expect(changes(github)).toEqual(['#6 first', '#5 first', '#5 after #4'])
+    expect(order(github, 'Backlog')).toEqual([6, 4, 5])
     await clock.advance(2000)
     await ui.unmount()
   })
 
   test(`a refused reorder waits for a retry and, out of tries, the card goes back with the reason on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls, toasts } = await start($, on, surface)
-    calls.denyWrite = 'EACCES: read-only'
-    const before = { ...files }
+    const { clock, ui, github, toasts } = await start($, on, surface)
+    failPositions(github, {
+      exitCode: 1,
+      stderr: 'GraphQL: Resource not accessible by integration',
+    })
+    const before = github.board()
 
     await drag(ui, DEPS, 'hdr:backlog')
     await clock.advance(SYNC_PAUSE)
@@ -693,10 +694,10 @@ for (const surface of WITH_CLIENT) {
 
     expect(toasts).toHaveLength(1)
     expect(toasts[0]).toMatch(
-      /^Could not reorder #6 in Backlog, so it is back where it was: .*EACCES: read-only$/,
+      /^Could not reorder #6 in Backlog, so it is back where it was: .*Resource not accessible by integration$/,
     )
     expect(await under(ui, 'hdr:backlog')).toEqual([DOCS, LINT, DEPS])
-    expect(files).toEqual(before)
+    expect(github.board()).toEqual(before)
     await ui.unmount()
   })
 
@@ -711,20 +712,28 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a reload while a reorder is pending keeps the card among the cards the reload brings on the ${surface}`, async ($, on) => {
-    const { clock, ui, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
 
-    // Dense orders in the files, shifted here: the reload brings them back.
+    // Lint is put before Docs on GitHub meanwhile: the reload brings that order.
     await drag(ui, DEPS, 'hdr:backlog')
     await clock.advance(SYNC_PAUSE)
-    calls.edit(path(4, 'docs'), card(4, { title: 'Write docs', order: 1 }))
-    calls.edit(path(5, 'lint'), card(5, { title: 'Fix lint', order: 2 }))
+    const lint = github.cards.findIndex(one => one.number === 5)
+    const [moved] = github.cards.splice(lint, 1)
+    if (moved !== undefined) {
+      github.cards.splice(
+        github.cards.findIndex(one => one.number === 4),
+        0,
+        moved,
+      )
+    }
     await ui.press({ key: 'refresh' })
+    await clock.settle()
 
-    expect(await under(ui, 'hdr:backlog')).toEqual([DEPS, DOCS, LINT])
+    expect(await under(ui, 'hdr:backlog')).toEqual([DEPS, LINT, DOCS])
     release()
     await clock.advance(2000)
     await ui.unmount()
@@ -733,7 +742,7 @@ for (const surface of WITH_CLIENT) {
 
 for (const surface of WITHOUT_CLIENT) {
   test(`the detail view has up and down buttons that reorder the card on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls, prompts } = await start($, on, surface)
+    const { clock, ui, github, prompts } = await start($, on, surface)
 
     await click(ui, LINT)
     expect(await ui.find({ key: 'reorder:up' })).toBeDefined()
@@ -741,16 +750,16 @@ for (const surface of WITHOUT_CLIENT) {
 
     await ui.press({ key: 'reorder:down' })
     await clock.advance(SYNC_PAUSE)
-    expect(calls.writes).toEqual([path(5, 'lint')])
-    expect(orderOf(files, 5, 'lint')).toBe(61)
-    expect(files[path(5, 'lint')]).toContain('status: backlog')
+    expect(changes(github)).toEqual(['#5 after #6'])
+    expect(order(github, 'Backlog')).toEqual([4, 6, 5])
+    expect(github.card(5).status).toBe('Backlog')
     // Last now: nowhere further down.
     expect(await ui.find({ key: 'reorder:down' })).toBeUndefined()
 
     await ui.press({ key: 'reorder:up' })
     await ui.press({ key: 'reorder:up' })
     await clock.advance(SYNC_PAUSE)
-    expect(orderOf(files, 5, 'lint')).toBeLessThan(orderOf(files, 4, 'docs'))
+    expect(order(github, 'Backlog')).toEqual([5, 4, 6])
     expect(await ui.find({ key: 'reorder:up' })).toBeUndefined()
     expect(prompts).toEqual([])
 
@@ -763,21 +772,20 @@ for (const surface of WITHOUT_CLIENT) {
   })
 
   test(`the detail view has reorder buttons in Suspended and none in Cancelled on the ${surface}`, async ($, on) => {
-    const files: Files = {
-      [path(31, 's')]: card(31, { status: 'suspended', order: 30 }),
-      [path(32, 's')]: card(32, { status: 'suspended', order: 40 }),
-      [path(41, 'c')]: card(41, { status: 'cancelled' }),
-      [path(42, 'c')]: card(42, { status: 'cancelled' }),
-    }
-    const { clock, ui } = await start($, on, surface, files)
+    const { clock, ui } = await start($, on, surface, [
+      issue(31, { column: 'suspended' }),
+      issue(32, { column: 'suspended' }),
+      issue(41, { column: 'cancelled' }),
+      issue(42, { column: 'cancelled' }),
+    ])
     await group(ui, 'inactive')
 
-    await click(ui, 'card:md:0031-s')
+    await click(ui, 'card:gh:31')
     expect(await ui.find({ key: 'reorder:down' })).toBeDefined()
     expect(await ui.find({ key: 'reorder:up' })).toBeUndefined()
     await ui.press({ key: 'back' })
 
-    await click(ui, 'card:md:0041-c')
+    await click(ui, 'card:gh:41')
     expect(await ui.find({ key: 'move:backlog' })).toBeDefined()
     expect(await ui.find({ key: 'reorder:up' })).toBeUndefined()
     expect(await ui.find({ key: 'reorder:down' })).toBeUndefined()
@@ -786,9 +794,12 @@ for (const surface of WITHOUT_CLIENT) {
   })
 
   test(`the detail view of a card alone in its section, or in Done, has no reorder buttons on the ${surface}`, async ($, on) => {
-    const files = board()
-    delete files[path(3, 'tests')]
-    const { ui } = await start($, on, surface, files)
+    const { ui } = await start(
+      $,
+      on,
+      surface,
+      board().filter(one => one.number !== 3),
+    )
 
     await click(ui, API)
     expect(await ui.find({ key: 'move:backlog' })).toBeDefined()
@@ -818,10 +829,9 @@ const NODES = [
   issueNode({ number: 4, status: 'In progress', labels: ['ai'] }),
 ]
 
-const POSITION = 'updateProjectV2ItemPosition'
 
 // `gh api graphql` serves the board query and takes the position mutation.
-const github = (): Route[] => [
+const boardRoutes = (): Route[] => [
   GH_VERSION,
   { match: ['gh', 'auth', 'status'], reply: {} },
   {
@@ -842,7 +852,7 @@ const github = (): Route[] => [
 async function startGithub(
   $: Engine,
   on: On,
-  routes: Route[] = github(),
+  routes: Route[] = boardRoutes(),
   hold?: (argv: readonly string[]) => Promise<void> | undefined,
 ) {
   const world = boot(on, { 'CLAUDE.md': KANBAN_MD })
@@ -945,21 +955,16 @@ test(
 // #28: a reorder keeps what the move it follows is still to do.
 test(
   'a card moved to Claude and reordered before the move is confirmed still gets its work prompt, once',
-  // Claude already has a card; at the default limit of one the prompt would be held.
   async ($, on) => {
-    const { clock, ui, files, prompts } = await start($, on, 'terminal')
+    const { clock, ui, github, prompts } = await start($, on, 'terminal')
 
-    await place(ui, 'md:0004-docs', 'claude', {
-      at: 'after',
-      cardId: 'md:0003-tests',
-    })
-    await place(ui, 'md:0004-docs', 'claude', { at: 'top' })
+    await place(ui, 'gh:4', 'claude', { at: 'after', cardId: 'gh:3' })
+    await place(ui, 'gh:4', 'claude', { at: 'top' })
     expect(await under(ui, 'hdr:claude')).toEqual([DOCS, API, TESTS])
     await clock.advance(SYNC_PAUSE)
     await clock.settle()
 
-    expect(files[path(4, 'docs')]).toContain('status: claude')
-    expect(orderOf(files, 4, 'docs')).toBeLessThan(orderOf(files, 2, 'api'))
+    expect(order(github, 'In progress')).toEqual([4, 2, 3])
     expect(prompts).toEqual([
       expect.stringMatching(/^Work on kanban card #4 "Write docs"/),
     ])
@@ -972,27 +977,23 @@ test(
 test(
   'a card reordered while its move to Claude is on its way still gets its work prompt, once',
   async ($, on) => {
-    const { clock, calls, ui, files, prompts } = await start($, on, 'terminal')
+    const { clock, ui, github, prompts } = await start($, on, 'terminal')
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
 
-    await place(ui, 'md:0004-docs', 'claude', {
-      at: 'after',
-      cardId: 'md:0003-tests',
-    })
+    await place(ui, 'gh:4', 'claude', { at: 'after', cardId: 'gh:3' })
     await clock.advance(SYNC_PAUSE)
-    // The write is out and waiting; the person reorders the card meanwhile.
-    await place(ui, 'md:0004-docs', 'claude', { at: 'top' })
+    // The move is out and waiting; the person reorders the card meanwhile.
+    await place(ui, 'gh:4', 'claude', { at: 'top' })
     await clock.advance(SYNC_PAUSE)
     expect(prompts).toEqual([])
 
     release()
     await clock.settle()
 
-    expect(files[path(4, 'docs')]).toContain('status: claude')
-    expect(orderOf(files, 4, 'docs')).toBeLessThan(orderOf(files, 2, 'api'))
+    expect(order(github, 'In progress')).toEqual([4, 2, 3])
     expect(prompts).toEqual([
       expect.stringMatching(/^Work on kanban card #4 "Write docs"/),
     ])
@@ -1005,23 +1006,18 @@ test(
 test(
   'a card sent back and reordered before the move is confirmed still gets its resume prompt, once',
   async ($, on) => {
-    const files: Files = {
+    const { clock, ui, github, prompts } = await start($, on, 'terminal', [
       ...board(),
-      [path(8, 'review')]: card(
-        8,
-        { status: 'human', title: 'Review me' },
-        HANDED_OFF,
-      ),
-    }
-    const { clock, ui, prompts } = await start($, on, 'terminal', files)
+      issue(8, { column: 'human', title: 'Review me', comments: [HANDOFF] }),
+    ])
 
-    await click(ui, 'card:md:0008-review')
+    await click(ui, 'card:gh:8')
     await ui.input({ key: 'feedback', text: 'Add a test' })
-    await place(ui, 'md:0008-review', 'claude', { at: 'top' })
+    await place(ui, 'gh:8', 'claude', { at: 'top' })
     await clock.advance(SYNC_PAUSE)
     await clock.settle()
 
-    expect(files[path(8, 'review')]).toContain('status: claude')
+    expect(order(github, 'In progress')).toEqual([8, 2, 3])
     expect(prompts).toEqual([
       expect.stringMatching(/^Resume kanban card #8: read the newest feedback/),
     ])
@@ -1032,26 +1028,26 @@ test(
 )
 
 test('a question reordered in Human before the move is confirmed is still announced, once', async ($, on) => {
-  const files: Files = {
-    ...board(),
-    [path(8, 'review')]: card(
-      8,
-      { status: 'human', title: 'Review me', order: 80 },
-      HANDED_OFF,
-    ),
-  }
-  const { clock, ui, toasts, notices } = await start($, on, 'terminal', files)
+  const { clock, ui, github, toasts, notices } = await start(
+    $,
+    on,
+    'terminal',
+    [
+      ...board(),
+      issue(8, { column: 'human', title: 'Review me', comments: [HANDOFF] }),
+    ],
+  )
 
   await $.tool.call({
     tool: 'mcp__kanban__kanban_ask',
     card: 2,
     question: 'Which database should the tests use?',
   })
-  await place(ui, 'md:0002-api', 'human', { at: 'top' })
+  await place(ui, 'gh:2', 'human', { at: 'top' })
   await clock.advance(SYNC_PAUSE)
   await clock.settle()
 
-  expect(files[path(2, 'api')]).toContain('status: human')
+  expect(order(github, 'In review')).toEqual([2, 8])
   expect(toasts).toEqual([
     'Claude asks: Which database should the tests use? (#2)',
   ])
@@ -1369,53 +1365,33 @@ test(
   },
 )
 
-// #28: local renumbering takes turns, so two cards dropped into the same full
-// section within one pause both keep their place.
+// #28: two cards dropped into the same section within one pause, while GitHub
+// is slow, both keep the place they were shown in.
 test(
-  'two cards dropped into a section with no gap within one pause both keep their order on disk',
+  'two cards dropped into a section within one pause keep the order shown after a reload',
   async ($, on) => {
-    const files: Files = {
-      [path(1, 'first')]: card(1, { status: 'claude', order: 1 }),
-      [path(2, 'second')]: card(2, { status: 'claude', order: 2 }),
-      [path(3, 'x')]: card(3, { title: 'Card X', order: 10 }),
-      [path(4, 'y')]: card(4, { title: 'Card Y', order: 11 }),
-    }
-    const { clock, ui, calls } = await start($, on, 'terminal', files)
-    // A slow disk: both moves have read the files before either has written.
+    const { clock, ui, github } = await start($, on, 'terminal', [
+      issue(1, { column: 'claude', title: 'First' }),
+      issue(2, { column: 'claude', title: 'Second' }),
+      issue(3, { title: 'Card X' }),
+      issue(4, { title: 'Card Y' }),
+    ])
+    // A slow GitHub: both moves are asked for before either is sent.
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
 
-    await place(ui, 'md:0003-x', 'claude', {
-      at: 'after',
-      cardId: 'md:0001-first',
-    })
-    await place(ui, 'md:0004-y', 'claude', {
-      at: 'after',
-      cardId: 'md:0001-first',
-    })
+    await place(ui, 'gh:3', 'claude', { at: 'after', cardId: 'gh:1' })
+    await place(ui, 'gh:4', 'claude', { at: 'after', cardId: 'gh:1' })
     const shown = await under(ui, 'hdr:claude')
-    expect(shown).toEqual([
-      'card:md:0001-first',
-      'card:md:0004-y',
-      'card:md:0003-x',
-      'card:md:0002-second',
-    ])
+    expect(shown).toEqual(['card:gh:1', 'card:gh:4', 'card:gh:3', 'card:gh:2'])
     await clock.advance(SYNC_PAUSE)
     release()
     await clock.settle()
 
-    // The disk holds the order the board shows, with no two cards tied.
-    const orders = [
-      orderOf(files, 1, 'first'),
-      orderOf(files, 4, 'y'),
-      orderOf(files, 3, 'x'),
-      orderOf(files, 2, 'second'),
-    ]
-    expect(
-      orders.every((order, i) => i === 0 || order > (orders[i - 1] ?? 0)),
-    ).toBe(true)
+    // GitHub holds the order the board shows.
+    expect(order(github, 'In progress')).toEqual([1, 4, 3, 2])
     await ui.press({ key: 'refresh' })
     await clock.settle()
     expect(await under(ui, 'hdr:claude')).toEqual(shown)
@@ -1423,35 +1399,3 @@ test(
     await ui.unmount()
   },
 )
-
-test('a card added while a card is moved into the same section does not share its order', async ($, on) => {
-  const files: Files = {
-    [path(1, 'a')]: card(1, { status: 'claude', title: 'In Claude' }),
-    [path(2, 'b')]: card(2, { title: 'In Backlog', order: 20 }),
-  }
-  const { clock, ui, calls } = await start($, on, 'terminal', files)
-  // A slow disk: both have read the files before either has written.
-  let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
-    release = resolve
-  })
-
-  await ui.press({ key: 'add' })
-  const adding = ui.input({ key: 'add:title', text: 'Write docs' })
-  await clock.settle()
-  await place(ui, 'md:0001-a', 'backlog', undefined)
-  await clock.advance(SYNC_PAUSE)
-  release()
-  await adding
-  await clock.settle()
-
-  const created = Object.keys(files).find(file => file.includes('write-docs'))
-  const orders = [
-    orderOf(files, 2, 'b'),
-    orderOf(files, 1, 'a'),
-    Number(/\norder: (\S+)\n/.exec(files[created ?? ''] ?? '')?.[1]),
-  ]
-  expect(new Set(orders).size).toBe(3)
-  await clock.advance(2500)
-  await ui.unmount()
-})

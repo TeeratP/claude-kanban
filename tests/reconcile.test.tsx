@@ -3,42 +3,40 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import { rowIndex } from './board-ui'
-import { HANDED_OFF, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
+import { PANE, RUN, SYNC_PAUSE } from './fakes'
+import { HANDOFF, bootGithub, issue } from './fake-github'
+import type { FakeCard } from './fake-github'
 
 const KANBAN = (name: string) => `mcp__kanban__kanban_${name}` as const
 const ASKED = (n: number) =>
-  `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.`
+  `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Done (or to Human if it needs the person's approval); if you need a decision, kanban_ask; if you are still working, say so and continue.`
 const UNTRACKED =
   'This turn changed files with no card in Claude. If it is backlog work, move or create its card.'
 
 // Card 2 is in Claude with a handoff to move on with; card 3 waits in Backlog.
-const cards = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(2, 'api')]: card(
-    2,
-    { status: 'claude', title: 'Build API' },
-    HANDED_OFF,
-  ),
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-})
+const cards = () => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API', comments: [HANDOFF] }),
+  issue(3, { column: 'backlog', title: 'Write docs' }),
+]
 
 // Nothing is in Claude.
-const idle = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-})
+const idle = () => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(3, { column: 'backlog', title: 'Write docs' }),
+]
 
 // A session with the board loaded and no pane.
 async function quiet(
   $: Engine,
   on: On,
-  files: Record<string, string> = cards(),
+  issues: FakeCard[] = cards(),
   refuse?: 'Edit',
 ) {
   // The tool a test has fail, answered ahead of the engine's own.
   if (refuse !== undefined)
     on('tool.call', { tool: refuse }, () => ({ deny: 'no' }))
-  const world = boot(on, files)
+  const world = bootGithub(on, issues)
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -86,7 +84,7 @@ async function turn(
 
 // The person drags card 3 to Claude; the move reaches the backend after a pause.
 async function dragToClaude(ui: Mounted<'terminal', 'Pane'>) {
-  const from = await rowIndex(ui, 'card:md:0003-docs')
+  const from = await rowIndex(ui, 'card:gh:3')
   const to = await rowIndex(ui, 'hdr:claude')
   await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
   await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
@@ -178,13 +176,24 @@ for (const [name, then] of [
   [
     'a handoff',
     ($: Engine) =>
-      call($, 'handoff', { card: 2, check: 'Run it', need: 'Approve' }),
+      call($, 'handoff', {
+        card: 2,
+        did: 'Built it',
+        check: 'Run it',
+        need: 'Approve',
+      }),
+  ],
+  [
+    'a handoff that needs nothing',
+    ($: Engine) =>
+      call($, 'handoff', { card: 2, did: 'Built it', check: 'Run it' }),
   ],
   [
     'a question',
     ($: Engine) => call($, 'ask', { card: 2, question: 'Which?' }),
   ],
   ['a move to Human', ($: Engine) => call($, 'move', { card: 2, to: 'human' })],
+  ['a move to Done', ($: Engine) => call($, 'move', { card: 2, to: 'done' })],
   [
     'a move to Backlog',
     ($: Engine) => call($, 'move', { card: 2, to: 'backlog' }),
@@ -207,7 +216,11 @@ test('a handoff the tool refused leaves the card to be asked about', async ($, o
   const { clock, prompts } = await quiet($, on)
 
   await turn($, 1, async () => {
-    const refused = await call($, 'handoff', { card: 2, check: '', need: '' })
+    const refused = await call($, 'handoff', {
+      card: 2,
+      did: '',
+      check: '',
+    })
     expect(refused).toHaveProperty('deny')
   })
   await clock.settle()
@@ -339,8 +352,11 @@ test(
 test(
   'a move into Claude that failed does not hold the question back',
   async ($, on) => {
-    const { calls, clock, prompts, ui } = await open($, on)
-    calls.denyWrite = 'EACCES: permission denied'
+    const { github, clock, prompts, ui } = await open($, on)
+    github.fail['project item-edit'] = {
+      exitCode: 1,
+      stderr: 'HTTP 403: Resource not accessible',
+    }
     await dragToClaude(ui)
     await clock.advance(SYNC_PAUSE)
 
@@ -376,18 +392,26 @@ for (const tool of ['Edit', 'Write', 'NotebookEdit']) {
   })
 }
 
-test('work that is not noted: card files, a card in play, a card in Claude, no edits', async ($, on) => {
+test('work that is not noted: a card in play, a card in Claude, no edits', async ($, on) => {
   const { clock, toasts } = await quiet($, on, idle())
 
-  await turn($, 1, () => edit($, 'Edit', '/work/.kanban/0003-docs.md'))
-  await turn($, 2, async () => {
+  await turn($, 1, async () => {
     await call($, 'show', { card: 3 })
     await edit($, 'Edit', '/work/src/auth.ts')
   })
-  await turn($, 3, () => call($, 'show', { card: 3 }))
+  await turn($, 2, () => call($, 'show', { card: 3 }))
   await clock.settle()
 
   expect(toasts).toEqual([])
+})
+
+test('an edit under .kanban is a changed file like any other', async ($, on) => {
+  const { clock, toasts } = await quiet($, on, idle())
+
+  await turn($, 1, () => edit($, 'Edit', '/work/.kanban/0003-docs.md'))
+  await clock.settle()
+
+  expect(toasts).toEqual([UNTRACKED])
 })
 
 test('an edit the tool refused changed nothing', async ($, on) => {

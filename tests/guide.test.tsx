@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { CWD, boot, card, path } from './fakes'
+import { CWD, boot } from './fakes'
 import { boardReply, fakeProcess, issueNode } from './fake-gh'
 import type { Route } from './fake-gh'
 import { KANBAN, github } from './github-board'
@@ -31,16 +31,16 @@ const COMPOSE = {
 const RULES = [
   'Keep it current with the kanban tools:',
   '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
-  '- When the work a card tracks is done, record kanban_handoff, then kanban_move it to human. Never move a card to done: the person approves it.',
+  '- When the work a card tracks is finished: record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
+  "- Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify. Record a handoff that says what you need first.",
   '- Blocked on a decision only the person can make: kanban_ask.',
   '- Create cards with kanban_create only when asked.',
   '- Never move cards into or out of Suspended or Cancelled.',
-  '- Use the kanban tools, not raw gh issue/gh project edits or hand edits of .kanban files, so the board stays in sync.',
+  '- Use the kanban tools, not raw gh issue/gh project edits, so the board stays in sync.',
 ].join('\n')
 
-const cards = () => ({
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-})
+// No CLAUDE.md names a board: the plugin finds one from the origin.
+const NO_CONFIG = {}
 
 const ORIGIN = 'https://github.com/TeeratP/attend-baby.git'
 const SHARED: FakeProject = {
@@ -72,8 +72,8 @@ const DETECTED = {
     info: { ...GITHUB_2, isDetected: true },
   },
 }
-const savedBoard = (mode: string, backend: object) => ({
-  [`cache:${CWD}`]: { shape: 'cache-2', mode, backend, cards: [] },
+const savedBoard = (backend: object) => ({
+  [`cache:${CWD}`]: { shape: 'cache-3', backend, cards: [] },
 })
 
 // Zero-config detection finds the shared board, which holds one issue.
@@ -137,22 +137,9 @@ test('on GitHub the section names the board and states the rules', async ($, on)
   })
 })
 
-test('on local cards the section names the card files', async ($, on) => {
-  boot(on, cards())
-  fakeCompose(on)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  await $.tool.call({ tool: LIST })
-
-  const section = await backlogSection($)
-
-  expect(section?.text).toBe(
-    `This project's backlog is the .kanban/*.md cards. ${RULES}`,
-  )
-})
-
-test('while the backend is still being found the section says only that there is a board', async ($, on) => {
+test('while the board is still being found the section says only that the backlog is GitHub Issues', async ($, on) => {
   const { held, go } = gate()
-  boot(on, cards())
+  boot(on, NO_CONFIG)
   fakeProcess(on, found, held)
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -160,14 +147,12 @@ test('while the backend is still being found the section says only that there is
   const section = await backlogSection($)
   go()
 
-  expect(section?.text).toBe(
-    `This project's backlog is a kanban board. ${RULES}`,
-  )
+  expect(section?.text).toBe(`This project's backlog is GitHub Issues. ${RULES}`)
 })
 
-test('the section follows the backend as it is found', async ($, on) => {
+test('the section follows the board as it is found', async ($, on) => {
   const { held, go } = gate()
-  const { clock } = boot(on, cards())
+  const { clock } = boot(on, NO_CONFIG)
   fakeProcess(on, found, held)
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -177,12 +162,12 @@ test('the section follows the backend as it is found', async ($, on) => {
   await clock.settle()
   const after = await backlogSection($)
 
-  expect(before?.text).toContain('a kanban board.')
+  expect(before?.text).toContain('GitHub Issues. ')
   expect(after?.text).toContain('GitHub Issues on board TeeratP/#2.')
 })
 
 test('a board a detection saved names the section with no call to gh', async ($, on) => {
-  const { clock } = boot(on, cards(), DETECTED)
+  const { clock } = boot(on, NO_CONFIG, DETECTED)
   const commands = fakeProcess(on, [])
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -196,8 +181,8 @@ test('a board a detection saved names the section with no call to gh', async ($,
   expect(commands).toEqual([])
 })
 
-test('the backend the last load saved names the section: a GitHub board', async ($, on) => {
-  const { clock } = boot(on, cards(), savedBoard('auto', GITHUB_2))
+test('the board the last load saved names the section', async ($, on) => {
+  const { clock } = boot(on, NO_CONFIG, savedBoard(GITHUB_2))
   const commands = fakeProcess(on, [])
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -209,22 +194,17 @@ test('the backend the last load saved names the section: a GitHub board', async 
   expect(commands).toEqual([])
 })
 
-test('the backend the last load saved names the section: local cards', async ($, on) => {
-  const { clock } = boot(on, cards(), savedBoard('auto', { kind: 'local' }))
-  const commands = fakeProcess(on, [])
-  fakeCompose(on)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  await clock.settle()
-
-  expect((await backlogSection($))?.text).toBe(
-    `This project's backlog is the .kanban/*.md cards. ${RULES}`,
-  )
-  expect(commands).toEqual([])
-})
-
-test('a board saved under another setting names nothing, and the backend is found again', async ($, on) => {
+test('a board saved by an older version names nothing, and the board is found again', async ($, on) => {
   const { held, go } = gate()
-  const { clock } = boot(on, cards(), savedBoard('github', GITHUB_2))
+  // The shape before the backend setting went: it carried the setting's mode.
+  const { clock } = boot(on, NO_CONFIG, {
+    [`cache:${CWD}`]: {
+      shape: 'cache-2',
+      mode: 'auto',
+      backend: GITHUB_2,
+      cards: [],
+    },
+  })
   const commands = fakeProcess(on, found, held)
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -233,12 +213,12 @@ test('a board saved under another setting names nothing, and the backend is foun
   go()
   await clock.settle()
 
-  expect(before?.text).toContain('a kanban board.')
+  expect(before?.text).toBe(`This project's backlog is GitHub Issues. ${RULES}`)
   expect(lookups(commands)).toHaveLength(1)
 })
 
-test('with nothing saved, auto finds the backend once at the session start, quietly, and saves it', async ($, on) => {
-  const { clock, toasts, world, saved } = boot(on, cards())
+test('with nothing saved, the board is found once at the session start, quietly, and saves it', async ($, on) => {
+  const { clock, toasts, world, saved } = boot(on, NO_CONFIG)
   const commands = fakeProcess(on, found)
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -261,24 +241,23 @@ test('with nothing saved, auto finds the backend once at the session start, quie
   )
 })
 
-test('a local outcome of the session-start detection is saved too, and the next session needs no lookup', async ($, on) => {
-  const { clock, saved } = boot(on, cards())
+test('a session-start detection that finds no board names GitHub Issues and saves nothing', async ($, on) => {
+  const { clock, saved } = boot(on, NO_CONFIG)
   fakeProcess(on, [])
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
-  expect((await backlogSection($))?.text).toContain('the .kanban/*.md cards.')
-  // What the next session reads: a saved local backend, which names the section
-  // with no call to gh (see "the backend the last load saved" above).
-  expect(JSON.parse(saved.get(`cache:${CWD}`) ?? 'null')).toEqual(
-    savedBoard('auto', { kind: 'local' })[`cache:${CWD}`],
+  expect((await backlogSection($))?.text).toBe(
+    `This project's backlog is GitHub Issues. ${RULES}`,
   )
+  expect(saved.has(`detect:${CWD}`)).toBe(false)
+  expect(saved.has(`cache:${CWD}`)).toBe(false)
 })
 
 test('a tool called while the session-start detection runs shares it', async ($, on) => {
   const { held, go } = gate()
-  const { clock } = boot(on, cards())
+  const { clock } = boot(on, NO_CONFIG)
   const commands = fakeProcess(on, found, held)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
@@ -290,8 +269,8 @@ test('a tool called while the session-start detection runs shares it', async ($,
   expect(lookups(commands)).toHaveLength(1)
 })
 
-test('a rate limit while finding the backend is silent, and leaves it to be found later', async ($, on) => {
-  const { clock, toasts, world, saved } = boot(on, cards())
+test('a rate limit while finding the board is silent, and leaves it to be found later', async ($, on) => {
+  const { clock, toasts, world, saved } = boot(on, NO_CONFIG)
   const commands = fakeProcess(on, [
     GH_VERSION,
     SIGNED_IN,
@@ -306,7 +285,9 @@ test('a rate limit while finding the backend is silent, and leaves it to be foun
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
-  expect((await backlogSection($))?.text).toContain('a kanban board.')
+  expect((await backlogSection($))?.text).toBe(
+    `This project's backlog is GitHub Issues. ${RULES}`,
+  )
   expect(toasts).toEqual([])
   expect(world.opened).toEqual([])
   expect(lookups(commands)).toHaveLength(1)
@@ -314,74 +295,25 @@ test('a rate limit while finding the backend is silent, and leaves it to be foun
   expect(saved.has(`cache:${CWD}`)).toBe(false)
 })
 
-test(
-  'the local setting says .kanban at once and finds nothing',
-  { options: { backend: 'local' } },
-  async ($, on) => {
-    const { clock } = boot(on, cards())
-    const commands = fakeProcess(on, [])
-    fakeCompose(on)
-    await $.session.start({
-      cwd: '/',
-      surface: 'terminal',
-      isInteractive: true,
-    })
+test('the section tells Claude to close finished cards and send only what needs the person to Human', async ($, on) => {
+  boot(on, NO_CONFIG)
+  fakeCompose(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
-    const early = await backlogSection($)
-    await clock.settle()
+  const text = (await backlogSection($))?.text ?? ''
 
-    expect(early?.text).toBe(
-      `This project's backlog is the .kanban/*.md cards. ${RULES}`,
-    )
-    expect(commands).toEqual([])
-  },
-)
-
-test(
-  'the github setting says GitHub at once and finds nothing',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const { clock } = boot(on, cards())
-    const commands = fakeProcess(on, [])
-    fakeCompose(on)
-    await $.session.start({
-      cwd: '/',
-      surface: 'terminal',
-      isInteractive: true,
-    })
-
-    const early = await backlogSection($)
-    await clock.settle()
-
-    expect(early?.text).toBe(
-      `This project's backlog is GitHub Issues. ${RULES}`,
-    )
-    expect(commands).toEqual([])
-  },
-)
-
-test(
-  'the github setting names the board once one is saved',
-  { options: { backend: 'github' } },
-  async ($, on) => {
-    const { clock } = boot(on, cards(), DETECTED)
-    fakeProcess(on, [])
-    fakeCompose(on)
-    await $.session.start({
-      cwd: '/',
-      surface: 'terminal',
-      isInteractive: true,
-    })
-    await clock.settle()
-
-    expect((await backlogSection($))?.text).toContain(
-      'GitHub Issues on board TeeratP/#2.',
-    )
-  },
-)
+  expect(text).toContain(
+    'record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
+  )
+  expect(text).toContain(
+    'Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify.',
+  )
+  expect(text).not.toContain('Never move a card to done')
+  expect(text).not.toContain('.kanban')
+})
 
 test('the section comes once, after the engine section, and is short', async ($, on) => {
-  boot(on, cards())
+  boot(on, NO_CONFIG)
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
@@ -399,7 +331,7 @@ test('the section comes once, after the engine section, and is short', async ($,
 })
 
 test('the one-line bare prompt gets no section', async ($, on) => {
-  boot(on, cards())
+  boot(on, NO_CONFIG)
   fakeCompose(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
@@ -407,7 +339,7 @@ test('the one-line bare prompt gets no section', async ($, on) => {
 })
 
 test('a prompt that already holds the section is not given a second', async ($, on) => {
-  boot(on, cards())
+  boot(on, NO_CONFIG)
   on('prompt.compose', () => ({
     sections: [
       { id: 'intro', text: 'You are Claude.', scope: 'shared' as const },
@@ -431,7 +363,7 @@ test(
   'the reconcile option turns off the turn-end check, not the section',
   { options: { reconcile: false } },
   async ($, on) => {
-    boot(on, cards())
+    boot(on, NO_CONFIG)
     fakeCompose(on)
     await $.session.start({
       cwd: '/',

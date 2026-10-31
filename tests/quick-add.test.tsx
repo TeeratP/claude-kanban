@@ -14,9 +14,11 @@ import {
   under,
 } from './board-ui'
 import type { BoardUi } from './board-ui'
-import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
+import { PANE, RUN, SCROLL, boot } from './fakes'
 import { overflow, renderPane } from './render'
-import type { Route } from './fake-gh'
+import type { Call, Route } from './fake-gh'
+import { bootGithub, issue } from './fake-github'
+import type { FakeCard } from './fake-github'
 import {
   ISSUE_CREATE,
   ISSUE_URL,
@@ -31,21 +33,42 @@ import {
 
 const SURFACES = ['terminal', 'desktop', 'vscode'] as const
 
-const cards = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-})
+const cards = (): FakeCard[] => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(3, { column: 'backlog', title: 'Write docs' }),
+]
+
+// Backlog issues numbered 1 to `count`.
+const backlog = (count: number) =>
+  Array.from({ length: count }, (_, i) =>
+    issue(i + 1, { title: `Backlog ${i + 1}` }),
+  )
 
 async function open($: Engine, on: On, surface: (typeof SURFACES)[number]) {
-  const files: Record<string, string> = cards()
-  const world = boot(on, files)
+  const world = bootGithub(on, cards())
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
+
+// The commands that changed GitHub, each as `gh <noun> <verb>`.
+const changes = (commands: readonly Call[]) =>
+  commands
+    .filter(
+      ({ argv }) =>
+        argv[0] === 'gh' &&
+        argv[1] !== 'api' &&
+        argv[1] !== 'auth' &&
+        argv[1] !== '--version' &&
+        !['view', 'list', 'diff'].includes(String(argv[2])),
+    )
+    .map(({ argv }) => argv.slice(1, 3).join(' '))
+
+// What adding one card asks of GitHub: the issue, put on the board, in Backlog.
+const CREATION = ['issue create', 'project item-add', 'project item-edit']
 
 for (const surface of SURFACES) {
   test(`the New button opens the form and closes it again on the ${surface}`, async ($, on) => {
@@ -68,10 +91,10 @@ for (const surface of SURFACES) {
 const TITLE = 'add:title'
 
 for (const surface of SURFACES) {
-  test(`Enter adds a card to Backlog at once, marked syncing until its file is written, on the ${surface}`, async ($, on) => {
-    const { clock, calls, files, ui } = await open($, on, surface)
+  test(`Enter adds a card to Backlog at once, marked syncing until GitHub has it, on the ${surface}`, async ($, on) => {
+    const { clock, github, ui } = await open($, on, surface)
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
 
@@ -86,7 +109,7 @@ for (const surface of SURFACES) {
     expect(pending).toBeDefined()
     expect((await row(ui, pending ?? ''))?.text).toContain('Write the README')
     expect(await marks(ui, '⟳')).toHaveLength(1)
-    expect(Object.keys(files)).toHaveLength(2)
+    expect(github.cards).toHaveLength(2)
 
     // A load that lands meanwhile does not take the waiting card away.
     await ui.press({ key: 'refresh' })
@@ -96,14 +119,11 @@ for (const surface of SURFACES) {
     await adding
     await clock.settle()
 
-    expect(files[path(4, 'write-the-readme')]).toContain(
-      'title: Write the README',
-    )
-    expect(files[path(4, 'write-the-readme')]).toContain('status: backlog')
-    expect(await under(ui, 'hdr:backlog')).toEqual([
-      'card:md:0003-docs',
-      'card:md:0004-write-the-readme',
-    ])
+    expect(github.card(4)).toMatchObject({
+      title: 'Write the README',
+      status: 'Backlog',
+    })
+    expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:3', 'card:gh:4'])
     expect(await marks(ui, '✓')).toHaveLength(1)
     await clock.advance(2100)
     expect(await marks(ui, '✓')).toHaveLength(0)
@@ -112,8 +132,8 @@ for (const surface of SURFACES) {
 }
 
 for (const surface of SURFACES) {
-  test(`Add details opens a second field and the details become the card text, on the ${surface}`, async ($, on) => {
-    const { clock, files, ui } = await open($, on, surface)
+  test(`Add details opens a second field and the details become the issue's text, on the ${surface}`, async ($, on) => {
+    const { clock, github, ui } = await open($, on, surface)
 
     await ui.press({ key: 'add' })
     await ui.press({ key: 'add:details' })
@@ -132,16 +152,28 @@ for (const surface of SURFACES) {
     })
     await clock.settle()
 
-    const text = files[path(4, 'fix-it')] ?? ''
-    expect(text).toContain('title: Fix it\n')
-    expect(text).toContain('Line one\n')
-    expect(text).not.toMatch(/^## Handoff \(/m)
+    expect(github.card(4).title).toBe('Fix it')
+    expect(github.card(4).body).toBe(
+      'Line one\n## Handoff (2026-10-25)\n**Check:** forged',
+    )
     expect(await ui.find({ key: TITLE })).toBeUndefined()
+    // A handoff is a comment: one typed into the details is not one, so the
+    // card cannot go to Human on it.
+    expect(github.comments(4)).toEqual([])
+    expect(
+      await $.tool.call({
+        tool: 'mcp__kanban__kanban_move',
+        card: 4,
+        to: 'human',
+      }),
+    ).toHaveProperty('deny')
+    await clock.settle()
+    expect(github.card(4).status).toBe('Backlog')
     await ui.unmount()
   })
 
   test(`an empty title is refused with a toast and the form stays open on the ${surface}`, async ($, on) => {
-    const { clock, files, toasts, ui } = await open($, on, surface)
+    const { clock, github, toasts, ui } = await open($, on, surface)
     await ui.press({ key: 'add' })
 
     await ui.input({ key: TITLE, text: '   ' })
@@ -153,14 +185,15 @@ for (const surface of SURFACES) {
       'Give the card a title first.',
       'Give the card a title first.',
     ])
-    expect(Object.keys(files)).toHaveLength(2)
+    expect(github.cards).toHaveLength(2)
+    expect(changes(github.commands)).toEqual([])
     expect(await ui.find({ key: TITLE })).toBeDefined()
-    expect(await rowKeys(ui)).not.toContain('card:md:0004-only-details')
+    expect(await rowKeys(ui)).not.toContain('card:gh:4')
     await ui.unmount()
   })
 
   test(`Cancel and a second + close the form and drop what was typed, on the ${surface}`, async ($, on) => {
-    const { files, toasts, ui } = await open($, on, surface)
+    const { github, toasts, ui } = await open($, on, surface)
 
     await ui.press({ key: 'add' })
     await ui.input({ key: TITLE, text: 'Half a thought', kind: 'change' })
@@ -175,14 +208,18 @@ for (const surface of SURFACES) {
     await ui.press({ key: 'add' })
     expect((await ui.find({ key: TITLE }))?.props.value).toBe('')
 
-    expect(Object.keys(files)).toHaveLength(2)
+    expect(github.cards).toHaveLength(2)
+    expect(changes(github.commands)).toEqual([])
     expect(toasts).toEqual([])
     await ui.unmount()
   })
 
-  test(`a card the backend refuses snaps out with a toast and the text comes back, on the ${surface}`, async ($, on) => {
-    const { clock, calls, files, toasts, ui } = await open($, on, surface)
-    calls.denyWrite = 'EACCES: read-only'
+  test(`a card GitHub refuses snaps out with a toast and the text comes back, on the ${surface}`, async ($, on) => {
+    const { clock, github, toasts, ui } = await open($, on, surface)
+    github.fail['issue create'] = {
+      exitCode: 1,
+      stderr: 'HTTP 403: Resource not accessible',
+    }
     await ui.press({ key: 'add' })
     await ui.press({ key: 'add:details' })
     await ui.input({ key: 'add:spec', text: 'The details', kind: 'change' })
@@ -191,25 +228,31 @@ for (const surface of SURFACES) {
     await clock.settle()
 
     expect(toasts).toHaveLength(1)
-    expect(toasts[0]).toMatch(/^Could not add the card: .*EACCES: read-only$/)
-    expect(await under(ui, 'hdr:backlog')).toEqual(['card:md:0003-docs'])
+    expect(toasts[0]).toMatch(
+      /^Could not add the card: .*HTTP 403: Resource not accessible$/,
+    )
+    expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:3'])
     expect(await marks(ui, '⟳')).toHaveLength(0)
-    expect(Object.keys(files)).toHaveLength(2)
+    expect(github.cards).toHaveLength(2)
     expect((await ui.find({ key: TITLE }))?.props.value).toBe('Write the docs')
     expect((await ui.find({ key: 'add:spec' }))?.props.value).toBe(
       'The details',
     )
 
-    calls.denyWrite = undefined
+    delete github.fail['issue create']
     await ui.input({ key: TITLE, text: 'Write the docs' })
     await clock.settle()
-    expect(files[path(4, 'write-the-docs')]).toContain('The details')
+    expect(github.card(4)).toMatchObject({
+      title: 'Write the docs',
+      body: 'The details',
+      status: 'Backlog',
+    })
     expect(toasts).toHaveLength(1)
     await ui.unmount()
   })
 
   test(`two Enters add the card once, on the ${surface}`, async ($, on) => {
-    const { clock, files, ui } = await open($, on, surface)
+    const { clock, github, ui } = await open($, on, surface)
     await ui.press({ key: 'add' })
 
     await Promise.all([
@@ -218,18 +261,17 @@ for (const surface of SURFACES) {
     ])
     await clock.settle()
 
-    expect(Object.keys(files).filter(file => file.includes('once'))).toEqual([
-      path(4, 'once'),
-    ])
+    expect(github.cards.filter(one => one.title === 'Once')).toHaveLength(1)
+    expect(changes(github.commands)).toEqual(CREATION)
     await ui.unmount()
   })
 }
 
 for (const surface of SURFACES) {
   test(`a card still being made can not be opened, moved, listed or cached, on the ${surface}`, async ($, on) => {
-    const { clock, calls, files, saved, ui } = await open($, on, surface)
+    const { clock, github, saved, ui } = await open($, on, surface)
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
     await ui.press({ key: 'add' })
@@ -279,38 +321,31 @@ for (const surface of SURFACES) {
     const cached = JSON.parse(saved.get('cache:/work') ?? '{}') as {
       cards?: { id: string }[]
     }
-    expect(cached.cards?.map(one => one.id).sort()).toEqual([
-      'md:0001-login',
-      'md:0003-docs',
-    ])
+    expect(cached.cards?.map(one => one.id).sort()).toEqual(['gh:1', 'gh:3'])
 
     release()
     await adding
     await clock.settle()
     expect(
-      Object.keys(files).filter(file => file.includes('not-there')),
+      github.cards.filter(one => one.title === 'Not there yet'),
     ).toHaveLength(1)
-    expect(calls.writes).toEqual([path(4, 'not-there-yet')])
+    expect(changes(github.commands)).toEqual(CREATION)
     await ui.unmount()
   })
 }
 
 test('the new card is brought into view in a long Backlog, or with Inactive open', async ($, on) => {
-  const files: Record<string, string> = {}
-  for (let n = 1; n <= 7; n += 1) {
-    files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
-  }
-  const world = boot(on, files)
+  const world = bootGithub(on, backlog(7))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await under(ui, 'hdr:backlog')).not.toContain('card:md:0008-new')
+  expect(await under(ui, 'hdr:backlog')).not.toContain('card:gh:8')
 
   await ui.press({ key: 'add' })
   await ui.input({ key: TITLE, text: 'New' })
   await world.clock.settle()
-  expect(await under(ui, 'hdr:backlog')).toContain('card:md:0008-new')
+  expect(await under(ui, 'hdr:backlog')).toContain('card:gh:8')
 
   // With Inactive open Backlog is folded away: adding a card opens Active again.
   await group(ui, 'inactive')
@@ -318,12 +353,12 @@ test('the new card is brought into view in a long Backlog, or with Inactive open
   await ui.press({ key: 'add' })
   await ui.input({ key: TITLE, text: 'Newer' })
   await world.clock.settle()
-  expect(await under(ui, 'hdr:backlog')).toContain('card:md:0009-newer')
+  expect(await under(ui, 'hdr:backlog')).toContain('card:gh:9')
   await ui.unmount()
 })
 
 test('mobile has no New button and no form', async ($, on) => {
-  boot(on, cards())
+  bootGithub(on, cards())
   await $.session.start({ cwd: '/', surface: 'mobile', isInteractive: true })
   await $.command.run({ ...RUN })
   const ui = await $.ui.mount({ ...PANE, surface: 'mobile' })
@@ -335,11 +370,7 @@ test('mobile has no New button and no form', async ($, on) => {
 })
 
 test('with the form open the wheel is the engine, as the list sits lower than the layout says', async ($, on) => {
-  const files: Record<string, string> = {}
-  for (let n = 1; n <= 8; n += 1) {
-    files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
-  }
-  const { scrolls } = boot(on, files)
+  const { scrolls } = bootGithub(on, backlog(8))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -357,9 +388,9 @@ test('with the form open the wheel is the engine, as the list sits lower than th
 })
 
 test('a card still waiting when the plugin reloads is dropped, not sent as a move', async ($, on) => {
-  const { clock, calls, files, ui } = await open($, on, 'terminal')
+  const { clock, github, ui } = await open($, on, 'terminal')
   let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
+  github.hold = new Promise<void>(resolve => {
     release = resolve
   })
   await ui.press({ key: 'add' })
@@ -371,14 +402,17 @@ test('a card still waiting when the plugin reloads is dropped, not sent as a mov
   await clock.settle()
 
   expect(await marks(ui, '⟳')).toHaveLength(0)
-  expect(await under(ui, 'hdr:backlog')).toEqual(['card:md:0003-docs'])
+  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:3'])
 
   release()
   await adding
   await clock.settle()
   // Only the creation ever wrote: no move for the waiting card was sent.
-  expect(calls.writes).toEqual([path(4, 'lost-in-a-reload')])
-  expect(files[path(4, 'lost-in-a-reload')]).toContain('status: backlog')
+  expect(changes(github.commands)).toEqual(CREATION)
+  expect(github.card(4)).toMatchObject({
+    title: 'Lost in a reload',
+    status: 'Backlog',
+  })
   await ui.unmount()
 })
 
@@ -592,7 +626,7 @@ const CLIENT_SURFACES = ['terminal', 'desktop'] as const
 
 for (const surface of CLIENT_SURFACES) {
   test(`a card still being made cannot be dragged, dropped on or shifted, so it is never queued or reordered on the ${surface}`, async ($, on) => {
-    const { clock, calls, files, prompts, ui } = await open($, on, surface)
+    const { clock, github, prompts, ui } = await open($, on, surface)
     const { pointer } = ui as unknown as {
       pointer: Mounted<'terminal'>['pointer']
     }
@@ -604,7 +638,7 @@ for (const surface of CLIENT_SURFACES) {
       await pointer({ type: 'up', x: 3, y: end, button: 'left' })
     }
     let release = () => {}
-    calls.hold = new Promise<void>(resolve => {
+    github.hold = new Promise<void>(resolve => {
       release = resolve
     })
     await ui.press({ key: 'add' })
@@ -615,28 +649,27 @@ for (const surface of CLIENT_SURFACES) {
         key.startsWith('card:new:'),
       ) ?? ''
     expect(made).not.toBe('')
-    const before = JSON.stringify(files)
+    const before = JSON.stringify(github.cards)
 
     // Into Claude, onto a card of Backlog, and a place up by key: none takes.
     await drag(made, 'hdr:claude')
-    await drag('card:md:0003-docs', made)
+    await drag('card:gh:3', made)
     await click(ui, made)
     await keys(ui, 'K')
     await keys(ui, 'J')
     await clock.advance(1000)
 
-    expect(JSON.stringify(files)).toBe(before)
+    expect(JSON.stringify(github.cards)).toBe(before)
     expect(prompts).toEqual([])
     expect(await under(ui, 'hdr:claude')).toEqual(['empty:claude'])
-    expect(await under(ui, 'hdr:backlog')).toEqual(['card:md:0003-docs', made])
+    expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:3', made])
 
     release()
     await adding
     await clock.settle()
-    expect(await under(ui, 'hdr:backlog')).toEqual([
-      'card:md:0003-docs',
-      'card:md:0004-write-the-readme',
-    ])
+    // Only the creation reached GitHub: no move, no reorder.
+    expect(changes(github.commands)).toEqual(CREATION)
+    expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:3', 'card:gh:4'])
     await ui.unmount()
   })
 }
@@ -675,8 +708,7 @@ async function openAt(
   columns: number,
   surface: (typeof SURFACES)[number] = 'terminal',
 ) {
-  const files: Record<string, string> = cards()
-  const world = boot(on, files)
+  const world = bootGithub(on, cards())
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -687,7 +719,7 @@ async function openAt(
   })
   await ui.press({ key: 'add' })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
 
 // The form's rows: from the title field down to the first group.
@@ -780,7 +812,7 @@ for (const surface of SURFACES) {
 }
 
 test('Hide details folds the field away, keeps what was typed in it, and does not add it', async ($, on) => {
-  const { clock, files, ui } = await openAt($, on, 44)
+  const { clock, github, ui } = await openAt($, on, 44)
 
   await ui.press({ key: 'add:details' })
   await ui.input({ key: 'add:spec', text: 'Not now', kind: 'change' })
@@ -795,9 +827,8 @@ test('Hide details folds the field away, keeps what was typed in it, and does no
 
   await ui.input({ key: TITLE, text: 'Fix it' })
   await clock.settle()
-  const text = files[path(4, 'fix-it')] ?? ''
-  expect(text).toContain('title: Fix it\n')
-  expect(text).not.toContain('Not now')
+  expect(github.card(4).title).toBe('Fix it')
+  expect(github.card(4).body).not.toContain('Not now')
   await ui.unmount()
 })
 
@@ -810,14 +841,14 @@ async function filterBy(
   await ui.input({ key: 'filter:text', text })
 }
 
-async function openFiltered($: Engine, on: On, files = cards()) {
-  const world = boot(on, files)
+async function openFiltered($: Engine, on: On, issues = cards()) {
+  const world = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
 
 test('a card the filter hides is added with a toast that says so, and the filter stays', async ($, on) => {
@@ -829,14 +860,12 @@ test('a card the filter hides is added with a toast that says so, and the filter
   await clock.settle()
 
   expect(toasts).toEqual(['Added #4 · hidden by the filter'])
-  expect(await under(ui, 'hdr:backlog')).toEqual(['card:md:0003-docs'])
+  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:3'])
   expect(await header(ui, 'backlog')).toBe('Backlog 1/2')
 
   // The filter was left as it was: clearing it shows the card.
   await ui.press({ key: 'filter:clear' })
-  expect(await under(ui, 'hdr:backlog')).toContain(
-    'card:md:0004-fix-the-readme',
-  )
+  expect(await under(ui, 'hdr:backlog')).toContain('card:gh:4')
   await ui.unmount()
 })
 
@@ -849,10 +878,7 @@ test('a card the filter lets through is added without a toast', async ($, on) =>
   await clock.settle()
 
   expect(toasts).toEqual([])
-  expect(await under(ui, 'hdr:backlog')).toEqual([
-    'card:md:0003-docs',
-    'card:md:0004-write-more-docs',
-  ])
+  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:3', 'card:gh:4'])
   await ui.unmount()
 })
 
@@ -868,11 +894,10 @@ test('a card is added without a toast when no filter is on', async ($, on) => {
 })
 
 test('a filter that folds Active says so in the same toast', async ($, on) => {
-  const files = {
+  const { clock, toasts, ui } = await openFiltered($, on, [
     ...cards(),
-    [path(20, 'old')]: card(20, { status: 'done', title: 'Old thing' }),
-  }
-  const { clock, toasts, ui } = await openFiltered($, on, files)
+    issue(20, { column: 'done', title: 'Old thing' }),
+  ])
   // Only Inactive has a match, so it is the group drawn open.
   await filterBy(ui, '@done')
   expect(await header(ui, 'backlog')).toBeUndefined()
@@ -890,17 +915,17 @@ test('a filter that folds Active says so in the same toast', async ($, on) => {
 })
 
 test('a card that matches but whose group was folded meanwhile says its group is folded', async ($, on) => {
-  const { clock, calls, toasts, ui } = await openFiltered($, on)
+  const { clock, github, toasts, ui } = await openFiltered($, on)
   await filterBy(ui, 'docs')
   let release = () => {}
-  calls.hold = new Promise<void>(resolve => {
+  github.hold = new Promise<void>(resolve => {
     release = resolve
   })
   await ui.press({ key: 'add' })
   const adding = ui.input({ key: TITLE, text: 'Write more docs' })
   await clock.settle()
 
-  // The person turns to Inactive while the file is being written.
+  // The person turns to Inactive while the issue is being made.
   await group(ui, 'inactive')
   expect(await header(ui, 'backlog')).toBeUndefined()
   release()
@@ -922,9 +947,7 @@ test('quick add under a filter turns the group the person chose back to Active',
   await clock.settle()
 
   expect(toasts).toEqual([])
-  expect(await under(ui, 'hdr:backlog')).toContain(
-    'card:md:0004-write-more-docs',
-  )
+  expect(await under(ui, 'hdr:backlog')).toContain('card:gh:4')
   await ui.unmount()
 })
 
