@@ -563,7 +563,11 @@ async function findBackend($: EngineInterface): Promise<void> {
     // began, before the backend was found.
     await saveCache($, await updateBoard($, board => board))
   } catch (error) {
-    $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+    // Missing setup is the pane's to show, and the load that shares this
+    // detection logs it: said here as well, it would be said twice.
+    if (setupOf(error) === undefined) {
+      $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+    }
   }
 }
 
