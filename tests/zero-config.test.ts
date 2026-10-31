@@ -477,7 +477,7 @@ test('a board without In review keeps working, tells the person once, and maps H
   })
   expect((info as KanbanGithub).options).not.toHaveProperty('inReview')
   expect(toasts).toEqual([
-    'This board has no In review status: Human is the human label on a card in progress.',
+    'This board has no In review status: Me is the human label on a card in progress.',
   ])
 
   // Detected again from the saved copy, the person is not told twice.

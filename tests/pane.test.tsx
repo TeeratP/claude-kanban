@@ -88,7 +88,7 @@ for (const surface of EVERY_SURFACE) {
     await group(ui, 'inactive')
     expect((await row(ui, 'grp:inactive'))?.text).toBe('▾ Inactive')
     expect((await row(ui, 'grp:active'))?.text).toMatch(
-      /^▸ Active\s+1 Backlog · 1 Claude · 1 Human$/,
+      /^▸ Active\s+1 Backlog · 1 Claude · 1 Me$/,
     )
     expect((await row(ui, 'card:gh:4'))?.text).toContain('#4 Old thing')
     expect(await row(ui, 'card:gh:3')).toBeUndefined()
@@ -132,8 +132,8 @@ for (const surface of ['vscode', 'mobile'] as const) {
     await clock.settle()
     const ui = await $.ui.mount({ ...PANE, surface })
 
-    for (const label of ['Backlog', 'Human', 'Claude']) {
-      const header = new RegExp(`^ {2}${label} 1 ─+`)
+    for (const label of ['Backlog', 'Me', 'Claude']) {
+      const header = new RegExp(`^ {2}${label} 1 mine · 1 all ─+`)
 
       expect(await ui.find({ type: 'Text', text: header })).toBeDefined()
       expect(await ui.find({ type: 'Button', text: header })).toBeUndefined()
@@ -150,7 +150,7 @@ test('a move shows at once with a syncing mark, and a refresh does not undo it',
   await $.command.run({ ...RUN })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  // The rows from a header to the next (Human follows Claude).
+  // The rows from a header to the next (Me follows Claude).
   const under = async (header: string, next: string) => {
     const keys = await rowKeys(ui)
 
@@ -278,7 +278,7 @@ for (const surface of EVERY_SURFACE) {
     expect(lines.filter(line => /^ {7}─+$/.test(line))).toHaveLength(9)
     expect(lines.join('\n')).not.toMatch(/No issues|All clear|Idle/)
     expect(
-      lines.filter(line => /^ {2}(Backlog|Human|Claude) ─+$/.test(line)),
+      lines.filter(line => /^ {2}(Backlog|Me|Claude) ─+$/.test(line)),
     ).toHaveLength(3)
     expect(lines[0]).toMatch(/loading…/)
     // No cards to press yet.

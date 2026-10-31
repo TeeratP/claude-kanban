@@ -21,13 +21,18 @@ export async function hasClient(ui: BoardUi): Promise<boolean> {
   return (await ui.find({ type: 'Client', key: CLIENT })) !== undefined
 }
 
+// The section a header's label names: the pane calls Human `Me`.
+const COLUMN_OF: Record<string, string> = { Me: 'human' }
+
 /** A list row by key, drawn as a Button or by the Client; a section header, a Text, by its label. */
 export async function row(ui: BoardUi, key: string) {
   if (await hasClient(ui)) return ui.find({ key, in: CLIENT })
   if (!key.startsWith('hdr:')) return ui.find({ type: 'Button', key })
 
   const column = key.slice('hdr:'.length)
-  const label = column.charAt(0).toUpperCase() + column.slice(1)
+  const label =
+    Object.entries(COLUMN_OF).find(([, one]) => one === column)?.[0] ??
+    column.charAt(0).toUpperCase() + column.slice(1)
 
   return ui.find({ type: 'Text', text: new RegExp(`^ {2}${label} \\S`) })
 }
@@ -71,7 +76,7 @@ export async function listRows(ui: BoardUi) {
 }
 
 const FILLER = /^(blank|skeleton|legend)\b/
-const HEADER_TEXT = /^ {2}(Backlog|Human|Claude|Done|Cancelled|Suspended) \S/
+const HEADER_TEXT = /^ {2}(Backlog|Me|Claude|Done|Cancelled|Suspended) \S/
 
 // The keys of the rows below a drawn element, in order: a Button's own key, and a
 // section header's `hdr:` key, which a Text draws without.
@@ -84,7 +89,8 @@ function drawnKeys(node: unknown, found: string[]): string[] {
     found.push(key)
   } else if (type === 'Text') {
     const label = HEADER_TEXT.exec(plainText(node))?.[1]
-    if (label !== undefined) found.push(`hdr:${label.toLowerCase()}`)
+    if (label !== undefined)
+      found.push(`hdr:${COLUMN_OF[label] ?? label.toLowerCase()}`)
   } else {
     for (const child of children ?? []) drawnKeys(child, found)
   }
@@ -140,7 +146,7 @@ export async function click(ui: BoardUi, key: string): Promise<void> {
 }
 
 /**
- * A section header's label and count (`Human 2`), without its rule and meta;
+ * A section header's label and counts (`Me 2 mine · 3 all`), without its rule and meta;
  * undefined when its group is folded.
  */
 export async function header(

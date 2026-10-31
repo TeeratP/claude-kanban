@@ -243,9 +243,9 @@ for (const surface of WITH_CLIENT) {
       // The other sections show the keys that send the card there, in place of
       // their meta; the folded group shows its three on its own header.
       await keys(ui, 'm')
-      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Human 1 ─+ 3\/h$/)
-      expect((await row(ui, 'hdr:claude'))?.text).toMatch(/Claude 1 ─+ 2\/c$/)
-      expect((await row(ui, 'hdr:backlog'))?.text).toMatch(/Backlog 1 ─+$/)
+      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Me 1 mine · 1 all ─+ 3\/h$/)
+      expect((await row(ui, 'hdr:claude'))?.text).toMatch(/Claude 1 mine · 1 all ─+ 2\/c$/)
+      expect((await row(ui, 'hdr:backlog'))?.text).toMatch(/Backlog 1 mine · 1 all ─+$/)
       expect((await row(ui, 'grp:inactive'))?.text).toMatch(
         /^▸ Inactive\s+4\/d 5\/x 6\/s$/,
       )
@@ -258,7 +258,7 @@ for (const surface of WITH_CLIENT) {
           keysNow.indexOf('grp:inactive'),
         ),
       ).toEqual([LOGIN, DOCS])
-      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Human 2 ─+$/)
+      expect((await row(ui, 'hdr:human'))?.text).toMatch(/Me 2 mine · 2 all ─+$/)
       // The cursor follows the card into its new section.
       expect(await litRows(ui)).toEqual([DOCS])
       await clock.advance(SYNC_PAUSE)
@@ -376,7 +376,7 @@ for (const surface of WITH_CLIENT) {
 
     expect(await litRows(ui)).toEqual([LOGIN])
     expect(await ui.find({ type: 'Client' })).toBeDefined()
-    expect((await row(ui, 'hdr:human'))?.text).toMatch(/^ {2}Human 1 ─+$/)
+    expect((await row(ui, 'hdr:human'))?.text).toMatch(/^ {2}Me 1 mine · 1 all ─+$/)
     await clock.advance(SYNC_PAUSE)
     expect(writes(github)).toEqual([])
     await ui.unmount()

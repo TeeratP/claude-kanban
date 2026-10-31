@@ -88,7 +88,7 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
-  test(`dragging a card onto the Human header moves it on the ${surface}`, async ($, on) => {
+  test(`dragging a card onto the Me header moves it on the ${surface}`, async ($, on) => {
     const { clock, ui, github } = await start($, on, surface)
     const from = await rowIndex(ui, DOCS)
     const to = await rowIndex(ui, 'hdr:human')
@@ -193,7 +193,7 @@ for (const surface of WITH_CLIENT) {
     })
     // The line is under the header; the section's name is lit, not its row.
     expect(await lineRows(ui)).toEqual(['hdr:human'])
-    expect(await lit('hdr:human')).toEqual(['Human'])
+    expect(await lit('hdr:human')).toEqual(['Me'])
     expect(await lit('hdr:claude')).toEqual([])
     expect((await rowStyle(ui, 'hdr:human')).inverse).toBeUndefined()
 
@@ -224,7 +224,7 @@ for (const surface of WITH_CLIENT) {
     // A section header is a label, not something to press: no mark.
     await ui.pointer({ type: 'move', x: 5, y: human })
     expect(await textOf(LOGIN)).toMatch(/^ +#1 Fix login/)
-    expect(await textOf('hdr:human')).toMatch(/^ {2}Human/)
+    expect(await textOf('hdr:human')).toMatch(/^ {2}Me/)
     await ui.pointer({ type: 'move', x: 5, y: docs })
     await ui.pointer({ type: 'leave', x: 5, y: docs })
     expect(await textOf(DOCS)).toMatch(/^ +#3 Write docs/)

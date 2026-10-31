@@ -155,7 +155,7 @@ for (const surface of SURFACES) {
     expect(button?.text).toBe('Find')
     expect(button?.props.hotkey).toBe('f')
     expect(await ui.find({ key: FIELD })).toBeUndefined()
-    expect(await header(ui, 'claude')).toBe('Claude 1')
+    expect(await header(ui, 'claude')).toBe('Claude 1 mine · 1 all')
 
     await ui.press({ key: 'filter' })
     const field = await ui.find({ key: FIELD })
@@ -179,7 +179,7 @@ for (const surface of SURFACES) {
       'grp:inactive',
     ])
     // Each header counts the cards shown out of all it holds, Claude's too.
-    expect(await header(ui, 'human')).toBe('Human 1/1')
+    expect(await header(ui, 'human')).toBe('Me 1/1')
     expect(await header(ui, 'claude')).toBe('Claude 0/1')
     expect(await header(ui, 'backlog')).toBe('Backlog 3/4')
     // Inactive is folded, and says how many of its cards match.
@@ -226,7 +226,7 @@ for (const surface of SURFACES) {
     expect((await row(ui, 'grp:inactive'))?.text).toMatch(
       /^▸ Inactive\s+2 Done$/,
     )
-    expect(await header(ui, 'claude')).toBe('Claude 1')
+    expect(await header(ui, 'claude')).toBe('Claude 1 mine · 1 all')
     await ui.unmount()
   })
 
@@ -234,7 +234,7 @@ for (const surface of SURFACES) {
     const { ui, github } = await start($, on, surface)
 
     await typeFilter(ui, 'zzz')
-    expect(await header(ui, 'human')).toBe('Human 0/1')
+    expect(await header(ui, 'human')).toBe('Me 0/1')
     expect((await row(ui, 'grp:inactive'))?.text).toMatch(
       /^▸ Inactive\s+no matches$/,
     )
@@ -284,7 +284,7 @@ for (const surface of SURFACES) {
     expect((await row(ui, 'grp:inactive'))?.text).toMatch(
       /^▸ Inactive\s+2 Done$/,
     )
-    expect(await header(ui, 'backlog')).toBe('Backlog 4')
+    expect(await header(ui, 'backlog')).toBe('Backlog 4 mine · 4 all')
     expect(await cardsIn(ui, github.cards, 'Backlog')).toEqual([
       ALPHA,
       HIDDEN,
@@ -369,7 +369,7 @@ for (const surface of WITH_CLIENT) {
     // Human nothing changes what the rows under it are.
     await typeFilter(ui, 'backlog')
     expect(await header(ui, 'backlog')).toBe('Backlog 8/8')
-    expect(await header(ui, 'human')).toBe('Human 0/9')
+    expect(await header(ui, 'human')).toBe('Me 0/9')
     expect(await textOf(ui, 'more:backlog:down')).toMatch(/^ +↓ 2 more$/)
 
     // While the field is open the list sits lower than the layout knows.
@@ -701,6 +701,21 @@ test('label filters read the GitHub labels, and a reorder goes after the nearest
     'card:gh:3',
   ])
   await world.clock.advance(2000)
+  await ui.unmount()
+})
+
+test('@me keeps the cards of the Me section, as @human does', async ($, on) => {
+  const { ui } = await start($, on, 'terminal')
+
+  await applyFilter(ui, '@me')
+  const keys = await rowKeys(ui)
+  expect(await header(ui, 'human')).toBe('Me 1/1')
+  expect(await header(ui, 'backlog')).toBe('Backlog 0/4')
+  expect(await header(ui, 'claude')).toBe('Claude 0/1')
+  expect(await under(ui, 'hdr:human')).toEqual([LOGIN])
+
+  await applyFilter(ui, '@human')
+  expect(await rowKeys(ui)).toEqual(keys)
   await ui.unmount()
 })
 

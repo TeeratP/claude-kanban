@@ -610,7 +610,7 @@ test('a move the backend refuses is not announced as handed over', async ($, on)
   }
 
   expect(toasts).toHaveLength(1)
-  expect(toasts[0]).toContain('Could not move #3 to Human')
+  expect(toasts[0]).toContain('Could not move #3 to Me')
   expect(toasts[0]).toContain('Resource not accessible')
   expect(notices).toEqual([])
   expect(statuses.at(-1)).toBe('1 card waiting on you')

@@ -98,11 +98,17 @@ function sectionHeader(
 ): Seg[] {
   const { column } = row
   const isInactive = groupOf(column) === 'inactive'
-  const count = isFiltered
-    ? S.filterCount(row.shown, row.total)
-    : String(row.total)
+  // An active section says how many of its cards are the person's and how
+  // many it holds, short when the long form leaves no rule; a filter's counts
+  // and an inactive section's total stay as they were.
+  const counts =
+    isFiltered
+      ? [S.filterCount(row.shown, row.total)]
+      : isInactive || row.mine === undefined
+        ? [String(row.total)]
+        : [S.mineCount(row.mine, row.total), S.mineCountShort(row.mine, row.total)]
   const color = LABEL_COLOR[column]
-  const left = [
+  const leftOf = (count: string) => [
     seg(INDENT),
     seg(S.col[column], {
       bold: true,
@@ -111,6 +117,11 @@ function sectionHeader(
     // The first load has no counts to give yet.
     ...(row.isLoading === true ? [] : [seg(` ${count}`, { dim: true })]),
   ]
+  const left =
+    counts
+      .map(leftOf)
+      .find(one => columns - widthOf(one) - 2 >= MIN_RULE) ??
+    leftOf(counts[counts.length - 1] ?? '')
   const room = columns - widthOf(left) - 1
   const right = rights.find(one => room - 1 - cellWidth(one.text) >= MIN_RULE)
   const rule = Math.max(
