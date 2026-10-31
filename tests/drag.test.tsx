@@ -94,7 +94,6 @@ for (const surface of WITH_CLIENT) {
 
   test(
     `dropping a Backlog card on Claude asks Claude to work on it, any other drop does not on the ${surface}`,
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const { clock, ui, prompts } = await start($, on, surface)
       const drop = async (card: string, header: string) => {

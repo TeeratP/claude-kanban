@@ -49,7 +49,6 @@ const input = (
   glyphOf: () => undefined,
   ageOf: () => '2h',
   detailOf: () => [],
-  queue: { limit: 1, running: 1, waiting: ['md:99'] },
   cards: CARDS,
   canDrag: true,
   canType: true,
@@ -103,32 +102,14 @@ test('a section header is its label and count, a rule to the edge and the meta f
     `  Backlog 1 ${'─'.repeat(32)}`,
   )
   expect(header('human')?.width).toBe(44)
-  // Claude's limit, who waits for a slot: the same width, the rule shorter.
-  expect(textOf(header('claude')?.segs ?? [])).toMatch(
-    /^ {2}Claude 1 ─+ limit 1 · 1 queued$/,
+  // Claude's header has no meta: its rule runs to the edge.
+  expect(textOf(header('claude')?.segs ?? [])).toBe(
+    `  Claude 1 ${'─'.repeat(33)}`,
   )
 })
 
-test("Claude's meta is written short in a narrow pane, and gives way to the bare rule in the narrowest", () => {
-  const meta = (columns: number) =>
-    textOf(
-      rowsOf(columns, open('active')).find(
-        view => view.kind === 'header' && view.column === 'claude',
-      )?.segs ?? [],
-    )
-
-  expect(meta(44)).toContain('limit 1 · 1 queued')
-  expect(meta(30)).toMatch(/ lim 1 · 1q$/)
-  expect(meta(24)).toMatch(/^ {2}Claude 1 ─+$|lim 1 · 1q$/)
-  for (const columns of WIDTHS) {
-    expect(cellWidth(meta(columns))).toBeLessThanOrEqual(columns)
-  }
-})
-
-test('a header says nothing of the queue with no limit, and Done and Cancelled say they list their newest ten only once past it', () => {
-  const free = rowsOf(44, open('inactive'), {
-    queue: { limit: 0, running: 0, waiting: [] },
-  })
+test('Done and Cancelled say they list their newest ten only once past it', () => {
+  const free = rowsOf(44, open('inactive'))
   const header = (column: string) =>
     textOf(
       free.find(view => view.kind === 'header' && view.column === column)
@@ -422,18 +403,6 @@ test('a sync mark takes the cell before the age, keeps its colour, and a failed 
   expect(piece(failed, '✕')).toMatchObject({ color: 'error', dim: false })
   expect(piece(failed, '#5')).toMatchObject({ color: 'error' })
   expect(piece(failed, '#5')?.dim).toBe(false)
-})
-
-test('a queued card is dim all through and says its place where the age goes, short in a narrow pane', () => {
-  const one = cardOf(5, 'claude', 'Waiting its turn')
-  const queued = { limit: 1, running: 1, waiting: [one.id] }
-  const wide = cardRow(one, 44, { queue: queued })
-  const narrow = cardRow(one, 30, { queue: queued })
-
-  expect(textOf(wide?.segs ?? [])).toMatch(/Waiting its turn +queued 1$/)
-  expect(textOf(narrow?.segs ?? [])).toMatch(/ +q1$/)
-  expect(piece(wide, 'Waiting its turn')).toMatchObject({ dim: true })
-  expect(piece(wide, '#5')).toMatchObject({ dim: true })
 })
 
 test('a more row, an empty line and a bar start at the title column', () => {

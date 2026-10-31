@@ -12,7 +12,6 @@ import { watchTool, watchTurnEnd, watchTurnStart } from './activity'
 import {
   updateActivity,
   updateBoard,
-  updateQueue,
   updateReconcile,
   updateSync,
 } from './atoms'
@@ -217,13 +216,12 @@ async function finish(
   const board = await updateBoard($, one => one)
   if (board.fetchedAt === 0) return
 
-  const queue = await updateQueue($, one => one)
   const unsettled = Object.keys(turn.cards)
     .filter(id => turn.cards[id] === false)
     .map(id => board.cards.find(card => card.id === id))
     .filter(
       (card): card is KanbanCard =>
-        card?.column === 'claude' && queue.held[card.id] === undefined,
+        card?.column === 'claude',
     )
   const isUntracked =
     turn.hasEdits &&

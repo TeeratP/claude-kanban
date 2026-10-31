@@ -8,7 +8,7 @@ import type {
 
 import type { KanbanActivity, KanbanCardActivity, KanbanRound } from '../types'
 import { targetText } from './activity-view'
-import { updateActivity, updateBoard, updateQueue } from './atoms'
+import { updateActivity, updateBoard } from './atoms'
 import { errorMessage } from './model'
 import { S } from './strings'
 
@@ -452,10 +452,6 @@ async function recordToolEnd($: EngineInterface, e: ToolInput) {
   const board = await updateBoard($, one => one)
   const card = board.cards.find(one => one.number === number)
   if (card === undefined || card.column !== 'claude') return
-
-  // A card waiting in the queue is not being worked on, whatever Claude looks at.
-  const { held } = await updateQueue($, one => one)
-  if (held[card.id] !== undefined) return
 
   const seen = { cardId: '' }
   await updateActivity($, state => {

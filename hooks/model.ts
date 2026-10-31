@@ -4,7 +4,6 @@ import type {
   KanbanCard,
   KanbanColumn,
   KanbanGroup,
-  KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
   KanbanReconcile,
@@ -72,14 +71,6 @@ export const EMPTY_ACTIVITY: KanbanActivity = {
   cards: {},
   live: { cardId: '', since: 0, isRunning: false },
   agents: {},
-}
-
-// How many cards Claude works on at once unless the setting says otherwise.
-export const DEFAULT_CLAUDE_LIMIT = 1
-
-export const EMPTY_QUEUE: KanbanQueue = {
-  limit: DEFAULT_CLAUDE_LIMIT,
-  held: {},
 }
 
 export const INITIAL_UI: KanbanUi = {

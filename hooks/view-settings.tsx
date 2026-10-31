@@ -12,7 +12,6 @@ import {
   optionsOf,
   setSetting,
   settingsOf,
-  stepped,
   valueText,
 } from './settings'
 import type { Setting } from './settings'
@@ -96,45 +95,6 @@ export async function renderSettings(
     ))
   }
 
-  // `−` and `+` around the number; `−` rests at 0.
-  const numberRow = (setting: Setting) => {
-    const { field, row } = setting
-    const value = typeof row.value === 'number' ? row.value : 0
-    const less = stepped(value, -1)
-    const more = stepped(value, 1)
-    const fallback =
-      setting.fallback === '' ? '' : S.settingDefaultIs(setting.fallback)
-
-    return (
-      <Box key={`number:${field}`} flexDirection="row">
-        {less === undefined ? (
-          <Text dimColor>{`${S.settingLess} `}</Text>
-        ) : (
-          <Button
-            key={`less:${field}`}
-            plain
-            label={S.settingLess}
-            onPress={() => setSetting($, row.key, less)}
-          >
-            <Text color="suggestion">{`${S.settingLess} `}</Text>
-          </Button>
-        )}
-        <Text weight="bold">{String(value)}</Text>
-        {more !== undefined && (
-          <Button
-            key={`more:${field}`}
-            plain
-            label={S.settingMore}
-            onPress={() => setSetting($, row.key, more)}
-          >
-            <Text color="suggestion">{` ${S.settingMore} `}</Text>
-          </Button>
-        )}
-        <Text dimColor>{fallback}</Text>
-      </Box>
-    )
-  }
-
   const settingBlock = (setting: Setting) => {
     const { field, row } = setting
     const denied = settings.denied[row.key]
@@ -142,8 +102,6 @@ export async function renderSettings(
       <Text key={`value:${field}`} weight="bold">
         {valueText(row.value)}
       </Text>
-    ) : row.kind === 'number' ? (
-      numberRow(setting)
     ) : (
       <Box key={`options:${field}`} flexDirection="column">
         {optionsRow(setting)}

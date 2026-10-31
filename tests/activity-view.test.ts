@@ -273,15 +273,7 @@ test('only a Claude card Claude has worked on has a second row', () => {
   ]
 
   // Card 3 has activity but sits in Human; card 2 sits in Claude with none.
-  expect([...detailIds(cards, worked(1, 3, 4), {})]).toEqual(['md:1'])
-})
-
-test('a card waiting in the queue has no second row, whatever Claude did on it before', () => {
-  const cards = [cardOf(1, 'claude'), cardOf(2, 'claude')]
-
-  expect([...detailIds(cards, worked(1, 2), { 'md:2': 'resume' })]).toEqual([
-    'md:1',
-  ])
+  expect([...detailIds(cards, worked(1, 3, 4))]).toEqual(['md:1'])
 })
 
 test('the second row follows its card and belongs to its section', () => {

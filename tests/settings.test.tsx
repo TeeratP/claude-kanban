@@ -10,7 +10,6 @@ import {
   boardAction,
   optionsOf,
   settingsOf,
-  stepped,
 } from '../hooks/settings'
 import { S } from '../hooks/strings'
 import { keys, litRows } from './board-ui'
@@ -58,14 +57,13 @@ function row(
   }
 }
 
-// The three rows the mod lists in /config, as `$.config.list()` returns them.
+// The two rows the mod lists in /config, as `$.config.list()` returns them.
 const rows = (): ConfigRow[] => [
   row('backend', 'Card backend (default: auto)', 'choice', 'auto', [
     'auto',
     'github',
     'local',
   ]),
-  row('claudeLimit', 'Claude limit (default: 1)', 'number', 1),
   row('reconcile', 'Reconcile at turn end (default: on)', 'boolean', true),
 ]
 
@@ -185,10 +183,6 @@ test('each setting shows its name without the default, its value, its help and w
     '  ✓ auto (default) · github · local',
     '  auto uses GitHub when it finds a board.',
     '',
-    'Claude limit',
-    '  − 1 +  (default 1)',
-    '  Cards Claude works at once; 0 is no limit.',
-    '',
     'Reconcile at turn end',
     '  ✓ on (default) · off',
     '  Remind Claude to hand off at turn end.',
@@ -207,16 +201,13 @@ test('a changed value moves the mark, and the default stays marked', async ($, o
   config.rows = rows().map(one =>
     one.key === 'kanban.backend'
       ? { ...one, value: 'github' }
-      : one.key === 'kanban.reconcile'
-        ? { ...one, value: false }
-        : { ...one, value: 3 },
+      : { ...one, value: false },
   )
   const ui = await settingsAt($, 'terminal', 44)
   const lines = await textOf(ui, 44)
 
   expect(lines).toContain('  auto (default) · ✓ github · local')
   expect(lines).toContain('  on (default) · ✓ off')
-  expect(lines).toContain('  − 3 +  (default 1)')
   await ui.unmount()
 })
 
@@ -262,7 +253,7 @@ test('a refused change shows its reason under the row and in a toast, and the va
   expect(lines).toContain('  Not changed: gh is not installed.')
   const reason = lines.indexOf('  Not changed: gh is not installed.')
   expect(lines.indexOf('Card backend')).toBeLessThan(reason)
-  expect(reason).toBeLessThan(lines.indexOf('Claude limit'))
+  expect(reason).toBeLessThan(lines.indexOf('Reconcile at turn end'))
   expect(toasts).toEqual(['Not changed: gh is not installed.'])
 
   // A change that goes through clears the reason.
@@ -286,46 +277,17 @@ test('a set that throws is shown like a refusal', async ($, on) => {
   await ui.unmount()
 })
 
-test('the number row steps by one and does not go below 0', async ($, on) => {
-  const { config } = await open($, on)
-  const ui = await settingsAt($, 'terminal', 44)
-
-  await ui.press({ key: 'more:claudeLimit' })
-  await ui.press({ key: 'less:claudeLimit' })
-  await ui.press({ key: 'less:claudeLimit' })
-
-  expect(config.sets).toEqual([
-    ['kanban.claudeLimit', 2],
-    ['kanban.claudeLimit', 1],
-    ['kanban.claudeLimit', 0],
-  ])
-  // At 0 the minus rests: dim text, no Button.
-  expect(await ui.find({ key: 'less:claudeLimit' })).toBeUndefined()
-  expect(await textOf(ui, 44)).toContain('  − 0 +  (default 1)')
-  expect((await ui.find({ key: 'more:claudeLimit' }))?.props.label).toBe('+')
-  await ui.unmount()
-})
-
-test('stepped clamps at 0 and rounds a decimal down', () => {
-  expect(stepped(0, -1)).toBeUndefined()
-  expect(stepped(0, 1)).toBe(1)
-  expect(stepped(3, -1)).toBe(2)
-  expect(stepped(2.5, -1)).toBe(1)
-  expect(stepped(2.5, 1)).toBe(3)
-})
-
 test('a row a trusted source owns shows its value, says so and has no buttons', async ($, on) => {
   const listed = rows().map(one =>
-    one.key === 'kanban.claudeLimit' ? { ...one, isLocked: true } : one,
+    one.key === 'kanban.reconcile' ? { ...one, isLocked: true } : one,
   )
   const { config } = await open($, on, 'terminal', listed)
   const ui = await settingsAt($, 'terminal', 44)
 
   const lines = await textOf(ui, 44)
-  expect(lines).toContain('  1')
+  expect(lines).toContain('  on')
   expect(lines).toContain('  Set by your organization.')
-  expect(await ui.find({ key: 'less:claudeLimit' })).toBeUndefined()
-  expect(await ui.find({ key: 'more:claudeLimit' })).toBeUndefined()
+  expect(await ui.find({ key: 'set:reconcile:off' })).toBeUndefined()
   expect(config.sets).toEqual([])
   await ui.unmount()
 })
@@ -335,9 +297,6 @@ for (const surface of ['terminal', 'desktop', 'mobile'] as const) {
     const { config } = await open($, on, surface)
     config.denials['kanban.backend'] =
       'GitHub needs gh, which is not installed.'
-    config.rows = rows().map(one =>
-      one.key === 'kanban.claudeLimit' ? { ...one, value: 12 } : one,
-    )
 
     for (const width of WIDTHS) {
       const ui = await settingsAt($, surface, width)
@@ -420,7 +379,7 @@ test('rows that are not the mod’s, or not shown, are left out', async ($, on) 
   const text = (await textOf(ui, 44)).join('\n')
   expect(text).not.toContain('Theme')
   expect(text).not.toContain('Note')
-  expect(text).toContain('Claude limit')
+  expect(text).toContain('Reconcile at turn end')
   await ui.unmount()
 })
 
@@ -430,12 +389,12 @@ test('a change made in /config reloads the plugin, and the open view reads the r
   expect(config.lists).toBe(1)
 
   config.rows = rows().map(one =>
-    one.key === 'kanban.claudeLimit' ? { ...one, value: 4 } : one,
+    one.key === 'kanban.reconcile' ? { ...one, value: false } : one,
   )
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   expect(config.lists).toBe(2)
-  expect(await textOf(ui, 44)).toContain('  − 4 +  (default 1)')
+  expect(await textOf(ui, 44)).toContain('  on (default) · ✓ off')
   await ui.unmount()
 })
 
@@ -447,10 +406,9 @@ test('settingsOf keeps the order of the fields, drops the default from the name 
 
   expect(found.map(one => [one.field, one.name, one.fallback])).toEqual([
     ['backend', 'Card backend', 'auto'],
-    ['claudeLimit', 'Claude limit', '1'],
     ['reconcile', 'Reconcile at turn end', 'on'],
   ])
-  expect(optionsOf(found[2] as never).map(one => one.text)).toEqual([
+  expect(optionsOf(found[1] as never).map(one => one.text)).toEqual([
     'on',
     'off',
   ])

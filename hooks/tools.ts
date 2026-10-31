@@ -6,7 +6,7 @@ import type {
   KanbanCard,
   KanbanColumn,
 } from '../types'
-import { readDetailState, readQueue, updateDetailState } from './atoms'
+import { readDetailState, updateDetailState } from './atoms'
 import { appendSection, createCard, readDetail } from './backend'
 import { ensureBoard, inBackground, refresh, setBoard } from './board'
 import {
@@ -158,10 +158,9 @@ async function list(
 
   // A card still being made has no number the tools could name.
   const made = board.cards.filter(one => !isPendingId(one.id))
-  const { held } = await readQueue($)
   const lines = COLUMNS.filter(one => column === undefined || column === one)
     .flatMap(one => sectionList(made, one))
-    .map(card => S.listLine(card, held[card.id] !== undefined))
+    .map(card => S.listLine(card))
 
   return { result: lines.length === 0 ? S.listEmpty : lines.join('\n') }
 }

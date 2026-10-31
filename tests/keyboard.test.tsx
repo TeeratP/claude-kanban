@@ -213,7 +213,6 @@ for (const surface of WITH_CLIENT) {
 
   test(
     `m then a section key moves the card, as a drop does, on the ${surface}`,
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const { clock, ui, files } = await start($, on, surface)
       await goTo(ui, DOCS)
@@ -282,7 +281,6 @@ for (const surface of WITH_CLIENT) {
 
   test(
     `a card moved from Backlog to Claude by key asks Claude to work on it, any other move does not on the ${surface}`,
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const { clock, ui, prompts, files } = await start($, on, surface)
 

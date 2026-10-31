@@ -10,7 +10,6 @@ const ASKED = (n: number) =>
   `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.`
 const UNTRACKED =
   'This turn changed files with no card in Claude. If it is backlog work, move or create its card.'
-const ALONE = { options: { claudeLimit: 0 } }
 
 // Card 2 is in Claude with a handoff to move on with; card 3 waits in Backlog.
 const cards = () => ({
@@ -110,7 +109,6 @@ const edit = ($: Engine, tool: string, file: string) =>
 
 test(
   'a turn from a card prompt that ends with no handoff is asked about once',
-  ALONE,
   async ($, on) => {
     const { clock, prompts, ui } = await open($, on)
     await dragToClaude(ui)
@@ -315,35 +313,8 @@ test('the turn keeps the answer it had', async ($, on) => {
   expect(await finish($, 1)).toEqual({ text: '' })
 })
 
-test('a card waiting in the queue behind a busy slot does not hold the question back', async ($, on) => {
-  const { clock, prompts, ui } = await open($, on)
-  await dragToClaude(ui)
-  await clock.advance(SYNC_PAUSE)
-  // Card 3 waits for card 2's slot: no prompt for it.
-  expect(prompts).toEqual([])
-
-  await turn($, 1, () => call($, 'show', { card: 2 }))
-  await clock.settle()
-
-  expect(prompts).toEqual([ASKED(2)])
-  await ui.unmount()
-})
-
-test('a card still waiting in the queue is not asked about', async ($, on) => {
-  const { clock, prompts, ui } = await open($, on)
-  await dragToClaude(ui)
-  await clock.advance(SYNC_PAUSE)
-
-  await turn($, 1, () => call($, 'show', { card: 3 }))
-  await clock.settle()
-
-  expect(prompts).toEqual([])
-  await ui.unmount()
-})
-
 test(
   'no question is asked while a prompt that starts work is on its way',
-  ALONE,
   async ($, on) => {
     const { clock, prompts, ui } = await open($, on)
     // Card 3 is in Claude on the board, its move not yet at the backend.
@@ -367,7 +338,6 @@ test(
 
 test(
   'a move into Claude that failed does not hold the question back',
-  ALONE,
   async ($, on) => {
     const { calls, clock, prompts, ui } = await open($, on)
     calls.denyWrite = 'EACCES: permission denied'

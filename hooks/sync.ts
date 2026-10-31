@@ -32,7 +32,7 @@ import {
   maxOrder,
 } from './model'
 import { placeIn } from './order'
-import { holdPrompt, releaseQueued, submitPrompt } from './queue'
+import { submitPrompt } from './prompt'
 import { S } from './strings'
 
 export type MoveOptions = {
@@ -180,8 +180,7 @@ async function warnIfRunning(
 /**
  * Moves a card at once on the board, then, after a pause for further moves,
  * asks the backend to make it so. A refused move waits for a retry and, once
- * out of tries, puts the card back and says why. A prompt that Claude's limit
- * holds back waits in the queue instead (see queue.ts). With `opts.after` the card
+ * out of tries, puts the card back and says why. With `opts.after` the card
  * is placed in its section, which may be the one it is in. Resolves the column
  * that `opts.unlessFrom` refused, when it did.
  */
@@ -241,13 +240,6 @@ export async function moveCard(
   }
   if (from === 'claude' && to !== 'claude') await noteCardLeft($, cardId)
 
-  // Claude at its limit holds the prompt back: the card waits in the queue.
-  // A card placed within its own section stays where it stands in the queue.
-  const isHeld =
-    from !== to &&
-    (await holdPrompt($, cardId, to, opts?.onConfirm, moved.cards))
-  const { onConfirm: _held, ...unprompted } = opts ?? {}
-
   await updateSync($, sync => {
     seen.entry = retarget(
       sync[cardId],
@@ -256,16 +248,13 @@ export async function moveCard(
       to,
       after,
       inFlight.has(cardId),
-      isHeld ? unprompted : opts,
+      opts,
     )
 
     return seen.entry === undefined
       ? without(sync, cardId)
       : { ...sync, [cardId]: seen.entry }
   })
-  // Cards already waiting go before this one.
-  await releaseQueued($)
-
   debounce.get(cardId)?.cancel()
   debounce.delete(cardId)
   if (seen.entry === undefined) return undefined
@@ -605,9 +594,6 @@ async function settle(
     // A load restores the card's place in the column it is back in.
     $.clock.after(0, () => detach($, refresh($)))
   }
-
-  // A card that left Claude, or never got there, frees a slot for the queue.
-  await releaseQueued($)
 
   return seen.next === 'more'
 }

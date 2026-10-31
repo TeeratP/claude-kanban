@@ -480,7 +480,6 @@ test('time adds up across rounds, one for each time the card goes to Claude', as
 test(
   'a turn started by the work prompt belongs to its card with no tool call',
   // Card 2 is already in Claude; with the default limit of one, card 3 would wait.
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const { clock, ui, prompts, turn, step, finish } = await start(
       $,
@@ -715,49 +714,6 @@ test('setting aside the card Claude is working on, and only that one, toasts tha
   await ui.unmount()
 })
 
-test('a card waiting in the queue has no second row and no round, until it starts', async ($, on) => {
-  const files = {
-    ...cards(),
-    // Claude is at its limit of one with Docs, so Api waits.
-    [path(3, 'docs')]: card(
-      3,
-      { status: 'claude', title: 'Write docs' },
-      HANDED_OFF,
-    ),
-  }
-  const { clock, ui, prompts, turn, finish } = await start(
-    $,
-    on,
-    'terminal',
-    files,
-    {
-      [SAVED_KEY]: { shape: 'activity-1', cwd: '/work', card: savedCard() },
-      'queue:/work:auto': {
-        shape: 'queue-1',
-        held: { 'md:0002-api': 'resume' },
-      },
-    },
-  )
-  expect(await row(ui, API)).toBeDefined()
-  expect((await row(ui, API))?.text).toContain('queued 1')
-  expect(await row(ui, API_ROW)).toBeUndefined()
-
-  // Looking at the waiting card does not make it the card Claude works on.
-  await $.turn.start(turn())
-  await showCard($, 2)
-  await clock.advance(2 * MINUTE)
-  await finish()
-  expect(await row(ui, API_ROW)).toBeUndefined()
-
-  // Docs hands off: Api starts, and its row shows what it had, with no minutes added.
-  await $.tool.call({ tool: KANBAN('move'), card: 3, to: 'human' })
-  await clock.advance(SYNC_PAUSE)
-  expect(prompts).toEqual([expect.stringMatching(/^Resume kanban card #2: /)])
-  expect((await row(ui, API))?.text).not.toContain('queued')
-  expect(await detail(ui)).toBe('     ●● Explore · idle 2h · 12m · 48k')
-  await ui.unmount()
-})
-
 // Twelve finished rounds, the tenth on, whose labels fill the narrow label box.
 const manyRounds = () =>
   Array.from({ length: 12 }, (_, index) => ({
@@ -930,8 +886,8 @@ for (const surface of WITH_CLIENT) {
       Number(/order: (\d+)/.exec(files[path(n, slug)] ?? '')?.[1])
     expect(order(12, 'c')).toBeLessThan(order(23, 'b'))
     expect(order(23, 'b')).toBeLessThan(order(13, 'c'))
-    // Claude is at its limit of one, so the card waits and no prompt goes out.
-    expect(prompts).toEqual([])
+    // The move asks Claude to work on the card.
+    expect(prompts).toEqual([expect.stringMatching(/^Work on kanban card #23 /)])
     await ui.unmount()
   })
 

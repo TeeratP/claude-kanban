@@ -88,10 +88,6 @@ export type KanbanSync = {
   announce?: boolean
 }
 export type KanbanPrompt = 'work' | 'resume' | 'answer'
-export type KanbanQueue = {
-  limit: number
-  held: Record<string, KanbanPrompt>
-}
 export type KanbanView =
   | { mode: 'board' }
   | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
@@ -115,8 +111,8 @@ export type KanbanSettingRow = {
   key: string
   /** The row's label, which ends in ` (default: X)`. */
   label: string
-  kind: 'boolean' | 'choice' | 'number'
-  value: boolean | string | number
+  kind: 'boolean' | 'choice'
+  value: boolean | string
   options?: string[]
   /** Whether a trusted source owns the value, so a change is refused. */
   isLocked: boolean
@@ -221,7 +217,6 @@ declare module 'claude-code' {
       detail: Shaped<KanbanDetail | null>
       check: Shaped<Record<string, KanbanCheckRun>>
       tick: number
-      queue: Shaped<KanbanQueue>
       pausedUntil: number
       viewer: string
       ghInstalled: KanbanGhState

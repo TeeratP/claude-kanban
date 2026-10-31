@@ -26,7 +26,6 @@ import {
   isPendingId,
 } from './model'
 import { placeIn } from './order'
-import { releaseQueued } from './queue'
 import { limitHit, pauseLeft } from './rate-limit'
 import { S } from './strings'
 
@@ -488,8 +487,6 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     })
     announceHumanChanges($, seen.before, board)
     await saveCache($, board)
-    // A card may have left Claude behind our back.
-    inBackground($, releaseQueued($))
 
     return board
   } catch (error) {

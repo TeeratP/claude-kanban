@@ -14,7 +14,6 @@ import {
 } from './board'
 import { guardEdit, guardWrite } from './guard'
 import { backlogSection } from './guide'
-import { applyQueue, claudeLimit } from './queue'
 import { dropUnfinishedAdds } from './quick-add'
 import { followSettings, resumeSettings } from './settings'
 import {
@@ -36,7 +35,6 @@ import { renderSettings } from './view-settings'
 
 export const register: Register = (on, options) => {
   const mode = backendMode(options.backend)
-  const limit = claudeLimit(options.claudeLimit)
   let isReconciling = reconcileOn(options.reconcile)
   // The Settings view's change counts at once; the reload it causes carries the same value.
   followSettings((field, value) => {
@@ -61,7 +59,6 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await applyMode($, mode)
-    await applyQueue($, mode, limit)
     await dropUnfinishedAdds($)
     await $.command.register({
       name: 'kanban',

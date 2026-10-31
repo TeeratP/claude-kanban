@@ -11,14 +11,12 @@
       "type": "string",
       "title": "Card backend (default: auto)",
       "description": "Where cards live. auto: GitHub Issues when gh is installed, signed in and a project board is found for this repo, else local .kanban/*.md files. github: GitHub only; shows what is missing instead of falling back. local: always .kanban/*.md files.",
-      "options": ["auto", "github", "local"],
+      "options": [
+        "auto",
+        "github",
+        "local"
+      ],
       "default": "auto"
-    },
-    "claudeLimit": {
-      "type": "number",
-      "title": "Claude limit (default: 1)",
-      "description": "How many cards Claude works on at once (0 means no limit). Cards moved to Claude beyond the limit wait in a queue and start in order.",
-      "default": 1
     },
     "reconcile": {
       "type": "boolean",

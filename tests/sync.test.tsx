@@ -382,7 +382,6 @@ test('a move that fails after another was asked for sends the newer one', async 
 
 test(
   'the work prompt goes out only once the backend has confirmed',
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const { clock, calls, prompts, ui } = await open($, on, cards())
     let release = () => {}
@@ -428,7 +427,6 @@ test('moveOptions asks Claude to work on a card taken up from Backlog, Suspended
 for (const status of ['suspended', 'cancelled', 'done'] as const) {
   test(
     `a card the person takes up from ${status} gets the work prompt once the backend confirms`,
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const files = {
         [path(1, 'a')]: card(1, { status, title: 'Old idea' }, HANDED_OFF),

@@ -11,7 +11,6 @@ import { detailIds, detailSegs, segProps } from './activity-view'
 import {
   readActivity,
   readBoard,
-  readQueue,
   readPausedUntil,
   readQuickAdd,
   readSync,
@@ -39,7 +38,6 @@ import {
 } from './layout'
 import type { Row } from './layout'
 import { TICK_BRIGHT_MS, ageLabel } from './model'
-import { queuePlace, queueView } from './queue'
 import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { changeBoard } from './pick'
@@ -128,11 +126,7 @@ async function scrollSection(
   delta: (taken: number) => number,
 ): Promise<boolean> {
   const { cards } = await readBoard($)
-  const details = detailIds(
-    cards,
-    await readActivity($),
-    (await readQueue($)).held,
-  )
+  const details = detailIds(cards, await readActivity($))
 
   const seen = { isMoved: false }
   await updateUi($, ui => {
@@ -163,11 +157,7 @@ async function keepInView(
 ): Promise<void> {
   // The board as the move left it, not as this dispatch first read it.
   const { cards } = await updateBoard($, board => board)
-  const details = detailIds(
-    cards,
-    await readActivity($),
-    (await readQueue($)).held,
-  )
+  const details = detailIds(cards, await readActivity($))
   await updateUi($, ui => {
     const list = sectionList(applyFilter(cards, ui).cards, column)
     const body = bodyOf(cards, lastBody.bodyRows, lastBody.extraRows)
@@ -206,7 +196,7 @@ export async function handleBoardScroll(
     cards,
     ui,
     bodyRows: e.bodyRows,
-    details: detailIds(cards, await readActivity($), (await readQueue($)).held),
+    details: detailIds(cards, await readActivity($)),
     extraRows: strip,
   })
   const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
@@ -272,8 +262,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const ui = await readUi($)
   const sync = await readSync($)
   const tick = await readTick($)
-  const queued = await readQueue($)
-  const queue = queueView(queued, board.cards, sync)
   const pausedUntil = await readPausedUntil($)
   const activity = await readActivity($)
   const now = await $.clock.now()
@@ -305,7 +293,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     cards: board.cards,
     ui,
     bodyRows: scroll.bodyRows,
-    details: detailIds(board.cards, activity, queued.held),
+    details: detailIds(board.cards, activity),
     hint: board.mode === 'auto' && board.backend?.kind === 'local',
     extraRows,
     legend: hasClient,
@@ -479,7 +467,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     },
     ageOf: (card: KanbanCard) => ageLabel(card.updatedAt, now),
     detailOf,
-    queue,
     cards: board.cards,
     canDrag: hasClient,
     canType,
@@ -554,7 +541,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           <Button
             key={`card:${card.id}`}
             plain
-            dimColor={isDimCard(card, queuePlace(queue, card.id) !== undefined)}
+            dimColor={isDimCard(card)}
             onPress={() => openDetail($, card.id)}
           >
             {textOf(row)}

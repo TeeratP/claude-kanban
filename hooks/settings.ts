@@ -9,7 +9,7 @@ import { changeBoard } from './pick'
 import { S } from './strings'
 
 /** The mod's `userConfig` fields in the order the view lists them. */
-export const SETTING_FIELDS = ['backend', 'claudeLimit', 'reconcile'] as const
+export const SETTING_FIELDS = ['backend', 'reconcile'] as const
 
 export type SettingField = (typeof SETTING_FIELDS)[number]
 
@@ -44,13 +44,8 @@ export const ownField = (key: string): SettingField | undefined =>
 function rowOf(row: ConfigRow): KanbanSettingRow[] {
   const { kind, value } = row
   if (ownField(row.key) === undefined) return []
-  if (kind !== 'boolean' && kind !== 'choice' && kind !== 'number') return []
-  if (
-    typeof value !== 'boolean' &&
-    typeof value !== 'string' &&
-    typeof value !== 'number'
-  )
-    return []
+  if (kind !== 'boolean' && kind !== 'choice') return []
+  if (typeof value !== 'boolean' && typeof value !== 'string') return []
 
   return [
     {
@@ -83,7 +78,7 @@ export function settingsOf(rows: readonly KanbanSettingRow[]): Setting[] {
   })
 }
 
-/** The values a boolean or choice setting takes, in order; none for a number. */
+/** The values a boolean or choice setting takes, in order. */
 export function optionsOf(setting: Setting): Choice[] {
   const { kind, options } = setting.row
   if (kind === 'boolean') {
@@ -93,9 +88,7 @@ export function optionsOf(setting: Setting): Choice[] {
     ]
   }
 
-  return kind === 'choice'
-    ? (options ?? []).map(text => ({ text, value: text }))
-    : []
+  return (options ?? []).map(text => ({ text, value: text }))
 }
 
 /** How a value reads in the view: `on`/`off` for a boolean, else as it is. */
@@ -108,13 +101,6 @@ export function valueText(value: Value): string {
 /** Whether a value is the one the setting's title names as its default. */
 export const isDefault = (setting: Setting, value: Value) =>
   setting.fallback !== '' && valueText(value) === setting.fallback
-
-/** A number one step up or down, not below 0; undefined when that is no change. */
-export function stepped(value: number, dir: 1 | -1): number | undefined {
-  const next = Math.max(0, Math.floor(value) + dir)
-
-  return next === value ? undefined : next
-}
 
 // Told of each setting the view has just changed, so what reads an option once
 // at load can follow it before the reload that carries the same value.

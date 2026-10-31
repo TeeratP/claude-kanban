@@ -7,7 +7,6 @@ import type {
   KanbanCheckRun,
   KanbanDetail,
   KanbanGhState,
-  KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
   KanbanReconcile,
@@ -17,7 +16,6 @@ import type {
 import {
   EMPTY_ACTIVITY,
   EMPTY_BOARD,
-  EMPTY_QUEUE,
   EMPTY_QUICK_ADD,
   EMPTY_SETTINGS,
   EMPTY_RECONCILE,
@@ -52,9 +50,6 @@ const check = atom(
   },
 )
 const tick = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
-const queue = atom({ plugin: 'kanban', key: 'queue' } as const, EMPTY_QUEUE, {
-  shape: 'queue-1',
-})
 // When GitHub loads may resume after the rate limit ran low (0: not paused).
 const pausedUntil = atom({ plugin: 'kanban', key: 'pausedUntil' } as const, 0)
 // The signed-in GitHub login, asked for once ('' until then).
@@ -161,17 +156,6 @@ export function updateCheck(
   ) => Record<string, KanbanCheckRun>,
 ): Promise<Record<string, KanbanCheckRun>> {
   return update($, check, change)
-}
-
-export function readQueue($: EngineInterface): Promise<KanbanQueue> {
-  return read($, queue)
-}
-
-export function updateQueue(
-  $: EngineInterface,
-  change: (value: KanbanQueue) => KanbanQueue,
-): Promise<KanbanQueue> {
-  return update($, queue, change)
 }
 
 export function readPausedUntil($: EngineInterface): Promise<number> {

@@ -214,7 +214,6 @@ for (const surface of SURFACES) {
   test(
     `send back opens the next Human card with an empty draft on the ${surface}`,
     // Add tests is already in Claude: at the default limit of one the prompt would be held.
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const { clock, ui, files, prompts } = await open($, on, surface)
       await click(ui, API)
@@ -345,7 +344,6 @@ for (const surface of SURFACES) {
   test(
     `answering a question opens the next Human card like a send back does on the ${surface}`,
     // Add tests is already in Claude: at the default limit of one the prompt would be held.
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const { clock, ui, files, prompts } = await open(
         $,

@@ -76,8 +76,8 @@ export const S = {
     card: 'The card number, as shown by kanban_list.',
     to: 'The column to move the card to.',
   },
-  listLine: (card: KanbanCard, isQueued = false) =>
-    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''}${isQueued ? ' (queued)' : ''} updated ${card.updatedAt.slice(0, 10)}`,
+  listLine: (card: KanbanCard) =>
+    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''} updated ${card.updatedAt.slice(0, 10)}`,
   boardUnavailable: (reason?: string) =>
     `The kanban board could not be loaded${reason === undefined ? '' : `: ${reason}`}.`,
   listEmpty: 'No cards on the board.',
@@ -299,12 +299,6 @@ export const S = {
   activityFailed: (reason: string) =>
     `kanban: could not record Claude's activity: ${reason}`,
 
-  // #20
-  queueSaveFailed: (reason: string) =>
-    `kanban: could not save the queue: ${reason}`,
-  queueRestoreFailed: (reason: string) =>
-    `kanban: could not read the saved queue: ${reason}`,
-
   // #22
   positionFailed: (reason: string) =>
     reason === ''
@@ -386,13 +380,6 @@ export const S = {
   groupCount: (n: number, column: KanbanColumn, isShort: boolean) =>
     isShort ? `${n}${COL[column].charAt(0)}` : `${n} ${COL[column]}`,
   newestMeta: (n: number) => `${n} newest`,
-  // Claude's limit, who waits for a slot and who is over it; `short` for a narrow pane.
-  claudeMeta: (limit: number, queued: number, over: number, isShort: boolean) =>
-    [
-      isShort ? `lim ${limit}` : `limit ${limit}`,
-      ...(queued === 0 ? [] : [isShort ? `${queued}q` : `${queued} queued`]),
-      ...(over === 0 ? [] : [`${over} over`]),
-    ].join(' · '),
   setAside: (card: KanbanCard) =>
     `Card #${card.number} is ${card.column} by the person; leave it unless they move it back.`,
   stillWorking: (card: KanbanCard) =>
@@ -473,9 +460,6 @@ export const S = {
   newCard: 'new',
   // Marks a spare row of a section, under the numbers.
   slot: '·',
-  // A queued card's place in the queue, in place of its age: `queued 1`, or `q1` in a narrow pane.
-  queued: (place: number, isShort: boolean) =>
-    isShort ? `q${place}` : `queued ${place}`,
   // What a section says when it holds no card, long and short; the person's surface decides some.
   emptyHuman: { long: 'All clear, nothing needs you', short: 'All clear' },
   emptyClaude: (canDrag: boolean): Copy => ({
@@ -569,17 +553,13 @@ export const S = {
   // One line under each setting, by its `userConfig` field.
   settingHelp: {
     backend: 'auto uses GitHub when it finds a board.',
-    claudeLimit: 'Cards Claude works at once; 0 is no limit.',
     reconcile: 'Remind Claude to hand off at turn end.',
   },
   settingOn: 'on',
   settingOff: 'off',
-  // Marks the option a setting starts with: `auto (default)`, `− 1 + (default 1)`.
+  // Marks the option a setting starts with: `auto (default)`.
   settingDefault: ' (default)',
-  settingDefaultIs: (value: string) => ` (default ${value})`,
   settingCurrent: '✓',
-  settingLess: '−',
-  settingMore: '+',
   settingLocked: 'Set by your organization.',
   settingDenied: (reason: string) => `Not changed: ${reason}`,
   boardHeading: 'Board',

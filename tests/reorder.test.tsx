@@ -146,7 +146,6 @@ for (const surface of WITH_CLIENT) {
   test(
     `a card dropped on a card of the section below lands after it, and the work prompt follows a Backlog card to Claude on the ${surface}`,
     // Claude already has a card; at the default limit of one the prompt would be held.
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const { clock, ui, files, calls, prompts } = await start($, on, surface)
 
@@ -914,7 +913,6 @@ test('a reorder on GitHub runs the position mutation after the card above, and n
 test(
   'a card dropped into another section on GitHub is moved there, then put in its place',
   // Claude already has a card; at the default limit of one the prompt would be held.
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const { clock, ui, commands, prompts } = await startGithub($, on)
     const sent = commands.length
@@ -948,7 +946,6 @@ test(
 test(
   'a card moved to Claude and reordered before the move is confirmed still gets its work prompt, once',
   // Claude already has a card; at the default limit of one the prompt would be held.
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const { clock, ui, files, prompts } = await start($, on, 'terminal')
 
@@ -974,7 +971,6 @@ test(
 
 test(
   'a card reordered while its move to Claude is on its way still gets its work prompt, once',
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const { clock, calls, ui, files, prompts } = await start($, on, 'terminal')
     let release = () => {}
@@ -1008,7 +1004,6 @@ test(
 
 test(
   'a card sent back and reordered before the move is confirmed still gets its resume prompt, once',
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const files: Files = {
       ...board(),
@@ -1143,7 +1138,6 @@ const lastPosition = (commands: readonly { argv: readonly string[] }[]) =>
 
 test(
   'a card moved to another section on GitHub with no place goes after the last card there',
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const issues = [ready(1), ready(2), ready(3), ready(4, 'In progress')]
     const { clock, ui, commands } = await startGithub($, on, liveGithub(issues))
@@ -1174,7 +1168,6 @@ test(
 
 test(
   'a card moved into an empty section on GitHub is positioned first there',
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const issues = [ready(1), ready(2), ready(3)]
     const { clock, ui, commands } = await startGithub($, on, liveGithub(issues))
@@ -1195,7 +1188,7 @@ test(
   },
 )
 
-test('cards moved to Claude on GitHub keep their queue order after a reload', async ($, on) => {
+test('cards moved to Claude on GitHub keep the order they were sent in after a reload', async ($, on) => {
   const issues = [ready(1), ready(2), ready(3), ready(4, 'In progress')]
   const { clock, ui } = await startGithub($, on, liveGithub(issues))
 
@@ -1207,21 +1200,8 @@ test('cards moved to Claude on GitHub keep their queue order after a reload', as
   }
   await clock.advance(2500)
 
-  const queue = async () => ({
-    claude: await under(ui, 'hdr:claude'),
-    places: await Promise.all(
-      [3, 1, 2].map(
-        async number =>
-          /queued \d+/.exec(
-            (await row(ui, `card:gh:${number}`))?.text ?? '',
-          )?.[0],
-      ),
-    ),
-  })
-  const shown = {
-    claude: ['card:gh:4', 'card:gh:3', 'card:gh:1', 'card:gh:2'],
-    places: ['queued 1', 'queued 2', 'queued 3'],
-  }
+  const queue = () => under(ui, 'hdr:claude')
+  const shown = ['card:gh:4', 'card:gh:3', 'card:gh:1', 'card:gh:2']
   expect(await queue()).toEqual(shown)
 
   await ui.press({ key: 'refresh' })
@@ -1320,7 +1300,7 @@ function failingPosition(live: Route[], isFailing: () => boolean): Route[] {
   ]
 }
 
-test('a move to Human whose default position call fails is still confirmed, announced once and frees its slot', async ($, on) => {
+test('a move to Human whose default position call fails is still confirmed and announced once', async ($, on) => {
   const issues = [ready(1), ready(2, 'In progress')]
   let isFailing = false
   const { clock, ui, commands, prompts, toasts, notices, logs } =
@@ -1330,11 +1310,10 @@ test('a move to Human whose default position call fails is still confirmed, anno
       failingPosition(liveGithub(issues), () => isFailing),
     )
 
-  // Claude is at its limit of one: card 1 waits for card 2's slot.
   await sendToClaude(ui, 1)
   await clock.advance(SYNC_PAUSE)
   await clock.settle()
-  expect(prompts).toEqual([])
+  expect(prompts).toEqual([expect.stringMatching(/^Work on kanban card #1 /)])
 
   isFailing = true
   const sent = commands.length
@@ -1358,8 +1337,6 @@ test('a move to Human whose default position call fails is still confirmed, anno
   expect(await under(ui, 'hdr:human')).toEqual(['card:gh:2'])
   expect(toasts).toEqual(['Claude asks: Which branch should this target? (#2)'])
   expect(notices).toEqual(toasts)
-  // The slot is free: the waiting card starts.
-  expect(prompts).toEqual([expect.stringMatching(/^Work on kanban card #1 /)])
   expect(logs.filter(line => line.includes('HTTP 502'))).toEqual([
     'kanban: left #2 where GitHub put it, its position was not set: HTTP 502: Bad Gateway',
   ])
@@ -1371,7 +1348,6 @@ test('a move to Human whose default position call fails is still confirmed, anno
 
 test(
   'a card dropped in a place on GitHub whose position call fails still goes to ✕',
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const issues = [ready(1), ready(2), ready(4, 'In progress')]
     const { clock, ui, prompts, logs } = await startGithub(
@@ -1397,7 +1373,6 @@ test(
 // section within one pause both keep their place.
 test(
   'two cards dropped into a section with no gap within one pause both keep their order on disk',
-  { options: { claudeLimit: 0 } },
   async ($, on) => {
     const files: Files = {
       [path(1, 'first')]: card(1, { status: 'claude', order: 1 }),

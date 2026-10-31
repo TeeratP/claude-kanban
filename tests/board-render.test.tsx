@@ -149,7 +149,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
     '   #44 Rate-limit banner                  4d',
     '   #45 Cache warmup                       5d',
     '       ↓ 2 more',
-    '  Claude 2 ──────────────── limit 1 · 1 over',
+    '  Claude 2 ─────────────────────────────────',
     '   #31 Build the sync API                 3m',
     '       ●● Explore · idle 3m · 12m · 48k',
     '   #32 Add a dark theme                   3h',
@@ -272,7 +272,7 @@ test('an empty board says what each section is for, and where cards live', async
     '',
     '',
     '',
-    '  Claude 0 ───────────────────────── limit 1',
+    '  Claude 0 ─────────────────────────────────',
     '       Idle · drag a card here',
     '',
     '',
@@ -367,8 +367,8 @@ test('a card on its way shows the mark before its age, a failed one the cross an
   const lines = await fits(ui, 44, 'syncing')
   const syncing = lines.find(line => line.includes('#40'))
 
-  // Claude holds #31 and #32 already, so #40 waits its turn: the mark, then the place.
-  expect(syncing).toBe('   #40 Write docs                 ⟳ queued 1')
+  // The mark, then the age.
+  expect(syncing).toBe(`   #40 Write docs${' '.repeat(22)}⟳ 20h`)
   expect(lines.find(line => line.includes('#41'))?.indexOf('Ship')).toBe(7)
   await ui.unmount()
   for (const columns of WIDTHS) {
