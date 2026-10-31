@@ -545,14 +545,14 @@ test('an Active header says how many of its cards are the person\'s and how many
   await ui.unmount()
 })
 
-test('a header too narrow for the long counts says mine/all, each header on its own', async ($, on) => {
+test('a header too narrow for the long counts says mine · all, unlike a filter’s shown/total, each header on its own', async ($, on) => {
   await start($, on, shared())
 
   const narrow = await mount($, 24)
   // `  Backlog 2 mine · 4 all` leaves no rule in 24 columns; `  Me 0 mine · 1 all` does.
   expect(await activeHeaders(narrow)).toEqual([
-    'Backlog 2/4',
-    'Claude 1/1',
+    'Backlog 2 · 4',
+    'Claude 1 · 1',
     'Me 0 mine · 1 all',
   ])
   await fits(narrow, 24, 'short counts')

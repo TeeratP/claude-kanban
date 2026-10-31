@@ -322,7 +322,8 @@ export const S = {
   filterCount: (shown: number, total: number) => `${shown}/${total}`,
   // An active section's header: the person's cards and all of them.
   mineCount: (mine: number, total: number) => `${mine} mine · ${total} all`,
-  mineCountShort: (mine: number, total: number) => `${mine}/${total}`,
+  // Not `2/4`: that is a filter's shown out of total.
+  mineCountShort: (mine: number, total: number) => `${mine} · ${total}`,
 
   // #31
   positionSkipped: (card: KanbanCard, reason: string) =>
