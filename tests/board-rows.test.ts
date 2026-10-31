@@ -17,7 +17,7 @@ function cardOf(
   tag?: KanbanTag,
 ): KanbanCard {
   return {
-    id: `md:${number}`,
+    id: `gh:${number}`,
     number,
     title,
     column,
@@ -49,11 +49,10 @@ const input = (
   glyphOf: () => undefined,
   ageOf: () => '2h',
   detailOf: () => [],
-  queue: { limit: 1, running: 1, waiting: ['md:99'] },
   cards: CARDS,
   canDrag: true,
   canType: true,
-  isGithub: false,
+  needsSetup: false,
   ...extra,
 })
 
@@ -103,32 +102,14 @@ test('a section header is its label and count, a rule to the edge and the meta f
     `  Backlog 1 ${'─'.repeat(32)}`,
   )
   expect(header('human')?.width).toBe(44)
-  // Claude's limit, who waits for a slot: the same width, the rule shorter.
-  expect(textOf(header('claude')?.segs ?? [])).toMatch(
-    /^ {2}Claude 1 ─+ limit 1 · 1 queued$/,
+  // Claude's header has no meta: its rule runs to the edge.
+  expect(textOf(header('claude')?.segs ?? [])).toBe(
+    `  Claude 1 ${'─'.repeat(33)}`,
   )
 })
 
-test("Claude's meta is written short in a narrow pane, and gives way to the bare rule in the narrowest", () => {
-  const meta = (columns: number) =>
-    textOf(
-      rowsOf(columns, open('active')).find(
-        view => view.kind === 'header' && view.column === 'claude',
-      )?.segs ?? [],
-    )
-
-  expect(meta(44)).toContain('limit 1 · 1 queued')
-  expect(meta(30)).toMatch(/ lim 1 · 1q$/)
-  expect(meta(24)).toMatch(/^ {2}Claude 1 ─+$|lim 1 · 1q$/)
-  for (const columns of WIDTHS) {
-    expect(cellWidth(meta(columns))).toBeLessThanOrEqual(columns)
-  }
-})
-
-test('a header says nothing of the queue with no limit, and Done and Cancelled say they list their newest ten only once past it', () => {
-  const free = rowsOf(44, open('inactive'), {
-    queue: { limit: 0, running: 0, waiting: [] },
-  })
+test('Done and Cancelled say they list their newest ten only once past it', () => {
+  const free = rowsOf(44, open('inactive'))
   const header = (column: string) =>
     textOf(
       free.find(view => view.kind === 'header' && view.column === column)
@@ -424,18 +405,6 @@ test('a sync mark takes the cell before the age, keeps its colour, and a failed 
   expect(piece(failed, '#5')?.dim).toBe(false)
 })
 
-test('a queued card is dim all through and says its place where the age goes, short in a narrow pane', () => {
-  const one = cardOf(5, 'claude', 'Waiting its turn')
-  const queued = { limit: 1, running: 1, waiting: [one.id] }
-  const wide = cardRow(one, 44, { queue: queued })
-  const narrow = cardRow(one, 30, { queue: queued })
-
-  expect(textOf(wide?.segs ?? [])).toMatch(/Waiting its turn +queued 1$/)
-  expect(textOf(narrow?.segs ?? [])).toMatch(/ +q1$/)
-  expect(piece(wide, 'Waiting its turn')).toMatchObject({ dim: true })
-  expect(piece(wide, '#5')).toMatchObject({ dim: true })
-})
-
 test('a more row, an empty line and a bar start at the title column', () => {
   const board = [cardOf(7, 'backlog'), cardOf(111, 'backlog')]
   const rows = (row: Row) => toRowViews(input([row], 44, { cards: board }))[0]
@@ -586,42 +555,34 @@ test('the legend lists the cursor keys once a key has brought the cursor up, and
   )
 })
 
-test('an empty board explains itself in one form at 44 columns and a short one at 30, never cut mid-word', () => {
+test('an empty board says it has no issues, or that GitHub is yet to be set up, in one form at 44 columns and a short one at 30, never cut mid-word', () => {
   const lines = (columns: number, extra: Partial<RowViewInput> = {}) =>
     toRowViews(
       input(
-        layoutBoard({
-          cards: [],
-          ui: open('active'),
-          bodyRows: 30,
-          hint: true,
-        }),
+        layoutBoard({ cards: [], ui: open('active'), bodyRows: 30 }),
         columns,
         { cards: [], ...extra },
       ),
     )
-      .filter(view => view.key === 'note' || view.key.startsWith('hint:'))
+      .filter(view => view.key === 'note')
       .map(view => textOf(view.segs))
 
-  expect(lines(44)).toEqual([
-    '  Cards live in .kanban/*.md here.',
-    '  On GitHub? Link a Project to the repo',
-    '  or set backend: github to see why.',
+  expect(lines(44)).toEqual(['  No issues on this board yet.'])
+  expect(lines(44, { needsSetup: true })).toEqual([
+    '  Cards show here once GitHub is set up.',
   ])
-  expect(lines(30)).toEqual([
-    '  Cards live in .kanban/',
-    '  GitHub? Link a Project',
-    '  or set backend: github',
-  ])
+  expect(lines(30)).toEqual(['  No issues on this board yet.'])
+  expect(lines(24)).toEqual(['  No issues yet.'])
+  expect(lines(30, { needsSetup: true })).toEqual(['  Not set up yet.'])
   for (const columns of WIDTHS) {
-    for (const line of lines(columns)) {
+    for (const line of [
+      ...lines(columns),
+      ...lines(columns, { needsSetup: true }),
+    ]) {
       expect(cellWidth(line)).toBeLessThanOrEqual(columns)
       expect(line).not.toContain('…')
     }
   }
-  expect(lines(44, { isGithub: true })[0]).toBe(
-    '  No issues on this board yet.',
-  )
 })
 
 test('a message from the Client is taken only whole: a group of the two, a column of the six, a place that exists', () => {
@@ -637,10 +598,10 @@ test('a message from the Client is taken only whole: a group of the two, a colum
   expect(parseBoardMessage({ type: 'toggleGroup' })).toBeUndefined()
 
   for (const column of COLUMNS) {
-    expect(parseBoardMessage({ type: 'drop', cardId: 'md:1', column })).toEqual(
+    expect(parseBoardMessage({ type: 'drop', cardId: 'gh:1', column })).toEqual(
       {
         type: 'drop',
-        cardId: 'md:1',
+        cardId: 'gh:1',
         column,
       },
     )
@@ -651,25 +612,25 @@ test('a message from the Client is taken only whole: a group of the two, a colum
     })
   }
   expect(
-    parseBoardMessage({ type: 'drop', cardId: 'md:1', column: 'later' }),
+    parseBoardMessage({ type: 'drop', cardId: 'gh:1', column: 'later' }),
   ).toBeUndefined()
   expect(
     parseBoardMessage({
       type: 'drop',
-      cardId: 'md:1',
+      cardId: 'gh:1',
       column: 'suspended',
-      place: { at: 'after', cardId: 'md:2' },
+      place: { at: 'after', cardId: 'gh:2' },
     }),
   ).toEqual({
     type: 'drop',
-    cardId: 'md:1',
+    cardId: 'gh:1',
     column: 'suspended',
-    place: { at: 'after', cardId: 'md:2' },
+    place: { at: 'after', cardId: 'gh:2' },
   })
   expect(
     parseBoardMessage({
       type: 'drop',
-      cardId: 'md:1',
+      cardId: 'gh:1',
       column: 'suspended',
       place: { at: 'middle' },
     }),

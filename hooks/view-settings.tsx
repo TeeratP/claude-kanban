@@ -2,21 +2,24 @@ import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
 
 import type { KanbanBoard } from '../types'
 import { readBoard, readSettings } from './atoms'
-import { KANBAN_DIR, cellWidth } from './model'
+import { cellWidth } from './model'
 import { S } from './strings'
+import { nameOf } from './people'
 import {
   boardAction,
   changeBoardFromSettings,
+  closeNameField,
   closeSettings,
   isDefault,
+  openNameField,
   optionsOf,
   setSetting,
   settingsOf,
-  stepped,
+  submitName,
+  typeName,
   valueText,
 } from './settings'
 import type { Setting } from './settings'
-import { localNote } from './view-board'
 import { dotted, packRows, separatorWidth } from './view-parts'
 
 // Cells a setting's controls and help stand in from its name.
@@ -24,16 +27,15 @@ const INDENT = 2
 
 // The board the mod reads, as two short lines: where it is, then which.
 function boardLines(board: KanbanBoard): [string, string | undefined] {
-  const { backend, mode } = board
-  if (backend === null) return [S.loading, undefined]
-
-  const kind = S.backendLabel(mode, backend.kind, true)
-  if (backend.kind === 'local') {
-    return [`${kind}${S.dot}${KANBAN_DIR}/`, localNote(backend)]
+  const { backend } = board
+  if (backend === null) {
+    return board.setup === undefined
+      ? [S.loading, undefined]
+      : [S.backendName, S.setupNeeded]
   }
 
   return [
-    `${kind}${S.dot}${backend.repo}`,
+    `${S.backendName}${S.dot}${backend.repo}`,
     backend.title === undefined
       ? `#${backend.projectNumber}`
       : S.boardName(backend.projectNumber, backend.title),
@@ -96,45 +98,6 @@ export async function renderSettings(
     ))
   }
 
-  // `−` and `+` around the number; `−` rests at 0.
-  const numberRow = (setting: Setting) => {
-    const { field, row } = setting
-    const value = typeof row.value === 'number' ? row.value : 0
-    const less = stepped(value, -1)
-    const more = stepped(value, 1)
-    const fallback =
-      setting.fallback === '' ? '' : S.settingDefaultIs(setting.fallback)
-
-    return (
-      <Box key={`number:${field}`} flexDirection="row">
-        {less === undefined ? (
-          <Text dimColor>{`${S.settingLess} `}</Text>
-        ) : (
-          <Button
-            key={`less:${field}`}
-            plain
-            label={S.settingLess}
-            onPress={() => setSetting($, row.key, less)}
-          >
-            <Text color="suggestion">{`${S.settingLess} `}</Text>
-          </Button>
-        )}
-        <Text weight="bold">{String(value)}</Text>
-        {more !== undefined && (
-          <Button
-            key={`more:${field}`}
-            plain
-            label={S.settingMore}
-            onPress={() => setSetting($, row.key, more)}
-          >
-            <Text color="suggestion">{` ${S.settingMore} `}</Text>
-          </Button>
-        )}
-        <Text dimColor>{fallback}</Text>
-      </Box>
-    )
-  }
-
   const settingBlock = (setting: Setting) => {
     const { field, row } = setting
     const denied = settings.denied[row.key]
@@ -142,8 +105,6 @@ export async function renderSettings(
       <Text key={`value:${field}`} weight="bold">
         {valueText(row.value)}
       </Text>
-    ) : row.kind === 'number' ? (
-      numberRow(setting)
     ) : (
       <Box key={`options:${field}`} flexDirection="column">
         {optionsRow(setting)}
@@ -198,12 +159,95 @@ export async function renderSettings(
             </Button>
           )}
           {action === undefined &&
-            board.backend?.kind === 'github' &&
+            board.backend !== null &&
             board.backend.isDetected !== true && (
               <Text dimColor wrap="wrap">
                 {S.boardFromConfig}
               </Text>
             )}
+        </Box>
+      </Box>
+    )
+  }
+
+  // The name the person goes by on the board: shown, and changed in a field
+  // where the surface has one.
+  const nameBlock = () => {
+    const { viewer, people } = board
+    // The mobile app draws no field yet, though its element table names Input.
+    const els = $.ui.resolve(e)
+    const Input =
+      e.surface !== 'mobile' && 'Input' in els ? els.Input : undefined
+    const canType = Input !== undefined
+    const draft = settings.nameDraft
+    if (viewer === undefined) {
+      return (
+        <Box key="name" flexDirection="column">
+          <Text>{S.yourName}</Text>
+          <Box paddingLeft={INDENT}>
+            <Text dimColor wrap="wrap">
+              {S.nameUnknown}
+            </Text>
+          </Box>
+        </Box>
+      )
+    }
+
+    const shown = nameOf(people, viewer)
+    const field =
+      draft !== undefined && Input !== undefined ? (
+        <Box flexDirection="column">
+          <Input
+            key="name:field"
+            autoFocus
+            label={S.yourName}
+            placeholder={viewer}
+            submitLabel={S.nameSave}
+            value={draft}
+            onInput={value => typeName($, value)}
+            onSubmit={value => submitName($, value)}
+          />
+          <Button
+            key="name:cancel"
+            plain
+            label={S.nameCancel}
+            onPress={() => closeNameField($)}
+          >
+            <Text color="suggestion">{S.nameCancel}</Text>
+          </Button>
+        </Box>
+      ) : (
+        <Box flexDirection="row">
+          <Text weight="bold" wrap="truncate-end">
+            {shown}
+          </Text>
+          {canType && <Text>{S.dot}</Text>}
+          {canType && (
+            <Button
+              key="name:change"
+              plain
+              label={S.nameChange}
+              onPress={() => openNameField($)}
+            >
+              <Text color="suggestion">{S.nameChange}</Text>
+            </Button>
+          )}
+        </Box>
+      )
+
+    return (
+      <Box key="name" flexDirection="column">
+        <Text>{S.yourName}</Text>
+        <Box flexDirection="column" paddingLeft={INDENT}>
+          {field}
+          <Text dimColor wrap="wrap">
+            {S.yourNameHelp(viewer)}
+          </Text>
+          {settings.nameError !== undefined && (
+            <Text color="error" wrap="wrap">
+              {settings.nameError}
+            </Text>
+          )}
         </Box>
       </Box>
     )
@@ -237,6 +281,7 @@ export async function renderSettings(
       />
       <Text weight="bold">{S.settings}</Text>
       {body}
+      {nameBlock()}
       {boardBlock()}
       <Text dimColor>{S.settingsFooter}</Text>
     </Box>

@@ -3,15 +3,15 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { click } from './board-ui'
-import { PANE, RUN, boot, card, path } from './fakes'
+import { PANE, RUN } from './fakes'
+import type { FakeCard } from './fake-github'
+import { bootGithub, issue } from './fake-github'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const FENCE = '```'
 
 const handoff = (check: string) =>
   [
-    'Spec text.',
-    '',
     '## Handoff (2026-10-25)',
     '**Did:** Wrote the docs',
     `**Check:** ${check}`,
@@ -19,10 +19,9 @@ const handoff = (check: string) =>
     '**Need from you:** Approve',
   ].join('\n')
 
-const CARD = path(1, 'login')
-const cardWith = (check: string, status = 'human') => ({
-  [CARD]: card(1, { status, title: 'Fix login' }, handoff(check)),
-})
+const cardWith = (check: string, column: 'human' | 'claude' = 'human') => [
+  issue(1, { column, title: 'Fix login', comments: [handoff(check)] }),
+]
 
 type Reply = {
   exitCode?: number
@@ -32,17 +31,60 @@ type Reply = {
 }
 type Shell = { argv: readonly string[]; timeoutMs?: number; cwd?: string }
 
-// The board looks for a GitHub board with git and gh; these tests are about the check, so none is found.
-const NO_GITHUB = { deny: 'no GitHub board here' }
-const isProbe = (argv: readonly string[]) =>
+type Run = {
+  argv: readonly string[]
+  init?: { timeoutMs?: number; cwd?: string }
+}
+type Ran =
+  | { deny: string }
+  | {
+      value: {
+        exitCode: number
+        stdout: string
+        stderr: string
+        isStdoutTruncated: boolean
+        isStderrTruncated: boolean
+      }
+    }
+
+// `gh` and `git` go to the fake GitHub; these tests are about the check's own command.
+const isGithub = (argv: readonly string[]) =>
   argv[0] === 'git' || argv[0] === 'gh'
 
-/** Answers `process.run` for the check: records each call, then replies when `reply` does. */
-function fakeShell(on: On, reply: () => Promise<Reply> | Reply = () => ({})) {
-  const calls: Shell[] = []
-  on('process.run', async (_, e) => {
-    if (isProbe(e.argv)) return NO_GITHUB
+/**
+ * The fake GitHub with `run` answering every other command. A plugin may hook
+ * `process.run` once, so the fake's hook is caught and called from this one.
+ */
+function bootShell(
+  on: On,
+  issues: FakeCard[],
+  run: (e: Run) => Promise<Ran> | Ran,
+) {
+  type Hook = (...args: unknown[]) => unknown
+  let github: Hook = () => {
+    throw new Error('the fake GitHub hooked no process.run')
+  }
+  const register = on as unknown as (pattern: string, hook: Hook) => unknown
+  const caught = ((pattern: string, hook: Hook) => {
+    if (pattern !== 'process.run') return register(pattern, hook)
+    github = hook
+  }) as unknown as On
+  const world = bootGithub(caught, issues)
+  on('process.run', async (engine, e, next) =>
+    isGithub(e.argv) ? (github(engine, e, next) as never) : run(e),
+  )
 
+  return world
+}
+
+/** Answers the check's command: records each call, then replies when `reply` does. */
+function fakeShell(
+  on: On,
+  issues: FakeCard[],
+  reply: () => Promise<Reply> | Reply = () => ({}),
+) {
+  const calls: Shell[] = []
+  const world = bootShell(on, issues, async e => {
     calls.push({
       argv: e.argv,
       ...(e.init?.timeoutMs === undefined
@@ -63,19 +105,18 @@ function fakeShell(on: On, reply: () => Promise<Reply> | Reply = () => ({})) {
     }
   })
 
-  return calls
+  return { ...world, calls }
 }
 
 async function open(
   $: Engine,
   on: On,
   surface: 'terminal' | 'desktop' | 'vscode' | 'mobile',
-  files: Record<string, string>,
+  issues: FakeCard[],
   shell: () => Promise<Reply> | Reply = () => ({}),
   columns: number = PANE.props.bodyColumns,
 ) {
-  const world = boot(on, files)
-  const commands = fakeShell(on, shell)
+  const { calls: commands, ...world } = fakeShell(on, issues, shell)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -84,10 +125,14 @@ async function open(
     surface,
     props: { ...PANE.props, bodyColumns: columns },
   })
-  await click(ui, 'card:md:0001-login')
+  await click(ui, 'card:gh:1')
 
-  return { ...world, files, commands, ui }
+  return { ...world, commands, ui }
 }
+
+/** The comments posted on the issue: each `gh issue comment`. */
+const posts = (commands: readonly { argv: readonly string[] }[]) =>
+  commands.filter(one => one.argv.slice(1, 3).join(' ') === 'issue comment')
 
 type Ui = Pick<Mounted, 'find'>
 
@@ -260,20 +305,16 @@ for (const surface of SURFACES) {
   })
 
   test(
-    `a run that outlives the timeout says so, and the timeout is saved on the card on the ${surface}`,
+    `a run that outlives the timeout says so, and Attach to card saves the timeout on the card on the ${surface}`,
     { timeoutMs: 30_000 },
     async ($, on) => {
-      const files = cardWith('Run `npm test`')
-      const world = boot(on, files)
       const asked: (number | undefined)[] = []
       let expire: () => void = () => {}
       const expired = new Promise<void>(resolve => {
         expire = resolve
       })
       // The engine kills the child at its timeout and rejects the call.
-      on('process.run', async (_, e) => {
-        if (isProbe(e.argv)) return NO_GITHUB
-
+      const world = bootShell(on, cardWith('Run `npm test`'), async e => {
         asked.push(e.init?.timeoutMs)
         await expired
 
@@ -283,7 +324,7 @@ for (const surface of SURFACES) {
       await $.command.run({ ...RUN })
       await world.clock.settle()
       const ui = await $.ui.mount({ ...PANE, surface })
-      await click(ui, 'card:md:0001-login')
+      await click(ui, 'card:gh:1')
 
       await ui.press({ key: 'check:run:0' })
       // Nothing is drawn while the clock runs through the five minutes' beats.
@@ -299,34 +340,38 @@ for (const surface of SURFACES) {
       ).toBeDefined()
       expect(await shown.find({ type: 'Code' })).toBeUndefined()
       expect(await label(shown, 'check:run:0')).toBe('Run check: npm test')
-      expect(files[CARD]).toContain('**Result:** ✕ Timed out after 5 min')
+      expect(world.github.comments(1)).toHaveLength(1)
+
+      await shown.press({ key: 'check:attach' })
+      expect(world.github.comments(1)[1]).toContain(
+        '**Result:** ✕ Timed out after 5 min',
+      )
       await shown.unmount()
     },
   )
 
   test(`a command that cannot start says why and is not saved on the ${surface}`, async ($, on) => {
-    const world = boot(on, cardWith('Run `npm test`'))
-    on('process.run', (_, e) =>
-      isProbe(e.argv) ? NO_GITHUB : { deny: 'spawn sh ENOENT' },
-    )
+    const world = bootShell(on, cardWith('Run `npm test`'), () => ({
+      deny: 'spawn sh ENOENT',
+    }))
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
     await world.clock.settle()
     const ui = await $.ui.mount({ ...PANE, surface })
-    await click(ui, 'card:md:0001-login')
-    const before = world.calls.writes.length
+    await click(ui, 'card:gh:1')
 
     await ui.press({ key: 'check:run:0' })
     await world.clock.advance(0)
 
     expect(await text(ui, /^✕ Could not run: .*spawn sh ENOENT/)).toBeDefined()
     expect(await ui.find({ key: 'check:attach' })).toBeUndefined()
-    expect(world.calls.writes.length).toBe(before)
+    expect(posts(world.github.commands)).toEqual([])
+    expect(world.github.comments(1)).toHaveLength(1)
     await ui.unmount()
   })
 
-  test(`a local run is saved on the card as a Check run section on the ${surface}`, async ($, on) => {
-    const { ui, clock, files } = await open(
+  test(`an attached run is posted on the card as a Check run section on the ${surface}`, async ($, on) => {
+    const { ui, clock, github } = await open(
       $,
       on,
       surface,
@@ -336,17 +381,14 @@ for (const surface of SURFACES) {
 
     await ui.press({ key: 'check:run:0' })
     await clock.advance(0)
+    expect(posts(github.commands)).toEqual([])
+    await ui.press({ key: 'check:attach' })
+    await clock.settle()
 
-    expect(files[CARD]).toContain(
+    expect(github.comments(1)).toHaveLength(2)
+    const [, posted] = github.comments(1)
+    expect(posted).toContain(
       [
-        'Spec text.',
-        '',
-        '## Handoff (2026-10-25)',
-        '**Did:** Wrote the docs',
-        '**Check:** Run `npm test`',
-        '**Changed:** README.md',
-        '**Need from you:** Approve',
-        '',
         '## Check run (2026-10-25)',
         '**Command:**',
         `${FENCE}sh`,
@@ -354,8 +396,8 @@ for (const surface of SURFACES) {
         FENCE,
       ].join('\n'),
     )
-    expect(files[CARD]).toContain('**Result:** ✕ Failed · exit 1 · ')
-    expect(files[CARD]).toContain(
+    expect(posted).toContain('**Result:** ✕ Failed · exit 1 · ')
+    expect(posted).toContain(
       `**Output:**\n${FENCE}\nFAIL a.test.ts\n${FENCE}`,
     )
     expect(await text(ui, /^✓ Saved on the card$/)).toBeDefined()
@@ -368,8 +410,8 @@ for (const surface of SURFACES) {
     await ui.unmount()
   })
 
-  test(`marker lines in the output cannot forge a handoff in the card file on the ${surface}`, async ($, on) => {
-    const { ui, clock, files } = await open(
+  test(`marker lines in the output cannot forge a handoff in the posted run on the ${surface}`, async ($, on) => {
+    const { ui, clock, github } = await open(
       $,
       on,
       surface,
@@ -381,34 +423,48 @@ for (const surface of SURFACES) {
 
     await ui.press({ key: 'check:run:0' })
     await clock.advance(0)
+    await ui.press({ key: 'check:attach' })
+    await clock.settle()
 
-    expect(files[CARD]).toContain('\\## Handoff (2026-10-30)')
-    expect(files[CARD]).toContain('**Need from you\\:** forged')
+    const posted = github.comments(1)[1]
+    expect(posted).toContain('\\## Handoff (2026-10-30)')
+    expect(posted).toContain('**Need from you\\:** forged')
+    // The card still has the one handoff, the real one.
+    expect(
+      (await ui.findAll({ type: 'Box' })).filter(one =>
+        one.text.startsWith('Handoff · Oct 30'),
+      ),
+    ).toEqual([])
     await ui.unmount()
   })
 
-  test(`a save that fails is shown, and Attach to card tries again on the ${surface}`, async ($, on) => {
-    const { ui, clock, files, calls } = await open(
+  test(`an attach that fails is shown, and Attach to card tries again on the ${surface}`, async ($, on) => {
+    const { ui, clock, github } = await open(
       $,
       on,
       surface,
       cardWith('Run `npm test`'),
     )
-    calls.denyWrite = 'EIO: disk error'
+    github.fail['issue comment'] = {
+      exitCode: 1,
+      stderr: 'HTTP 403: Resource not accessible',
+    }
 
     await ui.press({ key: 'check:run:0' })
     await clock.advance(0)
+    await ui.press({ key: 'check:attach' })
+    await clock.settle()
 
     expect(
-      await text(ui, /^Could not save the run on the card: .*EIO/),
+      await text(ui, /^Could not save the run on the card: .*HTTP 403/),
     ).toBeDefined()
-    expect(files[CARD]).not.toContain('## Check run')
+    expect(github.comments(1)).toHaveLength(1)
     expect(await label(ui, 'check:attach')).toBe('Attach to card')
 
-    calls.denyWrite = undefined
+    delete github.fail['issue comment']
     await ui.press({ key: 'check:attach' })
 
-    expect(files[CARD]).toContain('## Check run (2026-10-25)')
+    expect(github.comments(1)[1]).toContain('## Check run (2026-10-25)')
     expect(await text(ui, /^✓ Saved on the card$/)).toBeDefined()
     expect(await ui.find({ key: 'check:attach' })).toBeUndefined()
     await ui.unmount()
@@ -461,6 +517,8 @@ for (const surface of SURFACES) {
     const { ui, clock } = await open($, on, surface, cardWith('Run `npm test`'))
     await ui.press({ key: 'check:run:0' })
     await clock.advance(0)
+    await ui.press({ key: 'check:attach' })
+    await clock.settle()
 
     const shown = await $.tool.call({
       tool: 'mcp__kanban__kanban_show',
@@ -472,14 +530,14 @@ for (const surface of SURFACES) {
   })
 
   test(`a Check shown after feedback is gone until a new handoff on the ${surface}`, async ($, on) => {
-    const files = {
-      [CARD]: card(
-        1,
-        { status: 'claude', title: 'Fix login' },
-        `${handoff('Run `npm test`')}\n\n## Feedback (2026-10-25)\nFix it`,
-      ),
-    }
-    const { ui } = await open($, on, surface, files)
+    const issues = [
+      issue(1, {
+        column: 'claude',
+        title: 'Fix login',
+        comments: [handoff('Run `npm test`'), '## Feedback (2026-10-25)\nFix it'],
+      }),
+    ]
+    const { ui } = await open($, on, surface, issues)
 
     expect(await ui.find({ key: 'check:run:0' })).toBeUndefined()
     await ui.unmount()

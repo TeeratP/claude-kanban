@@ -1,25 +1,12 @@
 {
   "name": "kanban",
-  "version": "0.5.2",
-  "description": "A kanban side pane: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards.",
+  "version": "0.6.0",
+  "description": "A kanban side pane over GitHub Issues and a Projects board: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections.",
   "author": {
     "name": "TeeratP"
   },
   "types": "./types/index.d.ts",
   "userConfig": {
-    "backend": {
-      "type": "string",
-      "title": "Card backend (default: auto)",
-      "description": "Where cards live. auto: GitHub Issues when gh is installed, signed in and a project board is found for this repo, else local .kanban/*.md files. github: GitHub only; shows what is missing instead of falling back. local: always .kanban/*.md files.",
-      "options": ["auto", "github", "local"],
-      "default": "auto"
-    },
-    "claudeLimit": {
-      "type": "number",
-      "title": "Claude limit (default: 1)",
-      "description": "How many cards Claude works on at once (0 means no limit). Cards moved to Claude beyond the limit wait in a queue and start in order.",
-      "default": 1
-    },
     "reconcile": {
       "type": "boolean",
       "title": "Reconcile at turn end (default: on)",

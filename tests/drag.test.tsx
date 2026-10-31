@@ -12,35 +12,54 @@ import {
   rowKeys,
   rowStyle,
 } from './board-ui'
-import { PANE, RUN, SCROLL, SYNC_PAUSE, boot, card, path } from './fakes'
+import { PANE, RUN, SCROLL, SYNC_PAUSE } from './fakes'
+import type { FakeCard } from './fake-github'
+import { bootGithub, issue } from './fake-github'
 
 const WITH_CLIENT = ['terminal', 'desktop'] as const
 const WITHOUT_CLIENT = ['vscode', 'mobile'] as const
 
-const cards = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-  [path(4, 'old')]: card(4, { status: 'done', title: 'Old thing' }),
-})
+const cards = () => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API' }),
+  issue(3, { column: 'backlog', title: 'Write docs' }),
+  issue(4, { column: 'done', title: 'Old thing' }),
+]
 
-const DOCS = 'card:md:0003-docs'
-const LOGIN = 'card:md:0001-login'
+const DOCS = 'card:gh:3'
+const LOGIN = 'card:gh:1'
+const API = 'card:gh:2'
 
 async function start<S extends RenderSurface>(
   $: Engine,
   on: On,
   surface: S,
-  files: Record<string, string> = cards(),
+  issues: FakeCard[] = cards(),
 ) {
-  const world = boot(on, files)
+  const world = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
+
+// The commands that changed GitHub: none means nothing moved.
+const writes = (github: { commands: { argv: readonly string[] }[] }) =>
+  github.commands.filter(
+    ({ argv }) =>
+      (argv[1] === 'project' && argv[2] !== 'list' && argv[2] !== 'view') ||
+      (argv[1] === 'issue' && argv[2] !== 'view' && argv[2] !== 'list') ||
+      (argv[1] === 'api' &&
+        argv.some(part => part.includes('updateProjectV2ItemPosition'))),
+  )
+
+// Eight Backlog cards, more than a section shows.
+const eight = () =>
+  Array.from({ length: 8 }, (_, at) =>
+    issue(at + 1, { title: `Backlog ${at + 1}` }),
+  )
 
 // The keys of the rows between two headers.
 const between = (keys: string[], from: string, to: string) =>
@@ -61,7 +80,7 @@ for (const surface of WITH_CLIENT) {
       'hdr:backlog',
       DOCS,
       'hdr:claude',
-      'card:md:0002-api',
+      API,
       'hdr:human',
       LOGIN,
       'grp:inactive',
@@ -70,7 +89,7 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`dragging a card onto the Human header moves it on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     const from = await rowIndex(ui, DOCS)
     const to = await rowIndex(ui, 'hdr:human')
 
@@ -88,13 +107,12 @@ for (const surface of WITH_CLIENT) {
       await ui.find({ type: 'Text', text: '#3 Write docs' }),
     ).toBeUndefined()
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: human')
+    expect(github.card(3).status).toBe('In review')
     await ui.unmount()
   })
 
   test(
     `dropping a Backlog card on Claude asks Claude to work on it, any other drop does not on the ${surface}`,
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
       const { clock, ui, prompts } = await start($, on, surface)
       const drop = async (card: string, header: string) => {
@@ -122,7 +140,7 @@ for (const surface of WITH_CLIENT) {
   )
 
   test(`a drag draws a line where the card would land and dims the card on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     const from = await rowIndex(ui, DOCS)
     const human = await rowIndex(ui, 'hdr:human')
     const claude = await rowIndex(ui, 'hdr:claude')
@@ -144,7 +162,8 @@ for (const surface of WITH_CLIENT) {
     expect((await rowStyle(ui, DOCS)).dimColor).toBeUndefined()
     expect(await lineRows(ui)).toEqual([])
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: claude')
+    expect(github.card(3).status).toBe('In progress')
+    expect(github.card(3).labels).toContain('ai')
     await ui.unmount()
   })
 
@@ -214,12 +233,11 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a drop that leaves the card where it is, or is off the list, moves nothing on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     const docs = await rowIndex(ui, DOCS)
     const own = await rowIndex(ui, 'hdr:backlog')
-    const api = await rowIndex(ui, 'card:md:0002-api')
-    const before = { ...files }
-
+    const api = await rowIndex(ui, API)
+    
     // Onto its own header (it is already first), off the list either side.
     for (const y of [own, -3, 40]) {
       await ui.pointer({ type: 'down', x: 3, y: docs, button: 'left' })
@@ -234,7 +252,7 @@ for (const surface of WITH_CLIENT) {
     await ui.pointer({ type: 'up', x: 3, y: docs, button: 'left' })
 
     await clock.advance(SYNC_PAUSE)
-    expect(files).toEqual(before)
+    expect(writes(github)).toEqual([])
     expect(
       await ui.find({ type: 'Text', text: '#3 Write docs' }),
     ).toBeUndefined()
@@ -256,12 +274,12 @@ for (const surface of WITH_CLIENT) {
   }
 
   test(`a card dragged onto a chip of the closed Inactive group moves to that section on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     await chipDrop(ui, 30)
     await clock.advance(SYNC_PAUSE)
 
-    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    expect(github.card(3).status).toBe('Suspended')
     await group(ui, 'inactive')
     expect(await rowKeys(ui)).toContain(DOCS)
     expect(
@@ -270,18 +288,29 @@ for (const surface of WITH_CLIENT) {
     await ui.unmount()
   })
 
+  // How GitHub holds each closed-group section.
+  const HELD = {
+    done: { status: 'Done', state: 'CLOSED', stateReason: 'COMPLETED' },
+    cancelled: {
+    status: 'Cancelled',
+    state: 'CLOSED',
+    stateReason: 'NOT_PLANNED',
+  },
+    suspended: { status: 'Suspended', state: 'OPEN' },
+  } as const
+
   for (const [x, column] of [
     [12, 'done'],
     [20, 'cancelled'],
     [30, 'suspended'],
   ] as const) {
     test(`the ${column} chip of the closed group sends the card to ${column} on the ${surface}`, async ($, on) => {
-      const { clock, ui, files } = await start($, on, surface)
+      const { clock, ui, github } = await start($, on, surface)
 
       await chipDrop(ui, x)
       await clock.advance(SYNC_PAUSE)
 
-      expect(files[path(3, 'docs')]).toContain(`status: ${column}`)
+      expect(github.card(3)).toMatchObject(HELD[column])
       await ui.unmount()
     })
   }
@@ -315,61 +344,64 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a drop on the label of the closed group, or past its chips, moves nothing on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
-    const before = { ...files }
-
+    const { clock, ui, github } = await start($, on, surface)
+    
     await chipDrop(ui, 3)
     await chipDrop(ui, 43)
     await clock.advance(SYNC_PAUSE)
 
-    expect(files).toEqual(before)
+    expect(writes(github)).toEqual([])
     expect(await rowKeys(ui)).toContain(DOCS)
     await ui.unmount()
   })
 
   test(`the open group's header is no target on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     const from = await rowIndex(ui, DOCS)
     const to = await rowIndex(ui, 'grp:active')
-    const before = { ...files }
-
+    
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
     await ui.pointer({ type: 'move', x: 30, y: to, button: 'left' })
     expect(await lineRows(ui)).toEqual([])
     await ui.pointer({ type: 'up', x: 30, y: to, button: 'left' })
 
     await clock.advance(SYNC_PAUSE)
-    expect(files).toEqual(before)
+    expect(writes(github)).toEqual([])
     await ui.unmount()
   })
 
   test(`a card dropped on a blank row of a section goes last in it on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface, {
+    const { clock, ui, github } = await start($, on, surface, [
       ...cards(),
-      [path(5, 'more')]: card(5, { status: 'backlog', title: 'More docs' }),
-    })
+      issue(5, { column: 'backlog', title: 'More docs' }),
+    ])
     const from = await rowIndex(ui, LOGIN)
     const to = await rowIndex(ui, 'blank:backlog:3')
 
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
-    expect(await lineRows(ui)).toEqual(['card:md:0005-more'])
+    expect(await lineRows(ui)).toEqual(['card:gh:5'])
     await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
 
     expect(between(await rowKeys(ui), 'hdr:backlog', 'hdr:claude')).toEqual([
       DOCS,
-      'card:md:0005-more',
+      'card:gh:5',
       LOGIN,
     ])
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(1, 'login')]).toContain('status: backlog')
+    expect(github.card(1).status).toBe('Backlog')
+    expect(
+      github.cards.flatMap(one =>
+        one.status === 'Backlog' ? [one.number] : [],
+      ),
+    ).toEqual([3, 5, 1])
     await ui.unmount()
   })
 
   test(`a drop on a blank row of an empty section puts the card first in it on the ${surface}`, async ($, on) => {
-    const { ui } = await start($, on, surface, {
-      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-    })
+    const { ui } = await start($, on, surface, [
+      issue(3, { column: 'backlog', title: 'Write docs' }),
+    ])
     const from = await rowIndex(ui, DOCS)
     const to = await rowIndex(ui, 'blank:human:3')
 
@@ -401,11 +433,7 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a click on a group header opens it and folds the other, and a click on a more row pages on the ${surface}`, async ($, on) => {
-    const files: Record<string, string> = {}
-    for (let n = 1; n <= 8; n += 1) {
-      files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
-    }
-    const { ui } = await start($, on, surface, files)
+    const { ui } = await start($, on, surface, eight())
 
     // Seven rows under the header: six cards and the count of the other two.
     expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
@@ -434,11 +462,10 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`only the left button drags or clicks on the ${surface}`, async ($, on) => {
-    const { ui, files } = await start($, on, surface)
+    const { ui, github } = await start($, on, surface)
     const docs = await rowIndex(ui, DOCS)
     const human = await rowIndex(ui, 'hdr:human')
-    const before = { ...files }
-
+    
     for (const button of ['right', 'middle'] as const) {
       await ui.pointer({ type: 'down', x: 3, y: docs, button })
       await ui.pointer({ type: 'move', x: 3, y: human, button })
@@ -447,7 +474,7 @@ for (const surface of WITH_CLIENT) {
     await ui.pointer({ type: 'down', x: 3, y: docs, button: 'right' })
     await ui.pointer({ type: 'up', x: 3, y: docs, button: 'right' })
 
-    expect(files).toEqual(before)
+    expect(writes(github)).toEqual([])
     expect(
       await ui.find({ type: 'Text', text: '#3 Write docs' }),
     ).toBeUndefined()
@@ -455,7 +482,7 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a hover with no button ends a drag the button left unfinished on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     const docs = await rowIndex(ui, DOCS)
     const human = await rowIndex(ui, 'hdr:human')
 
@@ -465,21 +492,19 @@ for (const surface of WITH_CLIENT) {
     await ui.pointer({ type: 'up', x: 3, y: human, button: 'left' })
 
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: backlog')
+    expect(github.card(3).status).toBe('Backlog')
+    expect(writes(github)).toEqual([])
     expect((await rowStyle(ui, DOCS)).dimColor).toBeUndefined()
     await ui.unmount()
   })
 
   test(`a refresh that shifts the rows mid-gesture does not redirect it on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, calls } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     const docs = await rowIndex(ui, DOCS)
     const human = await rowIndex(ui, 'hdr:human')
     // A card that sorts above Docs in its own section.
     const fresh = () =>
-      calls.edit(
-        path(5, 'new'),
-        card(5, { status: 'backlog', title: 'Fresh', order: 0 }),
-      )
+      github.cards.unshift(issue(5, { column: 'backlog', title: 'Fresh' }))
 
     // A click: a card arrives above, so the row under the pointer is another.
     await ui.pointer({ type: 'down', x: 3, y: docs, button: 'left' })
@@ -494,21 +519,20 @@ for (const surface of WITH_CLIENT) {
     // A drag: the card still moves, found by what it is, not where it was.
     expect(await rowIndex(ui, DOCS)).toBe(docs + 1)
     await ui.pointer({ type: 'down', x: 3, y: docs + 1, button: 'left' })
-    calls.edit(path(6, 'newer'), card(6, { status: 'human', title: 'Newer' }))
+    github.cards.push(issue(6, { column: 'human', title: 'Newer' }))
     await ui.press({ key: 'refresh' })
     await ui.pointer({ type: 'move', x: 3, y: human, button: 'left' })
     await ui.pointer({ type: 'up', x: 3, y: human, button: 'left' })
 
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: human')
+    expect(github.card(3).status).toBe('In review')
     await ui.unmount()
   })
 
   test(`messages that are not the Client's are ignored on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
-    const before = { ...files }
-
-    await ui.post({ type: 'drop', cardId: 'md:0003-docs', column: 'nowhere' })
+    const { clock, ui, github } = await start($, on, surface)
+    
+    await ui.post({ type: 'drop', cardId: 'gh:3', column: 'nowhere' })
     await ui.post({ type: 'drop', column: 'human' })
     await ui.post({ type: 'page', column: 'human', dir: 'sideways' })
     await ui.post({ type: 'explode' })
@@ -516,22 +540,18 @@ for (const surface of WITH_CLIENT) {
     await ui.post(null)
 
     await clock.advance(SYNC_PAUSE)
-    expect(files).toEqual(before)
+    expect(writes(github)).toEqual([])
     expect(await rowKeys(ui)).toContain(DOCS)
     await ui.unmount()
   })
 
   test(`the wheel over a section still scrolls it with the Client on the ${surface}`, async ($, on) => {
-    const files: Record<string, string> = {}
-    for (let n = 1; n <= 8; n += 1) {
-      files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
-    }
-    const { ui, scrolls } = await start($, on, surface, files)
+    const { ui, scrolls } = await start($, on, surface, eight())
     const keys = await rowKeys(ui)
     // The tree's first two rows are the toolbar, the Client's rows follow.
     const pointer = {
       column: 3,
-      row: keys.indexOf('card:md:0001-b') + TOOLBAR_ROWS,
+      row: keys.indexOf('card:gh:1') + TOOLBAR_ROWS,
     }
     expect(await row(ui, 'more:backlog:up')).toBeUndefined()
 
@@ -540,15 +560,15 @@ for (const surface of WITH_CLIENT) {
     expect(result).toEqual({})
     expect(scrolls).toHaveLength(0)
     expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 1 more$/)
-    expect(await row(ui, 'card:md:0001-b')).toBeUndefined()
-    expect(await row(ui, 'card:md:0002-b')).toBeDefined()
+    expect(await row(ui, 'card:gh:1')).toBeUndefined()
+    expect(await row(ui, 'card:gh:2')).toBeDefined()
     await ui.unmount()
   })
 }
 
 for (const surface of WITHOUT_CLIENT) {
   test(`the ${surface} keeps Button rows and no Client`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
 
     expect(await ui.find({ type: 'Client' })).toBeUndefined()
     expect((await ui.find({ type: 'Button', key: LOGIN }))?.text).toContain(
@@ -559,13 +579,13 @@ for (const surface of WITHOUT_CLIENT) {
       (await ui.findAll({ type: 'Button' })).flatMap(one =>
         one.key !== undefined && /^(grp|card):/.test(one.key) ? [one.key] : [],
       ),
-    ).toEqual(['grp:active', DOCS, 'card:md:0002-api', LOGIN, 'grp:inactive'])
+    ).toEqual(['grp:active', DOCS, API, LOGIN, 'grp:inactive'])
     expect(await rowKeys(ui)).toEqual([
       'grp:active',
       'hdr:backlog',
       DOCS,
       'hdr:claude',
-      'card:md:0002-api',
+      API,
       'hdr:human',
       LOGIN,
       'grp:inactive',
@@ -577,7 +597,7 @@ for (const surface of WITHOUT_CLIENT) {
     )
     await ui.press({ key: 'move:human' })
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: human')
+    expect(github.card(3).status).toBe('In review')
     await ui.unmount()
   })
 }

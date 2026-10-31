@@ -4,7 +4,6 @@ import type {
   KanbanActivity,
   KanbanCard,
   KanbanCardActivity,
-  KanbanQueue,
   KanbanRound,
 } from '../types'
 import type { Seg } from './board-client'
@@ -137,21 +136,16 @@ export function agentsOf(one: KanbanCardActivity): string[] {
     : names.filter((name, index) => names.indexOf(name) === index)
 }
 
-/**
- * The ids of the Claude cards that get a second row: those Claude has worked on,
- * except a card waiting in the queue, which is not being worked on.
- */
+/** The ids of the Claude cards that get a second row: those Claude has worked on. */
 export function detailIds(
   cards: readonly KanbanCard[],
   activity: KanbanActivity,
-  held: KanbanQueue['held'],
 ): Set<string> {
   return new Set(
     cards
       .filter(
         card =>
           card.column === 'claude' &&
-          held[card.id] === undefined &&
           (activity.cards[card.id]?.rounds.length ?? 0) > 0,
       )
       .map(card => card.id),

@@ -1,9 +1,9 @@
 import type {
-  KanbanBackendMode,
   KanbanCard,
   KanbanColumn,
   KanbanGroup,
   KanbanSection,
+  KanbanSetupStep,
   KanbanTag,
 } from '../types'
 import type { Copy } from './model'
@@ -24,8 +24,6 @@ const SECTION_NAME = {
   answer: 'Answer',
   check: 'Check run',
 } satisfies Record<KanbanSection['kind'], string>
-
-const BACKEND = { github: 'GitHub', local: 'Local' } as const
 
 // A section someone else wrote on the issue is shown, but never counts.
 const fromOther = (login?: string) =>
@@ -67,17 +65,18 @@ export const S = {
 
   toolList: {
     description:
-      'List the cards on the kanban board, one per line: #number [column] title. Done and Cancelled list only their 10 newest.',
+      "List the cards on the kanban board, one per line: #number [column] title, and @login for a card assigned to someone else. Lists the person's cards and unassigned ones; cards assigned to other people only with all. Done and Cancelled list only their 10 newest.",
     column: 'Only list cards in this column.',
+    all: "Also list cards assigned to other people. Leave them alone unless the person asks: they are someone else's work.",
   },
   toolMove: {
     description:
-      'Move a kanban card to another column (human, claude, backlog or done). Suspended and Cancelled are set by the person only.',
+      'Move a kanban card to another column (human, claude, backlog or done). done closes the issue: use it when the work is finished. human is only for a card that needs the person: their approval or input. Suspended and Cancelled are set by the person only.',
     card: 'The card number, as shown by kanban_list.',
     to: 'The column to move the card to.',
   },
-  listLine: (card: KanbanCard, isQueued = false) =>
-    `#${card.number} [${card.column}] ${card.title}${card.tag ? ` (${card.tag})` : ''}${isQueued ? ' (queued)' : ''} updated ${card.updatedAt.slice(0, 10)}`,
+  listLine: (card: KanbanCard, owner = '') =>
+    `#${card.number} [${card.column}] ${card.title}${owner === '' ? '' : ` @${owner}`}${card.tag ? ` (${card.tag})` : ''} updated ${card.updatedAt.slice(0, 10)}`,
   boardUnavailable: (reason?: string) =>
     `The kanban board could not be loaded${reason === undefined ? '' : `: ${reason}`}.`,
   listEmpty: 'No cards on the board.',
@@ -107,16 +106,16 @@ export const S = {
   },
   toolHandoff: {
     description:
-      'Record a handoff on a kanban card before giving it to the person: what you did, how they can check it, what changed and what you need from them. A card can only move to Human after a handoff newer than the latest feedback.',
+      'Record a handoff on a kanban card when its work is done: what you did, how to check it, what changed and, if the card goes to the person, what you need from them. It is a comment on the issue. A card moves to Done or Human only after a handoff newer than the latest feedback.',
     card: 'The card number, as shown by kanban_list.',
-    did: 'What you did, briefly.',
-    check: 'How the person can check the work; required.',
+    did: 'What you did, briefly; required.',
+    check: 'How the work can be checked; required.',
     changed: 'The files or things that changed.',
-    need: 'What you need from the person: a review, a decision, an answer; required.',
+    need: 'What you need from the person (an approval, a decision); leave empty when the card goes to Done. Required to move it to Human.',
   },
   toolCreate: {
     description:
-      'Create a kanban card: a file in the local .kanban folder, or on a GitHub board an issue labeled triage, which the person grooms later.',
+      'Create a kanban card: an issue on the GitHub board labeled triage, which the person grooms later.',
     title: 'A short title for the card.',
     spec: 'The card text: what is to be done and how to tell it is done.',
     column:
@@ -124,12 +123,14 @@ export const S = {
   },
   handoffFailed: (reason: string) => `Could not record the handoff: ${reason}`,
   handedOff: (card: KanbanCard) =>
-    `Recorded a handoff on #${card.number}. Move it to human with kanban_move when it is ready for the person.`,
+    `Recorded a handoff on #${card.number}. If the work is finished, kanban_move it to done; move it to human only if it needs the person's approval or input.`,
   badText: (name: string) => `${name} must be text.`,
   handoffIncomplete:
-    'A handoff needs a real check and a real need: say how the person can verify the work and what you need from them.',
+    'A handoff needs a real did and a real check: say what you did and how the work can be verified.',
   needHandoff: (card: KanbanCard) =>
     `Card #${card.number} cannot move to Human yet: record a handoff with kanban_handoff (with a check and what you need from the person), newer than any feedback.`,
+  needClosingHandoff: (card: KanbanCard) =>
+    `Card #${card.number} cannot move to Done yet: record a handoff with kanban_handoff (what you did and how to check it), newer than any feedback.`,
   useKanbanMove:
     'A card goes to Human through a handoff, not a file edit: record one with kanban_handoff, then use kanban_move.',
   badTitle: 'title must be text that is not empty.',
@@ -140,8 +141,6 @@ export const S = {
   createFailed: (reason: string) => `Could not create the card: ${reason}`,
 
   // #3
-  githubDetectFailed: (reason: string) =>
-    `kanban: using local cards, GitHub is not usable here: ${reason}`,
   commandExited: (command: string, code: number) => `${command} exited ${code}`,
   ghBadJson: (what: string, reason?: string) =>
     `gh returned ${what} that could not be read${reason ? `: ${reason}` : ''}.`,
@@ -187,25 +186,14 @@ export const S = {
   syncFailedNote: (reason: string, attempt: number, max: number) =>
     `✕ ${reason} (attempt ${attempt}/${max})`,
   workPrompt: (n: number, title: string) =>
-    `Work on kanban card #${n} "${title}": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it to human with mcp__kanban__kanban_move.`,
+    `Work on kanban card #${n} "${title}": read it with mcp__kanban__kanban_show, do the work, then record a handoff with mcp__kanban__kanban_handoff and move it with mcp__kanban__kanban_move: to done when finished, to human only if it needs the person's approval or input.`,
   resumePrompt: (n: number) =>
     `Resume kanban card #${n}: read the newest feedback (mcp__kanban__kanban_show) and continue.`,
   promptFailed: (reason: string) =>
     `kanban: could not send the prompt to Claude: ${reason}`,
 
   // #10
-  // `isShort` drops the " (auto)" a narrow pane has no room for.
-  backendLabel: (
-    mode: KanbanBackendMode,
-    kind?: 'github' | 'local',
-    isShort = false,
-  ) => {
-    const name = kind ?? mode
-
-    return name === 'auto'
-      ? ''
-      : `${BACKEND[name]}${mode === 'auto' && !isShort ? ' (auto)' : ''}`
-  },
+  backendName: 'GitHub',
   githubSignedOut: (reason: string) =>
     `gh auth status failed: run gh auth login (${reason})`,
   githubNoRemote: (reason: string) =>
@@ -299,12 +287,6 @@ export const S = {
   activityFailed: (reason: string) =>
     `kanban: could not record Claude's activity: ${reason}`,
 
-  // #20
-  queueSaveFailed: (reason: string) =>
-    `kanban: could not save the queue: ${reason}`,
-  queueRestoreFailed: (reason: string) =>
-    `kanban: could not read the saved queue: ${reason}`,
-
   // #22
   positionFailed: (reason: string) =>
     reason === ''
@@ -328,29 +310,6 @@ export const S = {
   triageLabelDescription: 'needs grooming',
   createdPartly: (url: string, reason: string) =>
     `Created ${url} but could not finish adding it: ${reason}`,
-  // #24
-  toolSuggest: {
-    description:
-      'Suggest a kanban card for a follow-up, a deferred item or out-of-scope work you notice. This creates nothing: the person sees the suggestion on the board and presses Add or Dismiss.',
-    title: 'A short title for the card.',
-    spec: 'The card text: what is to be done and how to tell it is done.',
-    why: 'Why it is worth doing, in a sentence.',
-  },
-  suggestPrompt:
-    'When you notice a follow-up, a deferred item or out-of-scope work, call mcp__kanban__kanban_suggest (title, spec, why) instead of only mentioning it in text. It only proposes a card: the person presses Add. Do not create cards with kanban_create unless asked.',
-  suggested: (title: string) => `Claude suggests a card: ${title}`,
-  suggestedResult: (title: string) =>
-    `Suggested "${title}". The person decides whether to add it; do not create it yourself unless asked.`,
-  suggestFolded: (title: string) =>
-    `"${title}" is already a card or a suggestion; nothing was added.`,
-  suggestedHeader: (n: number) => `Suggested (${n})`,
-  suggestMore: (n: number) => `  +${n} more`,
-  suggestAdd: 'Add',
-  suggestDismiss: '✕',
-  suggestWhy: (why: string) => `Why: ${why}`,
-  suggestionsNotSaved: (reason: string) =>
-    `kanban: could not save the suggestions: ${reason}`,
-
   // #25
   filter: 'Find',
   filterLabel: 'Filter',
@@ -367,11 +326,9 @@ export const S = {
     `kanban: could not read ${file} for the board config: ${reason}`,
   githubConfigUnclear:
     'CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
-  configUnclear: 'board config not understood',
 
   // #33
   boardName: (number: number, title: string) => `#${number} ${title}`,
-  noGithubBoard: (repo: string) => `no GitHub board for ${repo}`,
   pickBoard: 'Pick board:',
   changeBoard: 'Change board:',
   pickLabel: (name: string) => ` [${name}]`,
@@ -383,7 +340,7 @@ export const S = {
   detectSaveFailed: (reason: string) =>
     `kanban: could not save the detected board: ${reason}`,
   githubNoGh: (reason: string) =>
-    `gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (${reason})`,
+    `gh is not installed: install it from https://cli.github.com (${reason})`,
   originNotGithub: (url: string) => `origin ${url} is not a github.com URL`,
   githubLookupFailed: (repo: string, reason: string) =>
     `could not list the GitHub Projects of ${repo}: ${reason}; run gh auth refresh -s read:project`,
@@ -409,13 +366,6 @@ export const S = {
   groupCount: (n: number, column: KanbanColumn, isShort: boolean) =>
     isShort ? `${n}${COL[column].charAt(0)}` : `${n} ${COL[column]}`,
   newestMeta: (n: number) => `${n} newest`,
-  // Claude's limit, who waits for a slot and who is over it; `short` for a narrow pane.
-  claudeMeta: (limit: number, queued: number, over: number, isShort: boolean) =>
-    [
-      isShort ? `lim ${limit}` : `limit ${limit}`,
-      ...(queued === 0 ? [] : [isShort ? `${queued}q` : `${queued} queued`]),
-      ...(over === 0 ? [] : [`${over} over`]),
-    ].join(' · '),
   setAside: (card: KanbanCard) =>
     `Card #${card.number} is ${card.column} by the person; leave it unless they move it back.`,
   stillWorking: (card: KanbanCard) =>
@@ -496,9 +446,6 @@ export const S = {
   newCard: 'new',
   // Marks a spare row of a section, under the numbers.
   slot: '·',
-  // A queued card's place in the queue, in place of its age: `queued 1`, or `q1` in a narrow pane.
-  queued: (place: number, isShort: boolean) =>
-    isShort ? `q${place}` : `queued ${place}`,
   // What a section says when it holds no card, long and short; the person's surface decides some.
   emptyHuman: { long: 'All clear, nothing needs you', short: 'All clear' },
   emptyClaude: (canDrag: boolean): Copy => ({
@@ -513,22 +460,12 @@ export const S = {
   emptySuspended: { long: 'Nothing on hold', short: 'None' },
   emptyCancelled: { long: 'Nothing dropped', short: 'None' },
   noMatches: 'No matches',
-  // An empty board: what it is, and for an auto board on local cards how to use GitHub.
-  noCards: {
-    long: 'Cards live in .kanban/*.md here.',
-    short: 'Cards live in .kanban/',
+  // An empty board: what it is, or that GitHub is yet to be set up.
+  notSetUp: {
+    long: 'Cards show here once GitHub is set up.',
+    short: 'Not set up yet.',
   },
   noIssues: { long: 'No issues on this board yet.', short: 'No issues yet.' },
-  githubHint: [
-    {
-      long: 'On GitHub? Link a Project to the repo',
-      short: 'GitHub? Link a Project',
-    },
-    {
-      long: 'or set backend: github to see why.',
-      short: 'or set backend: github',
-    },
-  ] satisfies Copy[],
   // The key hint in a spare row at the bottom of the list, before and after the first key.
   legendIdle: {
     long: '⏎ open · m move · ⇧J/K reorder',
@@ -546,41 +483,27 @@ export const S = {
   hiddenByFilter: 'hidden by the filter',
   groupFolded: (group: string) => `${group} is folded`,
 
-  // #27
-  dismissedShow: (n: number) => `Show dismissed (${n})`,
-  dismissedHide: (n: number) => `Hide dismissed (${n})`,
-  dismissedRestore: 'Restore',
-  suggestDismissed: (title: string) =>
-    `"${title}" was suggested before and the person dismissed it; nothing was added. Do not suggest it again.`,
-  // #43
-  githubNeedsGh:
-    'GitHub needs the gh CLI. Install it (https://cli.github.com, or `brew install gh`), run `gh auth login`, then choose GitHub again.',
-  githubNeedsSignIn:
-    'Sign in first: run `gh auth login`, then choose GitHub again.',
-  githubUnavailable: 'GitHub is unavailable here: gh is not installed.',
-
   // #42
   // The system prompt's section on the backlog: what it is, which depends on the backend, then the rules.
   backlogIs: {
     github: (owner: string, project: number) =>
       `This project's backlog is GitHub Issues on board ${owner}/#${project}.`,
-    // The `github` setting, before any board is known.
+    // Before any board is known.
     githubAny: "This project's backlog is GitHub Issues.",
-    local: "This project's backlog is the .kanban/*.md cards.",
-    unknown: "This project's backlog is a kanban board.",
   },
   backlogRules: [
     'Keep it current with the kanban tools:',
-    '- Asked to work the backlog, or given no task: take the top Backlog card (kanban_list) and kanban_move it to claude before writing code.',
-    '- When the work a card tracks is done, record kanban_handoff, then kanban_move it to human. Never move a card to done: the person approves it.',
+    "- Asked to work the backlog, or given no task: take the top Backlog card from kanban_list (the person's and unassigned ones) and kanban_move it to claude before writing code. Leave other people's cards unless asked.",
+    '- When the work a card tracks is finished: record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
+    "- Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify. Record a handoff that says what you need first.",
     '- Blocked on a decision only the person can make: kanban_ask.',
-    '- Follow-ups: kanban_suggest. Use kanban_create only when asked.',
+    '- Create cards with kanban_create only when asked.',
     '- Never move cards into or out of Suspended or Cancelled.',
-    '- Use the kanban tools, not raw gh issue/gh project edits or hand edits of .kanban files, so the board stays in sync.',
+    '- Use the kanban tools, not raw gh issue/gh project edits, so the board stays in sync.',
   ].join('\n'),
   // Submitted when a turn ends with a card still in Claude and no handoff, question or move.
   reconcilePrompt: (n: number) =>
-    `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.`,
+    `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Done (or to Human if it needs the person's approval); if you need a decision, kanban_ask; if you are still working, say so and continue.`,
   // Toasted once a session when a turn changed files and no card was in play.
   untrackedWork:
     'This turn changed files with no card in Claude. If it is backlog work, move or create its card.',
@@ -597,21 +520,61 @@ export const S = {
   settingsFooter: 'Also in /config',
   // One line under each setting, by its `userConfig` field.
   settingHelp: {
-    backend: 'auto uses GitHub when it finds a board.',
-    claudeLimit: 'Cards Claude works at once; 0 is no limit.',
     reconcile: 'Remind Claude to hand off at turn end.',
   },
   settingOn: 'on',
   settingOff: 'off',
-  // Marks the option a setting starts with: `auto (default)`, `− 1 + (default 1)`.
+  // Marks the option a setting starts with: `on (default)`.
   settingDefault: ' (default)',
-  settingDefaultIs: (value: string) => ` (default ${value})`,
   settingCurrent: '✓',
-  settingLess: '−',
-  settingMore: '+',
   settingLocked: 'Set by your organization.',
   settingDenied: (reason: string) => `Not changed: ${reason}`,
   boardHeading: 'Board',
   changeBoardLink: 'Change board',
   boardFromConfig: 'Named in CLAUDE.md or AGENTS.md',
+
+  // Setting GitHub up for the board, with Claude.
+  setupNeeded: 'setup needed',
+  // What is missing, on the row above the setup button.
+  setupMissing: {
+    gh: 'GitHub needs the gh CLI, which is not installed.',
+    auth: 'gh is not signed in to GitHub.',
+    remote: 'This folder has no GitHub repo (origin).',
+    board: 'The repo has no GitHub Project board.',
+    config: 'The board in CLAUDE.md or AGENTS.md is unclear.',
+  } satisfies Record<KanbanSetupStep, string>,
+  setupButton: 'Set up with Claude',
+  setupAsked: 'Asked Claude to set up GitHub for the board.',
+  setupPrompt: (step: KanbanSetupStep, reason: string) =>
+    [
+      `Set up GitHub for the kanban board in this project. The board says: ${reason}`,
+      `Start from what is missing (${step}), then check the steps after it; skip any that are already done:`,
+      '1. gh: if `gh --version` fails, install the GitHub CLI (on macOS `brew install gh`, else https://cli.github.com) after asking me.',
+      '2. auth: if `gh auth status` fails, ask me to run `! gh auth login` myself (it is interactive), then `! gh auth refresh -s project` so gh can read and edit Projects.',
+      '3. remote: if this folder is not a git repo whose origin is on github.com, offer to create one with `gh repo create` (ask me for the name, owner and visibility first) or to add an existing repo as origin.',
+      '4. board: if no GitHub Project is linked to the repo, offer to create one with `gh project create` and link it with `gh project link`. Its Status field needs Backlog (or Todo), In progress and Done options; In review is optional.',
+      '5. config: write the repo and board to CLAUDE.md as two lines: "- Repo: `owner/name`" and "- Project board: #N".',
+      'Ask me before you create anything on GitHub. When it is done, tell me to press r: Refresh in the kanban pane.',
+    ].join('\n'),
+
+  // Whose cards: the view, the names people go by, a card's assignee.
+  who: { mine: 'Mine', open: 'Mine + open', all: 'Everyone' },
+  // In a narrow pane.
+  whoShort: { mine: 'Mine', open: 'Mine+', all: 'All' },
+  yourName: 'Your name',
+  yourNameHelp: (login: string) =>
+    `What your team sees for @${login}. Your cards stay assigned to @${login}, so a new name changes no issue.`,
+  nameChange: 'Change',
+  nameSave: 'Save',
+  nameCancel: 'Cancel',
+  nameUnknown: 'Shown once the board loads from GitHub.',
+  nameSaved: (name: string) => `Your name is now ${name}.`,
+  nameCleared: (login: string) => `You go by @${login} again.`,
+  nameFailed: (reason: string) => `Could not save your name: ${reason}`,
+  // The detail view's row of who has the card, the current one marked.
+  ownerRow: 'Owner',
+  assignNobody: 'nobody',
+  assignFailed: (reason: string) => `Could not change who has the card: ${reason}`,
+  listHidden: (n: number) =>
+    `${n} card${n === 1 ? '' : 's'} assigned to other people are left out; pass all: true to list them.`,
 }

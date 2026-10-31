@@ -2,19 +2,8 @@ import type { Register } from 'claude-code'
 
 import { restoreActivity, watchSpawn, watchStep } from './activity'
 import { readUi } from './atoms'
-import { backendMode } from './backend'
-import { describeBackend, guardBackend } from './backend-config'
-import {
-  applyMode,
-  bootstrap,
-  inBackground,
-  noteClosed,
-  openBoard,
-  refreshAfter,
-} from './board'
-import { guardEdit, guardWrite } from './guard'
+import { bootstrap, inBackground, noteClosed, openBoard } from './board'
 import { backlogSection } from './guide'
-import { applyQueue, claudeLimit } from './queue'
 import { dropUnfinishedAdds } from './quick-add'
 import { followSettings, resumeSettings } from './settings'
 import {
@@ -24,7 +13,6 @@ import {
   reconcileTurnStart,
 } from './reconcile'
 import { S } from './strings'
-import { restoreSuggestions, withSuggestSection } from './suggest'
 import { resumePendingSyncs } from './sync'
 import { TOOL_SPECS, runTool } from './tools'
 import {
@@ -36,8 +24,6 @@ import { renderDetail } from './view-detail'
 import { renderSettings } from './view-settings'
 
 export const register: Register = (on, options) => {
-  const mode = backendMode(options.backend)
-  const limit = claudeLimit(options.claudeLimit)
   let isReconciling = reconcileOn(options.reconcile)
   // The Settings view's change counts at once; the reload it causes carries the same value.
   followSettings((field, value) => {
@@ -61,8 +47,6 @@ export const register: Register = (on, options) => {
   ).catch(($, e, next) => next(e))
 
   on('session.start', async ($, e, next) => {
-    await applyMode($, mode)
-    await applyQueue($, mode, limit)
     await dropUnfinishedAdds($)
     await $.command.register({
       name: 'kanban',
@@ -72,7 +56,6 @@ export const register: Register = (on, options) => {
     inBackground($, bootstrap($))
     inBackground($, resumePendingSyncs($))
     inBackground($, restoreActivity($))
-    inBackground($, restoreSuggestions($))
     inBackground($, resumeSettings($))
 
     return next(e)
@@ -150,38 +133,10 @@ export const register: Register = (on, options) => {
     next.called ? next(e) : { deny: S.toolFailed('kanban_ask') },
   )
 
-  on('tool.call', { tool: 'mcp__kanban__kanban_suggest' }, ($, e) =>
-    runTool($, 'kanban_suggest', e),
-  ).catch(($, e, next) =>
-    next.called ? next(e) : { deny: S.toolFailed('kanban_suggest') },
-  )
-
-  // Tells Claude the board is the backlog and asks it to suggest follow-ups as
-  // cards, in two short sections.
+  // Tells Claude the board is the backlog, in one short section.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    const sections = withSuggestSection(composed.sections, e.traits)
 
-    return { sections: await backlogSection($, sections, e.traits) }
-  }).catch(($, e, next) => next(e))
-
-  // The GitHub backend cannot be chosen in /config while gh is missing or signed
-  // out. No key is matched: a marketplace install spells the row
-  // `kanban@<marketplace>.backend`, so these tell it from the rest themselves.
-  on('config.set', guardBackend).catch(($, e, next) => next(e))
-  on('config.describe', describeBackend).catch(($, e, next) => next(e))
-
-  // A card file Claude wrote or edited shows on the board at once, unless the
-  // edit would put a card in Human without a handoff; a guard that breaks lets
-  // the edit through.
-  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
-    const deny = await guardWrite($, e)
-
-    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
-  }).catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
-    const deny = await guardEdit($, e)
-
-    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
+    return { sections: await backlogSection($, composed.sections, e.traits) }
   }).catch(($, e, next) => next(e))
 }

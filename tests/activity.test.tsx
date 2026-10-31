@@ -4,7 +4,6 @@ import type { Engine } from 'claude-code/testing'
 
 import { colorOf } from '../hooks/activity-view'
 import { cellWidth } from '../hooks/model'
-import { stripRows } from '../hooks/suggest'
 import {
   TOOLBAR_ROWS,
   click,
@@ -18,32 +17,24 @@ import {
   rowKeys,
 } from './board-ui'
 import type { BoardUi } from './board-ui'
-import {
-  HANDED_OFF,
-  NOW,
-  PANE,
-  RUN,
-  SCROLL,
-  SYNC_PAUSE,
-  boot,
-  card,
-  path,
-} from './fakes'
+import { NOW, PANE, RUN, SCROLL, SYNC_PAUSE } from './fakes'
+import { bootGithub, issue } from './fake-github'
+import type { FakeCard } from './fake-github'
 import { overflow, renderPane } from './render'
 
 const EVERY_SURFACE = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 const WITH_CLIENT = ['terminal', 'desktop'] as const
 
 const KANBAN = (name: string) => `mcp__kanban__kanban_${name}` as const
-const API = 'card:md:0002-api'
-const API_ROW = 'act:md:0002-api'
+const API = 'card:gh:2'
+const API_ROW = 'act:gh:2'
 const MINUTE = 60_000
 
-const cards = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-})
+const cards = () => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API' }),
+  issue(3, { column: 'backlog', title: 'Write docs' }),
+]
 
 type Usage = {
   input_tokens: number
@@ -102,11 +93,11 @@ async function start<S extends RenderSurface>(
   $: Engine,
   on: On,
   surface: S,
-  files: Record<string, string> = cards(),
+  issues: FakeCard[] = cards(),
   store?: Record<string, unknown>,
   bodyColumns: number = PANE.props.bodyColumns,
 ) {
-  const world = boot(on, files, store)
+  const world = bootGithub(on, issues, store)
   const agents = fakeAgents(on)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
@@ -142,7 +133,7 @@ async function start<S extends RenderSurface>(
       reason: 'answer',
     })
 
-  return { ...world, files, agents, ui, turn, step, finish }
+  return { ...world, agents, ui, turn, step, finish }
 }
 
 const showCard = ($: Engine, number: number) =>
@@ -294,11 +285,10 @@ test('a subagent the spawn hook did not see is found in the agent list', async (
 })
 
 test('a subagent works for the card its spawner worked for when it was spawned', async ($, on) => {
-  const files = {
+  const { ui, turn } = await start($, on, 'terminal', [
     ...cards(),
-    [path(4, 'web')]: card(4, { status: 'claude', title: 'Build web' }),
-  }
-  const { ui, turn } = await start($, on, 'terminal', files)
+    issue(4, { column: 'claude', title: 'Build web' }),
+  ])
   await $.turn.start(turn())
   await showCard($, 2)
   await spawn($, 'Explore')
@@ -312,7 +302,7 @@ test('a subagent works for the card its spawner worked for when it was spawned',
   })
 
   expect(await detail(ui, API_ROW)).toBe('     ●● Explore · ⟳ WebSearch login')
-  expect(await detail(ui, 'act:md:0004-web')).toBe('     ● Claude · ⟳ working')
+  expect(await detail(ui, 'act:gh:4')).toBe('     ● Claude · ⟳ working')
   await ui.unmount()
 })
 
@@ -480,15 +470,14 @@ test('time adds up across rounds, one for each time the card goes to Claude', as
 
 test(
   'a turn started by the work prompt belongs to its card with no tool call',
-  // Card 2 is already in Claude; with the default limit of one, card 3 would wait.
-  { options: { claudeLimit: 0 } },
+  // Card 2 is already in Claude: card 3 joins it, and its work prompt is sent.
   async ($, on) => {
     const { clock, ui, prompts, turn, step, finish } = await start(
       $,
       on,
       'terminal',
     )
-    const from = await rowIndex(ui, 'card:md:0003-docs')
+    const from = await rowIndex(ui, 'card:gh:3')
     const to = await rowIndex(ui, 'hdr:claude')
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
@@ -509,27 +498,21 @@ test(
     await step(usage(5_000, 1_000))
     await finish(1)
 
-    expect(await detail(ui, 'act:md:0003-docs')).toMatch(/idle · 2m · 6k$/)
+    expect(await detail(ui, 'act:gh:3')).toMatch(/idle · 2m · 6k$/)
     await ui.unmount()
   },
 )
 
 test('a turn started by the answer prompt belongs to the card that was answered', async ($, on) => {
-  const files = {
-    [path(1, 'login')]: card(
-      1,
-      { status: 'human', title: 'Fix login' },
-      'Spec text.\n\n## Question (2026-10-25)\nWhich database?',
-    ),
-  }
-  const { clock, ui, prompts, step, finish } = await start(
-    $,
-    on,
-    'terminal',
-    files,
-  )
+  const { clock, ui, prompts, step, finish } = await start($, on, 'terminal', [
+    issue(1, {
+      column: 'human',
+      title: 'Fix login',
+      comments: ['## Question (2026-10-25)\nWhich database?'],
+    }),
+  ])
 
-  await click(ui, 'card:md:0001-login')
+  await click(ui, 'card:gh:1')
   await ui.input({ key: 'feedback', text: 'Staging.', kind: 'change' })
   await ui.press({ key: 'sendback' })
   await clock.advance(SYNC_PAUSE)
@@ -543,7 +526,7 @@ test('a turn started by the answer prompt belongs to the card that was answered'
   await step(usage(5_000, 1_000))
   await finish(1)
 
-  expect(await detail(ui, 'act:md:0001-login')).toMatch(/idle · 1m · 6k$/)
+  expect(await detail(ui, 'act:gh:1')).toMatch(/idle · 1m · 6k$/)
   await ui.unmount()
 })
 
@@ -583,9 +566,9 @@ test('watching changes nothing: the call answers as it would and a failure goes 
 })
 
 // Totals kept in the store, under the directory and the card.
-const SAVED_KEY = 'activity:/work:md:0002-api'
+const SAVED_KEY = 'activity:/work:gh:2'
 const savedCard = (extra: Record<string, unknown> = {}) => ({
-  cardId: 'md:0002-api',
+  cardId: 'gh:2',
   rounds: [
     {
       startedAt: NOW - 3 * 60 * MINUTE,
@@ -631,7 +614,7 @@ test('the totals are kept in the store when a turn ends', async ($, on) => {
     shape: 'activity-1',
     cwd: '/work',
     card: {
-      cardId: 'md:0002-api',
+      cardId: 'gh:2',
       rounds: [
         {
           startedAt: NOW,
@@ -658,40 +641,39 @@ test('the totals kept in the store come back after a reload', async ($, on) => {
   const { ui } = await start($, on, 'terminal', cards(), {
     [SAVED_KEY]: { shape: 'activity-1', cwd: '/work', card: savedCard() },
     // Another directory's, and one in a shape this code does not know, are left out.
-    'activity:/other:md:0002-api': {
+    'activity:/other:gh:2': {
       shape: 'activity-1',
       cwd: '/other',
-      card: savedCard({ cardId: 'md:0003-docs' }),
+      card: savedCard({ cardId: 'gh:3' }),
     },
-    'activity:/work:md:0003-docs': {
+    'activity:/work:gh:3': {
       shape: 'activity-0',
       cwd: '/work',
-      card: savedCard({ cardId: 'md:0003-docs' }),
+      card: savedCard({ cardId: 'gh:3' }),
     },
   })
 
   expect(await detail(ui)).toBe('     ●● Explore · idle 2h · 12m · 48k')
-  expect(await row(ui, 'act:md:0003-docs')).toBeUndefined()
+  expect(await row(ui, 'act:gh:3')).toBeUndefined()
   await ui.unmount()
 })
 
 test('setting aside the card Claude is working on, and only that one, toasts that its turn goes on', async ($, on) => {
-  const files = {
-    ...cards(),
-    [path(4, 'ui')]: card(4, { status: 'claude', title: 'Build UI' }),
-    [path(5, 'ops')]: card(5, { status: 'claude', title: 'Run ops' }),
-  }
-  const { clock, ui, turn, finish, toasts } = await start(
+  const { clock, ui, turn, finish, toasts, github } = await start(
     $,
     on,
     'terminal',
-    files,
+    [
+      ...cards(),
+      issue(4, { column: 'claude', title: 'Build UI' }),
+      issue(5, { column: 'claude', title: 'Run ops' }),
+    ],
   )
   await $.turn.start(turn())
   await showCard($, 2)
 
   // Card 4 is not the card the turn is on: setting it aside says nothing.
-  await click(ui, 'card:md:0004-ui')
+  await click(ui, 'card:gh:4')
   await ui.press({ key: 'move:cancelled' })
   await clock.advance(SYNC_PAUSE)
   await ui.press({ key: 'back' })
@@ -703,59 +685,17 @@ test('setting aside the card Claude is working on, and only that one, toasts tha
   expect(toasts).toEqual([
     'Claude is still working on #2. Press Esc in the prompt to stop it.',
   ])
-  expect(files[path(2, 'api')]).toContain('status: suspended')
+  expect(github.card(2).status).toBe('Suspended')
+  expect(github.card(4).status).toBe('Cancelled')
 
   // Once the turn is over nothing is said, of this card or another.
   await finish()
   await showCard($, 5)
   await ui.press({ key: 'back' })
-  await click(ui, 'card:md:0005-ops')
+  await click(ui, 'card:gh:5')
   await ui.press({ key: 'move:suspended' })
   await clock.advance(SYNC_PAUSE)
   expect(toasts).toHaveLength(1)
-  await ui.unmount()
-})
-
-test('a card waiting in the queue has no second row and no round, until it starts', async ($, on) => {
-  const files = {
-    ...cards(),
-    // Claude is at its limit of one with Docs, so Api waits.
-    [path(3, 'docs')]: card(
-      3,
-      { status: 'claude', title: 'Write docs' },
-      HANDED_OFF,
-    ),
-  }
-  const { clock, ui, prompts, turn, finish } = await start(
-    $,
-    on,
-    'terminal',
-    files,
-    {
-      [SAVED_KEY]: { shape: 'activity-1', cwd: '/work', card: savedCard() },
-      'queue:/work:auto': {
-        shape: 'queue-1',
-        held: { 'md:0002-api': 'resume' },
-      },
-    },
-  )
-  expect(await row(ui, API)).toBeDefined()
-  expect((await row(ui, API))?.text).toContain('queued 1')
-  expect(await row(ui, API_ROW)).toBeUndefined()
-
-  // Looking at the waiting card does not make it the card Claude works on.
-  await $.turn.start(turn())
-  await showCard($, 2)
-  await clock.advance(2 * MINUTE)
-  await finish()
-  expect(await row(ui, API_ROW)).toBeUndefined()
-
-  // Docs hands off: Api starts, and its row shows what it had, with no minutes added.
-  await $.tool.call({ tool: KANBAN('move'), card: 3, to: 'human' })
-  await clock.advance(SYNC_PAUSE)
-  expect(prompts).toEqual([expect.stringMatching(/^Resume kanban card #2: /)])
-  expect((await row(ui, API))?.text).not.toContain('queued')
-  expect(await detail(ui)).toBe('     ●● Explore · idle 2h · 12m · 48k')
   await ui.unmount()
 })
 
@@ -849,17 +789,14 @@ for (const surface of EVERY_SURFACE) {
 }
 
 // Six Claude cards and eight in Backlog: the Claude section scrolls with second rows in it.
-const crowded = () => {
-  const files: Record<string, string> = {}
-  for (let n = 11; n <= 16; n += 1) {
-    files[path(n, 'c')] = card(n, { status: 'claude', title: `Claude ${n}` })
-  }
-  for (let n = 21; n <= 28; n += 1) {
-    files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
-  }
-
-  return files
-}
+const crowded = () => [
+  ...Array.from({ length: 6 }, (_, index) =>
+    issue(11 + index, { column: 'claude', title: `Claude ${11 + index}` }),
+  ),
+  ...Array.from({ length: 8 }, (_, index) =>
+    issue(21 + index, { title: `Backlog ${21 + index}` }),
+  ),
+]
 
 async function crowd<S extends RenderSurface>($: Engine, on: On, surface: S) {
   const world = await start($, on, surface, crowded())
@@ -871,7 +808,7 @@ async function crowd<S extends RenderSurface>($: Engine, on: On, surface: S) {
 
 for (const surface of WITH_CLIENT) {
   test(`second rows are rows of their section, for the wheel, a drag and the cursor on the ${surface}`, async ($, on) => {
-    const { clock, ui, files, prompts, scrolls } = await crowd($, on, surface)
+    const { clock, ui, github, prompts, scrolls } = await crowd($, on, surface)
     const keysOf = async () => rowKeys(ui)
 
     // Three of the six cards show, each with its row, and the tree fits the pane.
@@ -879,12 +816,12 @@ for (const surface of WITH_CLIENT) {
       3,
     )
     expect((await keysOf()).length + TOOLBAR_ROWS).toBeLessThanOrEqual(30)
-    const index = (await keysOf()).indexOf('card:md:0011-c')
+    const index = (await keysOf()).indexOf('card:gh:11')
     expect((await keysOf()).slice(index, index + 4)).toEqual([
-      'card:md:0011-c',
-      'act:md:0011-c',
-      'card:md:0012-c',
-      'act:md:0012-c',
+      'card:gh:11',
+      'act:gh:11',
+      'card:gh:12',
+      'act:gh:12',
     ])
 
     // The wheel over a second row scrolls the Claude section.
@@ -892,93 +829,53 @@ for (const surface of WITH_CLIENT) {
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
-      pointer: { column: 3, row: await at('act:md:0011-c') },
+      pointer: { column: 3, row: await at('act:gh:11') },
     })
     expect(scrolls).toHaveLength(0)
     expect((await row(ui, 'more:claude:up'))?.text).toBe('      ↑ 1 more')
-    expect(await row(ui, 'card:md:0011-c')).toBeUndefined()
-    expect(await row(ui, 'act:md:0012-c')).toBeDefined()
+    expect(await row(ui, 'card:gh:11')).toBeUndefined()
+    expect(await row(ui, 'act:gh:12')).toBeDefined()
 
     // Rows below the second rows are the rows they are drawn on.
     await $.ui.scroll({
       ...SCROLL,
       by: 1,
-      pointer: { column: 3, row: await at('card:md:0021-b') },
+      pointer: { column: 3, row: await at('card:gh:21') },
     })
     expect(scrolls).toHaveLength(0)
     expect((await row(ui, 'more:backlog:up'))?.text).toBe('      ↑ 1 more')
     expect(await row(ui, 'more:claude:up')).toBeDefined()
 
     // A card dragged to the header of the section below lands there.
-    const from = await rowIndex(ui, 'card:md:0022-b')
+    const from = await rowIndex(ui, 'card:gh:22')
     const human = await rowIndex(ui, 'hdr:human')
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: human, button: 'left' })
     await ui.pointer({ type: 'up', x: 3, y: human, button: 'left' })
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(22, 'b')]).toContain('status: human')
+    expect(github.card(22).status).toBe('In review')
 
     // A drop on a second row puts the card right after the card it belongs to.
-    const other = await rowIndex(ui, 'card:md:0023-b')
-    const onRow = await rowIndex(ui, 'act:md:0012-c')
+    const other = await rowIndex(ui, 'card:gh:23')
+    const onRow = await rowIndex(ui, 'act:gh:12')
     await ui.pointer({ type: 'down', x: 3, y: other, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: onRow, button: 'left' })
-    expect(await lineRows(ui)).toEqual(['act:md:0012-c'])
+    expect(await lineRows(ui)).toEqual(['act:gh:12'])
     await ui.pointer({ type: 'up', x: 3, y: onRow, button: 'left' })
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(23, 'b')]).toContain('status: claude')
-    const order = (n: number, slug: string) =>
-      Number(/order: (\d+)/.exec(files[path(n, slug)] ?? '')?.[1])
-    expect(order(12, 'c')).toBeLessThan(order(23, 'b'))
-    expect(order(23, 'b')).toBeLessThan(order(13, 'c'))
-    // Claude is at its limit of one, so the card waits and no prompt goes out.
-    expect(prompts).toEqual([])
-    await ui.unmount()
-  })
-
-  test(`the wheel finds its section by the rows it is drawn on, under a strip of suggestions and second rows, on the ${surface}`, async ($, on) => {
-    const { ui, scrolls } = await crowd($, on, surface)
-    for (const n of [1, 2]) {
-      await $.tool.call({
-        tool: 'mcp__kanban__kanban_suggest',
-        title: `Idea ${n}`,
-        spec: 'Worth a card.',
-      })
-    }
-    // The strip is its header and two suggestions, between the toolbar and the list.
-    const strip = stripRows(2)
-    expect(strip).toBe(3)
-    const at = async (key: string) =>
-      (await rowIndex(ui, key)) + TOOLBAR_ROWS + strip
-
-    // Over the last second row of Claude shown: the Claude section, which scrolls itself.
-    await $.ui.scroll({
-      ...SCROLL,
-      by: 1,
-      pointer: { column: 3, row: await at('act:md:0012-c') },
-    })
-    expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:claude:up'))?.text).toBe('      ↑ 1 more')
-
-    // Over a card of Backlog, above the second rows: Backlog.
-    await $.ui.scroll({
-      ...SCROLL,
-      by: 1,
-      pointer: { column: 3, row: await at('card:md:0021-b') },
-    })
-    expect(scrolls).toHaveLength(0)
-    expect((await row(ui, 'more:backlog:up'))?.text).toBe('      ↑ 1 more')
-
-    // Over the strip, which follows the toolbar's two rows: the engine's.
-    await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 3 } })
-    expect(scrolls).toHaveLength(1)
+    expect(github.card(23).status).toBe('In progress')
+    const order = (n: number) => github.cards.findIndex(one => one.number === n)
+    expect(order(12)).toBeLessThan(order(23))
+    expect(order(23)).toBeLessThan(order(13))
+    // The move asks Claude to work on the card.
+    expect(prompts).toEqual([expect.stringMatching(/^Work on kanban card #23 /)])
     await ui.unmount()
   })
 
   test(`a click on a second row opens its card on the ${surface}`, async ($, on) => {
     const { ui } = await crowd($, on, surface)
 
-    await click(ui, 'act:md:0012-c')
+    await click(ui, 'act:gh:12')
 
     expect((await ui.find({ type: 'Text', text: /^#12 / }))?.text).toBe(
       '#12 Claude 12',
@@ -987,28 +884,31 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a card put in a new place in Claude keeps its round on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await crowd($, on, surface)
-    const from = await rowIndex(ui, 'card:md:0011-c')
-    const to = await rowIndex(ui, 'act:md:0012-c')
+    const { clock, ui, github } = await crowd($, on, surface)
+    const from = await rowIndex(ui, 'card:gh:11')
+    const to = await rowIndex(ui, 'act:gh:12')
 
     // Card 11 goes after card 12, in the same section.
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
     await ui.pointer({ type: 'move', x: 3, y: to, button: 'left' })
     await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(11, 'c')]).toContain('status: claude')
+    expect(github.card(11).status).toBe('In progress')
+    const order = (n: number) => github.cards.findIndex(one => one.number === n)
+    expect(order(12)).toBeLessThan(order(11))
 
     // Claude looks at it again: it is the same round, not a second.
     await showCard($, 11)
-    await click(ui, 'card:md:0011-c')
+    await click(ui, 'card:gh:11')
     const texts = (await ui.findAll({ type: 'Text' })).map(one => one.text)
     expect(texts.filter(text => text.startsWith('Round '))).toHaveLength(1)
     await ui.unmount()
   })
 
   test(`a second row is not dragged: pulling it moves its card nowhere on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await crowd($, on, surface)
-    const from = await rowIndex(ui, 'act:md:0011-c')
+    const { clock, ui, github } = await crowd($, on, surface)
+    const before = github.board()
+    const from = await rowIndex(ui, 'act:gh:11')
     const human = await rowIndex(ui, 'hdr:human')
 
     await ui.pointer({ type: 'down', x: 3, y: from, button: 'left' })
@@ -1016,7 +916,8 @@ for (const surface of WITH_CLIENT) {
     await ui.pointer({ type: 'up', x: 3, y: human, button: 'left' })
     await clock.advance(SYNC_PAUSE)
 
-    expect(files[path(11, 'c')]).toContain('status: claude')
+    expect(github.card(11).status).toBe('In progress')
+    expect(github.board()).toEqual(before)
     await ui.unmount()
   })
 
@@ -1025,15 +926,15 @@ for (const surface of WITH_CLIENT) {
 
     await keys(ui, 'down')
     for (let step = 0; step < 30; step += 1) {
-      if ((await litRows(ui)).includes('card:md:0011-c')) break
+      if ((await litRows(ui)).includes('card:gh:11')) break
       await keys(ui, 'down')
     }
-    expect(await litRows(ui)).toEqual(['card:md:0011-c'])
+    expect(await litRows(ui)).toEqual(['card:gh:11'])
 
     await keys(ui, 'down')
-    expect(await litRows(ui)).toEqual(['card:md:0012-c'])
+    expect(await litRows(ui)).toEqual(['card:gh:12'])
     await keys(ui, 'up')
-    expect(await litRows(ui)).toEqual(['card:md:0011-c'])
+    expect(await litRows(ui)).toEqual(['card:gh:11'])
     await ui.unmount()
   })
 }

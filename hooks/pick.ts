@@ -17,7 +17,7 @@ import { S } from './strings'
 export async function changeBoard($: EngineInterface): Promise<void> {
   try {
     const { backend } = await readBoard($)
-    if (backend?.kind !== 'github' || backend.isDetected !== true) return
+    if (backend?.isDetected !== true) return
 
     const choices = await boardsFor($, backend.repo)
     if (choices.length < 2) {
@@ -42,7 +42,7 @@ export async function chooseBoard(
 ): Promise<void> {
   try {
     const { backend } = await readBoard($)
-    if (backend?.kind === 'github' && backend.projectId === choice.id) {
+    if (backend?.projectId === choice.id) {
       await setBoard($, ({ pick: _done, ...board }) => board)
 
       return
@@ -51,11 +51,7 @@ export async function chooseBoard(
     const origin = await readOrigin($)
     const info = await resolveChoice($, repoOf(origin), choice)
     await saveDetected($, origin, info)
-    await setBoard($, board => ({
-      ...EMPTY_BOARD,
-      mode: board.mode,
-      backend: info,
-    }))
+    await setBoard($, () => ({ ...EMPTY_BOARD, backend: info }))
     await refresh($)
   } catch (error) {
     const reason = S.pickFailed(errorMessage(error))

@@ -167,6 +167,30 @@ export function isHandoffValid(all: readonly KanbanSection[]): boolean {
 }
 
 /**
+ * Whether the newest handoff comes after the newest Feedback or Answer and says
+ * what was done and how to check it: what a card needs before Claude closes it
+ * as Done. A question is no handoff here: it waits on the person.
+ */
+export function isClosingValid(all: readonly KanbanSection[]): boolean {
+  const sections = all.filter(one => one.byOther === undefined)
+  const handoff = sections.findLastIndex(
+    one => one.kind === 'handoff' || one.kind === 'question',
+  )
+  const reply = sections.findLastIndex(
+    one => one.kind === 'feedback' || one.kind === 'answer',
+  )
+  const newest = sections[handoff]
+
+  return (
+    handoff > reply &&
+    newest?.kind === 'handoff' &&
+    newest.fields !== undefined &&
+    isFilled(newest.fields.did) &&
+    isFilled(newest.fields.check)
+  )
+}
+
+/**
  * The question the person is being asked: the newest counted section, when it is a
  * question. Anything after it, such as an answer or feedback, closes it; a recorded check
  * run does not.

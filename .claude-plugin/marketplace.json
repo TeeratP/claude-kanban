@@ -1,12 +1,14 @@
 {
   "name": "claude-kanban",
   "description": "Claude Code mods by TeeratP: a kanban side pane for tasks shared between you and Claude.",
-  "owner": { "name": "TeeratP" },
+  "owner": {
+    "name": "TeeratP"
+  },
   "plugins": [
     {
       "name": "kanban",
       "source": "./",
-      "description": "A kanban side pane: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards."
+      "description": "A kanban side pane over GitHub Issues and a Projects board: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections, with Mine / Mine + open / Everyone views."
     }
   ]
 }

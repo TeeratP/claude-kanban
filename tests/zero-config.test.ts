@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-import { choicesOf, parseOrigin } from '../hooks/detect'
+import { SetupNeeded, choicesOf, parseOrigin, setupOf } from '../hooks/detect'
 import { detectBackend } from '../hooks/backend'
 import { columnOf, planMove } from '../hooks/github'
+import { S } from '../hooks/strings'
 import type { KanbanCard, KanbanGithub } from '../types'
 import { PUNN_AGENTS } from './configs'
 import { fakeEngine } from './fake-gh'
@@ -45,6 +46,16 @@ const ready = (...more: Route[]): Route[] => [
 const detect = (routes: Route[], files: Record<string, string> = {}) =>
   fakeEngine(routes, files)
 
+// What a detection that must fail threw.
+async function failureOf(work: Promise<unknown>): Promise<unknown> {
+  try {
+    await work
+  } catch (error) {
+    return error
+  }
+  throw new Error('expected the detection to fail')
+}
+
 test('one linked open board is used, with its title and what gh lists for its Status field', async () => {
   const { $, calls } = detect(
     ready(
@@ -53,7 +64,7 @@ test('one linked open board is used, with its title and what gh lists for its St
     ),
   )
 
-  expect(await detectBackend($, 'auto')).toEqual({
+  expect(await detectBackend($)).toEqual({
     kind: 'github',
     repo: BABY,
     owner: 'TeeratP',
@@ -89,7 +100,7 @@ test('several linked boards: the one with the most items from this repo wins, no
     ready(graphql({ linked: [CAST, bigger, SHARED] }), fieldList(ALL_STATUSES)),
   )
 
-  expect(await detectBackend($, 'auto')).toMatchObject({
+  expect(await detectBackend($)).toMatchObject({
     kind: 'github',
     projectNumber: 2,
     title: "@TeeratP's Kanban",
@@ -102,7 +113,7 @@ test('a tie asks the person: the error carries the boards, most items first', as
   const twin: FakeProject = { ...CAST, number: 8, title: 'Twin' }
   const { $ } = detect(ready(graphql({ linked: [CAST, twin] })))
 
-  const failure = await detectBackend($, 'auto').catch(
+  const failure = await detectBackend($).catch(
     (error: unknown) => error,
   )
 
@@ -119,23 +130,25 @@ test('several linked boards with no item from this repo are a tie too', async ()
     ready(graphql({ linked: [{ number: 6 }, { number: 7 }] })),
   )
 
-  const failure = await detectBackend($, 'auto').catch(
+  const failure = await detectBackend($).catch(
     (error: unknown) => error,
   )
 
   expect(choicesOf(failure)?.map(one => one.number)).toEqual([6, 7])
 })
 
-test('the same tie is a pick request under github too, and no other error is one', async () => {
+test('no other error is a pick request', async () => {
   const { $ } = detect(
     ready(graphql({ linked: [{ number: 6 }, { number: 7 }] })),
   )
 
-  const failure = await detectBackend($, 'github').catch(
+  const failure = await detectBackend($).catch(
     (error: unknown) => error,
   )
 
   expect(choicesOf(failure)?.map(one => one.number)).toEqual([6, 7])
+  expect(setupOf(failure)).toBeUndefined()
+  expect(choicesOf(new SetupNeeded('board', 'no board'))).toBeUndefined()
   expect(choicesOf(new Error('nope'))).toBeUndefined()
   expect(choicesOf('nope')).toBeUndefined()
 })
@@ -156,7 +169,7 @@ test('no linked board: the owner and viewer projects are scanned for items from 
     ),
   )
 
-  expect(await detectBackend($, 'auto')).toMatchObject({
+  expect(await detectBackend($)).toMatchObject({
     kind: 'github',
     projectNumber: 2,
     isDetected: true,
@@ -183,31 +196,29 @@ test('a scan finding two boards with items asks the person, one with a clear lea
       ),
     ).$
 
-  expect(await detectBackend(scan(5), 'auto')).toMatchObject({
+  expect(await detectBackend(scan(5))).toMatchObject({
     projectNumber: 2,
   })
-  const tied = await detectBackend(scan(3), 'auto').catch(
+  const tied = await detectBackend(scan(3)).catch(
     (error: unknown) => error,
   )
   expect(choicesOf(tied)?.map(one => one.number)).toEqual([2, 6])
 })
 
-test('no board anywhere: auto goes local and names the repo, github says what to do', async () => {
+test('no board anywhere: detection asks for a board and names the repo, quietly', async () => {
   const elsewhere: FakeProject = { number: 2, items: { 'TeeratP/other': 4 } }
-  const routes = ready(
-    graphql({ linked: [], viewer: [elsewhere], owner: [elsewhere] }),
+  const { $, logs } = detect(
+    ready(graphql({ linked: [], viewer: [elsewhere], owner: [elsewhere] })),
   )
-  const quiet = detect(routes)
-  const loud = detect(routes)
 
-  expect(await detectBackend(quiet.$, 'auto')).toEqual({
-    kind: 'local',
-    noBoardFor: 'TeeratP/attend-baby',
-  })
-  await expect(detectBackend(loud.$, 'github')).rejects.toThrow(
+  const failure = await failureOf(detectBackend($))
+
+  expect(failure).toBeInstanceOf(SetupNeeded)
+  expect((failure as Error).message).toBe(
     'no GitHub Project is linked to TeeratP/attend-baby: link one on GitHub, or add Repo and Project board lines to CLAUDE.md or AGENTS.md',
   )
-  expect(quiet.logs).toEqual([])
+  expect(setupOf(failure)).toEqual({ step: 'board', reason: S.githubNoBoard(BABY) })
+  expect(logs).toEqual([])
 })
 
 test('every form of a github.com origin gives owner/name; others give none', () => {
@@ -249,49 +260,68 @@ test('an ssh origin finds the board', async () => {
     fieldList(ALL_STATUSES),
   ])
 
-  expect(await detectBackend($, 'auto')).toMatchObject({ repo: BABY })
+  expect(await detectBackend($)).toMatchObject({ repo: BABY })
   expect(lines(calls)).toContain(
     'gh api graphql -f query=… -f o=TeeratP -f n=attend-baby',
   )
 })
 
-test('an origin that is not on github.com goes local under auto and is named under github', async () => {
-  const routes = [GH_VERSION, SIGNED_IN, remote('git@gitlab.com:me/app.git')]
-  const quiet = detect(routes)
-
-  expect(await detectBackend(quiet.$, 'auto')).toEqual({ kind: 'local' })
-  expect(quiet.logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: origin git@gitlab.com:me/app.git is not a github.com URL',
+test('an origin that is not on github.com asks for one, and gh is not asked anything', async () => {
+  const { $, logs, calls } = detect([
+    GH_VERSION,
+    SIGNED_IN,
+    remote('git@gitlab.com:me/app.git'),
   ])
-  expect(lines(quiet.calls)).toEqual(['git remote get-url origin'])
-  await expect(detectBackend(detect(routes).$, 'github')).rejects.toThrow(
+
+  expect(setupOf(await failureOf(detectBackend($)))).toEqual({
+    step: 'remote',
+    reason: S.githubNoRemote(S.originNotGithub('git@gitlab.com:me/app.git')),
+  })
+  expect(S.originNotGithub('git@gitlab.com:me/app.git')).toBe(
     'origin git@gitlab.com:me/app.git is not a github.com URL',
   )
+  expect(logs).toEqual([])
+  expect(lines(calls)).toEqual(['git remote get-url origin'])
 })
 
-test('gh not installed: auto goes local quietly, github says to install it', async () => {
-  const routes = [NO_GH, SIGNED_IN, ORIGIN, graphql({ linked: [SHARED] })]
-  const quiet = detect(routes)
-
-  expect(await detectBackend(quiet.$, 'auto')).toEqual({ kind: 'local' })
-  expect(quiet.logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: gh: command not found',
+test('gh not installed: detection asks for gh, and says where to get it', async () => {
+  const { $, calls } = detect([
+    NO_GH,
+    SIGNED_IN,
+    ORIGIN,
+    graphql({ linked: [SHARED] }),
   ])
-  expect(lines(quiet.calls)).not.toContain('gh auth status')
-  await expect(detectBackend(detect(routes).$, 'github')).rejects.toThrow(
-    'gh is not installed: install it from https://cli.github.com, or set backend to auto or local in /config (gh: command not found)',
+
+  const failure = await failureOf(detectBackend($))
+
+  expect(setupOf(failure)).toEqual({
+    step: 'gh',
+    reason: S.githubNoGh('gh: command not found'),
+  })
+  expect((failure as Error).message).toBe(
+    'gh is not installed: install it from https://cli.github.com (gh: command not found)',
   )
+  expect(lines(calls)).not.toContain('gh auth status')
 })
 
-test('gh signed out: auto goes local, github names the check and the fix', async () => {
-  const routes = [GH_VERSION, SIGNED_OUT, ORIGIN, graphql({ linked: [SHARED] })]
+test('gh signed out: detection asks for sign-in, naming the check and the fix', async () => {
+  const { $, calls } = detect([
+    GH_VERSION,
+    SIGNED_OUT,
+    ORIGIN,
+    graphql({ linked: [SHARED] }),
+  ])
 
-  expect(await detectBackend(detect(routes).$, 'auto')).toEqual({
-    kind: 'local',
+  const failure = await failureOf(detectBackend($))
+
+  expect(setupOf(failure)).toEqual({
+    step: 'auth',
+    reason: S.githubSignedOut('You are not logged into any GitHub hosts.'),
   })
-  await expect(detectBackend(detect(routes).$, 'github')).rejects.toThrow(
+  expect((failure as Error).message).toBe(
     'gh auth status failed: run gh auth login (You are not logged into any GitHub hosts.)',
   )
+  expect(lines(calls).some(line => line.startsWith('gh api'))).toBe(false)
 })
 
 test('no origin remote is named first and gh is not asked anything', async () => {
@@ -299,33 +329,35 @@ test('no origin remote is named first and gh is not asked anything', async () =>
     match: ['git', 'remote'],
     reply: { exitCode: 2, stderr: "error: No such remote 'origin'" },
   }
-  const loud = detect([NO_GH, SIGNED_OUT, noRemote])
-  const quiet = detect([GH_VERSION, SIGNED_IN, noRemote])
+  const { $, calls } = detect([NO_GH, SIGNED_OUT, noRemote])
 
-  await expect(detectBackend(loud.$, 'github')).rejects.toThrow(
+  const failure = await failureOf(detectBackend($))
+
+  expect(setupOf(failure)).toEqual({
+    step: 'remote',
+    reason: S.githubNoRemote("error: No such remote 'origin'"),
+  })
+  expect((failure as Error).message).toBe(
     "no origin remote: run git remote add origin <url> (error: No such remote 'origin')",
   )
-  expect(await detectBackend(quiet.$, 'auto')).toEqual({ kind: 'local' })
-  expect(lines(loud.calls)).toEqual(['git remote get-url origin'])
-  expect(lines(quiet.calls)).toEqual(['git remote get-url origin'])
+  expect(lines(calls)).toEqual(['git remote get-url origin'])
 })
 
-test('a lookup gh refuses is named under github with the scope to ask for, and logged under auto', async () => {
+test('a lookup gh refuses is named with the scope to ask for, and is no setup step', async () => {
   const refused =
     'Your token has not been granted the required scopes: read:project'
-  const routes = ready(graphql({ failure: refused }))
-  const quiet = detect(routes)
+  const { $, logs } = detect(ready(graphql({ failure: refused })))
 
-  expect(await detectBackend(quiet.$, 'auto')).toEqual({ kind: 'local' })
-  expect(quiet.logs).toEqual([
-    `kanban: using local cards, GitHub is not usable here: ${refused}`,
-  ])
-  await expect(detectBackend(detect(routes).$, 'github')).rejects.toThrow(
+  const failure = await failureOf(detectBackend($))
+
+  expect((failure as Error).message).toBe(
     `could not list the GitHub Projects of TeeratP/attend-baby: ${refused}; run gh auth refresh -s read:project`,
   )
+  expect(setupOf(failure)).toBeUndefined()
+  expect(logs).toEqual([])
 })
 
-test('a rate limit during detection is not a reason to settle for local files', async () => {
+test('a rate limit during detection is thrown as it is, not taken for no board', async () => {
   const limited = 'GraphQL: API rate limit already exceeded for user ID 1.'
   const { $ } = detect([
     ...ready(graphql({ failure: limited })),
@@ -335,22 +367,25 @@ test('a rate limit during detection is not a reason to settle for local files', 
     },
   ])
 
-  await expect(detectBackend($, 'auto')).rejects.toThrow('rate limit')
+  const failure = await failureOf(detectBackend($))
+
+  expect(String(failure)).toContain('rate limit')
+  expect(setupOf(failure)).toBeUndefined()
 })
 
-test('a project whose Status field cannot be used is named under github', async () => {
+test('a project whose Status field cannot be used is named, and is no setup step', async () => {
   const noStatus: Route = {
     match: ['gh', 'project', 'field-list'],
     reply: { stdout: JSON.stringify({ fields: [] }) },
   }
-  const routes = ready(graphql({ linked: [SHARED] }), noStatus)
+  const { $ } = detect(ready(graphql({ linked: [SHARED] }), noStatus))
 
-  await expect(detectBackend(detect(routes).$, 'github')).rejects.toThrow(
+  const failure = await failureOf(detectBackend($))
+
+  expect((failure as Error).message).toBe(
     "project board #2 can't be used: Project #2 has no Status field.",
   )
-  expect(await detectBackend(detect(routes).$, 'auto')).toEqual({
-    kind: 'local',
-  })
+  expect(setupOf(failure)).toBeUndefined()
 })
 
 test('explicit config wins: a named repo and board make no board lookup', async () => {
@@ -364,12 +399,12 @@ test('explicit config wins: a named repo and board make no board lookup', async 
     { 'CLAUDE.md': KANBAN },
   )
 
-  expect(await detectBackend($, 'auto')).toMatchObject({
+  expect(await detectBackend($)).toMatchObject({
     kind: 'github',
     repo: 'TeeratP/claude-kanban',
     projectNumber: 7,
   })
-  expect(await detectBackend($, 'auto')).not.toHaveProperty('isDetected')
+  expect(await detectBackend($)).not.toHaveProperty('isDetected')
   expect(lines(calls).slice(0, 3)).toEqual([
     'gh --version',
     'gh auth status',
@@ -389,7 +424,7 @@ test('explicit config with AGENTS.md behind an import still wins (punn)', async 
     { 'CLAUDE.md': '@AGENTS.md', 'AGENTS.md': PUNN_AGENTS },
   )
 
-  expect(await detectBackend($, 'auto')).toMatchObject({ projectNumber: 2 })
+  expect(await detectBackend($)).toMatchObject({ projectNumber: 2 })
 })
 
 test('a board config that cannot be read still lets zero-config find the board', async () => {
@@ -401,31 +436,30 @@ test('a board config that cannot be read still lets zero-config find the board',
     },
   )
 
-  expect(await detectBackend($, 'auto')).toMatchObject({
+  expect(await detectBackend($)).toMatchObject({
     kind: 'github',
     projectNumber: 2,
     isDetected: true,
   })
 })
 
-test('a board config that cannot be read and no board found keeps the unclear note', async () => {
+test('a board config that cannot be read and no board found asks to fix the config', async () => {
   const unclear = {
     'AGENTS.md':
       'Board id: `PVT_kwHOAcCsLc4Bbjg2`, number written down elsewhere.',
   }
   const none = detect(ready(graphql({ linked: [] })), unclear)
-  const noGh = detect([NO_GH], unclear)
+  const noGh = detect([NO_GH, ORIGIN], unclear)
 
-  expect(await detectBackend(none.$, 'auto')).toEqual({
-    kind: 'local',
-    isConfigUnclear: true,
+  expect(setupOf(await failureOf(detectBackend(none.$)))).toEqual({
+    step: 'config',
+    reason: S.githubConfigUnclear,
   })
-  expect(none.logs).toEqual([
-    'kanban: using local cards, GitHub is not usable here: CLAUDE.md or AGENTS.md mentions a project board, but no Repo and Project number could be read from it',
-  ])
-  expect(await detectBackend(noGh.$, 'auto')).toEqual({
-    kind: 'local',
-    isConfigUnclear: true,
+  expect(none.logs).toEqual([])
+  // A check that fails before any board is looked for is what to fix first.
+  expect(setupOf(await failureOf(detectBackend(noGh.$)))).toEqual({
+    step: 'gh',
+    reason: S.githubNoGh('gh: command not found'),
   })
 })
 
@@ -435,7 +469,7 @@ test('a board without In review keeps working, tells the person once, and maps H
     ready(graphql({ linked: [SHARED] }), fieldList(defaults)),
   )
 
-  const info = await detectBackend($, 'auto')
+  const info = await detectBackend($)
 
   expect(info).toMatchObject({
     kind: 'github',
@@ -447,7 +481,7 @@ test('a board without In review keeps working, tells the person once, and maps H
   ])
 
   // Detected again from the saved copy, the person is not told twice.
-  await detectBackend($, 'auto')
+  await detectBackend($)
   expect(toasts).toHaveLength(1)
   expect(lines(calls).filter(line => line.includes('field-list'))).toHaveLength(
     1,
@@ -462,7 +496,7 @@ test('other names for the statuses are understood, best name first', async () =>
     ),
   )
 
-  expect((await detectBackend($, 'auto')) as KanbanGithub).toMatchObject({
+  expect((await detectBackend($)) as KanbanGithub).toMatchObject({
     options: {
       backlog: 'o-To Do',
       ready: 'o-Ready',
@@ -481,7 +515,7 @@ test('a board with Ready but no Backlog uses Ready for both', async () => {
     ),
   )
 
-  expect((await detectBackend($, 'auto')) as KanbanGithub).toMatchObject({
+  expect((await detectBackend($)) as KanbanGithub).toMatchObject({
     options: { backlog: 'o-Ready', ready: 'o-Ready' },
   })
 })
@@ -491,7 +525,7 @@ test('a board with no Done (or Backlog, or In progress) cannot be used and says 
     ready(graphql({ linked: [SHARED] }), fieldList(['Backlog', 'In progress'])),
   )
 
-  await expect(detectBackend($, 'github')).rejects.toThrow(
+  await expect(detectBackend($)).rejects.toThrow(
     `project board #2 can't be used: The project's Status field has no "Done" option.`,
   )
 })
@@ -500,7 +534,7 @@ test('the detection is saved per directory and reused: later sessions only read 
   const { $, calls, saved } = detect(
     ready(graphql({ linked: [SHARED] }), fieldList(ALL_STATUSES)),
   )
-  const first = await detectBackend($, 'auto')
+  const first = await detectBackend($)
   expect(JSON.parse(saved.get('detect:/work') ?? 'null')).toMatchObject({
     shape: 'detect-1',
     origin: 'https://github.com/TeeratP/attend-baby.git',
@@ -508,8 +542,8 @@ test('the detection is saved per directory and reused: later sessions only read 
   })
   calls.length = 0
 
-  expect(await detectBackend($, 'auto')).toEqual(first)
-  expect(await detectBackend($, 'github')).toEqual(first)
+  expect(await detectBackend($)).toEqual(first)
+  expect(await detectBackend($)).toEqual(first)
   expect(lines(calls)).toEqual([
     'git remote get-url origin',
     'git remote get-url origin',
@@ -528,11 +562,11 @@ test('a changed origin is detected again', async () => {
     graphql({ linked: [SHARED] }),
     fieldList(ALL_STATUSES),
   ])
-  await detectBackend($, 'auto')
+  await detectBackend($)
   url = 'git@github.com:TeeratP/attend-baby.git'
   calls.length = 0
 
-  await detectBackend($, 'auto')
+  await detectBackend($)
 
   expect(lines(calls).filter(line => line.startsWith('gh api'))).toHaveLength(1)
 })
@@ -546,16 +580,18 @@ test('a saved detection that is not ours or no longer fits is ignored', async ()
     JSON.stringify({ shape: 'detect-0', info: { kind: 'local' } }),
   )
 
-  expect(await detectBackend($, 'auto')).toMatchObject({ projectNumber: 2 })
+  expect(await detectBackend($)).toMatchObject({ projectNumber: 2 })
   expect(lines(calls).filter(line => line.startsWith('gh api'))).toHaveLength(1)
 })
 
-test('a result that is not saved (local, a tie) is looked for again next time', async () => {
+test('a result that is not saved (no board, a tie) is looked for again next time', async () => {
   const { $, calls, saved } = detect(ready(graphql({ linked: [] })))
 
-  expect(await detectBackend($, 'auto')).toMatchObject({ noBoardFor: BABY })
+  expect(setupOf(await failureOf(detectBackend($)))).toMatchObject({
+    step: 'board',
+  })
   expect(saved.has('detect:/work')).toBe(false)
-  await detectBackend($, 'auto')
+  await failureOf(detectBackend($))
 
   expect(lines(calls).filter(line => line.startsWith('gh api'))).toHaveLength(4)
 })

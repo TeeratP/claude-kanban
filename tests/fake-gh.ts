@@ -41,8 +41,29 @@ export function fakeEngine(
   const fsCalls = { exists: [] as string[], reads: [] as string[] }
   // Kept as JSON text, as the engine keeps it.
   const saved = new Map<string, string>()
+  // The plugin's state, as the engine keeps it: each value with its version.
+  const state = new Map<string, { value: unknown; version: number }>()
+  const refKey = (ref: { plugin: string; key: string; id?: string }) =>
+    `${ref.plugin}:${ref.key}:${ref.id ?? ''}`
   const $ = {
     session: { cwd: async () => '/work' },
+    state: {
+      get: async (ref: { plugin: string; key: string; id?: string }) =>
+        state.get(refKey(ref)) ?? { value: undefined, version: 0 },
+      set: async (
+        ref: { plugin: string; key: string; id?: string },
+        value: unknown,
+        options?: { ifVersion?: number },
+      ) => {
+        const at = state.get(refKey(ref))?.version ?? 0
+        if (options?.ifVersion !== undefined && options.ifVersion !== at) {
+          return { isSet: false, version: at }
+        }
+        state.set(refKey(ref), { value, version: at + 1 })
+
+        return { isSet: true, version: at + 1 }
+      },
+    },
     store: {
       get: async (key: string) => {
         const text = saved.get(key)
@@ -144,6 +165,8 @@ export type FakeIssue = {
   labels?: string[]
   prs?: { number: number; repo?: string }[]
   repo?: string
+  /** Who has the issue, by login: the signed-in TeeratP unless given. */
+  assignees?: string[]
   /** The newest comments, oldest first; `author: null` is an account that is gone. */
   comments?: { body: string; createdAt?: string; author?: string | null }[]
 }
@@ -172,6 +195,9 @@ export function issueNode(issue: FakeIssue) {
       updatedAt: `2026-10-1${issue.number % 9}T10:00:00Z`,
       repository: { nameWithOwner: repo },
       labels: { nodes: (issue.labels ?? []).map(name => ({ name })) },
+      assignees: {
+        nodes: (issue.assignees ?? ['TeeratP']).map(login => ({ login })),
+      },
       closedByPullRequestsReferences: {
         nodes: (issue.prs ?? []).map(pr => ({
           number: pr.number,

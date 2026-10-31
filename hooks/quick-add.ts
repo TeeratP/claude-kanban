@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { KanbanCard, KanbanQuickAdd } from '../types'
-import { updateQuickAdd, updateSync, updateUi } from './atoms'
+import { readBoard, updateQuickAdd, updateSync, updateUi } from './atoms'
 import { createCard } from './backend'
 import { ensureBackend, inBackground, refresh, setBoard } from './board'
 import { isFiltering, matchesFilter } from './filter'
@@ -115,6 +115,8 @@ export async function addCard(
   added += 1
   const id = `${PENDING_PREFIX}${now}-${added}`
   const at = new Date(now).toISOString()
+  // The card is the person's from the start, so a view of their cards shows it.
+  const { viewer } = await readBoard($)
   const pending: KanbanCard = {
     id,
     number: 0,
@@ -123,6 +125,7 @@ export async function addCard(
     order: 0,
     createdAt: at,
     updatedAt: at,
+    ...(viewer === undefined ? {} : { assignees: [viewer] }),
   }
 
   await updateSync($, sync => ({
@@ -203,9 +206,10 @@ async function tellIfHidden(
   if (!isFiltering(ui.filter)) return
 
   const group = groupOf(card.column)
+  const { viewer } = await readBoard($)
   const notes = [
     ...(matchesFilter(card, ui.filter) ? [] : [S.hiddenByFilter]),
-    ...(applyFilter(cards, ui).ui.openGroup === group
+    ...(applyFilter(cards, ui, viewer).ui.openGroup === group
       ? []
       : [S.groupFolded(S.group[group])]),
   ]

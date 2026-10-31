@@ -3,19 +3,21 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { click, group, row, rowKeys } from './board-ui'
-import { PANE, RUN, SCROLL, boot, card, path } from './fakes'
+import { PANE, RUN, SCROLL } from './fakes'
+import { bootGithub, issue } from './fake-github'
 
-const board = () => {
-  const files: Record<string, string> = {}
-  for (let n = 1; n <= 9; n += 1) {
-    files[path(n, 'h')] = card(n, { status: 'human', title: `Human ${n}` })
-  }
-  for (let n = 11; n <= 18; n += 1) {
-    files[path(n, 'b')] = card(n, { status: 'backlog', title: `Backlog ${n}` })
-  }
+// Cards `from` to `to`, in that order on the board.
+const run = (from: number, to: number) =>
+  Array.from({ length: to - from + 1 }, (_, at) => from + at)
 
-  return files
-}
+const board = () => [
+  ...run(1, 9).map(n => issue(n, { column: 'human', title: `Human ${n}` })),
+  ...run(11, 18).map(n => issue(n, { title: `Backlog ${n}` })),
+]
+
+// Human cards are numbered 1-9, Backlog ones 11-18.
+const HUMAN_KEY = /^card:gh:\d$/
+const BACKLOG_KEY = /^card:gh:1\d$/
 
 // Tree rows with 9 Human and 8 Backlog cards, 30 body rows (seven rows under
 // each section's header): 0-1 toolbar, 2 Active, 3 Backlog header, 4-9 its
@@ -30,8 +32,8 @@ const HUMAN_MORE = 26
 const INACTIVE = 27
 const SLACK = 29
 
-async function start($: Engine, on: On, files = board()) {
-  const world = boot(on, files)
+async function start($: Engine, on: On, issues = board()) {
+  const world = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -55,8 +57,8 @@ test('the wheel over a section scrolls that section and nothing else', async ($,
   expect(scrolls).toHaveLength(0)
   expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 1 more$/)
   expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 2 more$/)
-  expect(await row(ui, 'card:md:0011-b')).toBeUndefined()
-  expect(await row(ui, 'card:md:0012-b')).toBeDefined()
+  expect(await row(ui, 'card:gh:11')).toBeUndefined()
+  expect(await row(ui, 'card:gh:12')).toBeDefined()
   expect(await row(ui, 'more:human:up')).toBeUndefined()
   expect((await row(ui, 'more:human:down'))?.text).toMatch(/^ +↓ 3 more$/)
   await ui.unmount()
@@ -125,12 +127,10 @@ test('the wheel over a header scrolls its section too', async ($, on) => {
 
 test('the wheel over a blank row belongs to its section: with nothing to scroll it is the engine, and the leftover rows under no section are too', async ($, on) => {
   // One card in Backlog leaves the rest of its seven rows blank.
-  const files: Record<string, string> = {}
-  for (let n = 1; n <= 8; n += 1) {
-    files[path(n, 'h')] = card(n, { status: 'human', title: `Human ${n}` })
-  }
-  files[path(11, 'b')] = card(11, { status: 'backlog', title: 'Only one' })
-  const { ui, scrolls } = await start($, on, files)
+  const { ui, scrolls } = await start($, on, [
+    ...run(1, 8).map(n => issue(n, { column: 'human', title: `Human ${n}` })),
+    issue(11, { title: 'Only one' }),
+  ])
   // A spare row of a section is marked with a quiet dot under the numbers.
   expect((await row(ui, 'blank:backlog:3'))?.text).toMatch(/^ +·$/)
 
@@ -162,19 +162,15 @@ test("the wheel over the toolbar's two rows, a group header, the legend or fille
 })
 
 test('every section of the Inactive group scrolls on its own, from its own offset', async ($, on) => {
-  const files: Record<string, string> = {}
-  for (let n = 1; n <= 12; n += 1) {
-    files[path(n, 'd')] = card(n, { status: 'done', title: `Done ${n}` })
-    files[path(20 + n, 'c')] = card(20 + n, {
-      status: 'cancelled',
-      title: `Cancelled ${n}`,
-    })
-    files[path(40 + n, 's')] = card(40 + n, {
-      status: 'suspended',
-      title: `Suspended ${n}`,
-    })
-  }
-  const { ui, scrolls } = await start($, on, files)
+  const { ui, scrolls } = await start(
+    $,
+    on,
+    run(1, 12).flatMap(n => [
+      issue(n, { column: 'done', title: `Done ${n}` }),
+      issue(20 + n, { column: 'cancelled', title: `Cancelled ${n}` }),
+      issue(40 + n, { column: 'suspended', title: `Suspended ${n}` }),
+    ]),
+  )
   await group(ui, 'inactive')
   // 0-1 toolbar, 2 Active (folded), 3 Inactive, 4 Done, 5-10 cards, 11 more,
   // 12 Cancelled, 13-18 cards, 19 more, 20 Suspended, 21-26 cards, 27 more.
@@ -213,7 +209,7 @@ test("scroll keys, which carry no pointer, are the engine's", async ($, on) => {
 
 test("in the detail view the wheel is the engine's", async ($, on) => {
   const { ui, scrolls } = await start($, on)
-  await click(ui, 'card:md:0011-b')
+  await click(ui, 'card:gh:11')
 
   await $.ui.scroll({ ...SCROLL, by: 1, pointer: { column: 3, row: 3 } })
 
@@ -235,7 +231,7 @@ test('the more rows page a section by a screenful', async ($, on) => {
 })
 
 test('a smaller pane gives every section fewer rows, and the same to each', async ($, on) => {
-  const { clock } = boot(on, board())
+  const { clock } = bootGithub(on, board())
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await clock.settle()
@@ -246,15 +242,19 @@ test('a smaller pane gives every section fewer rows, and the same to each', asyn
   })
 
   // Three rows under each header: two cards and the count of the rest.
-  expect((await rowKeys(ui)).filter(key => /-b$/.test(key))).toHaveLength(2)
-  expect((await rowKeys(ui)).filter(key => /-h$/.test(key))).toHaveLength(2)
+  expect(
+    (await rowKeys(ui)).filter(key => BACKLOG_KEY.test(key)),
+  ).toHaveLength(2)
+  expect(
+    (await rowKeys(ui)).filter(key => HUMAN_KEY.test(key)),
+  ).toHaveLength(2)
   expect((await row(ui, 'more:backlog:down'))?.text).toMatch(/^ +↓ 6 more$/)
   expect((await row(ui, 'more:human:down'))?.text).toMatch(/^ +↓ 7 more$/)
   await ui.unmount()
 })
 
 test("at the end of a section the wheel is the engine's, so a short pane can scroll", async ($, on) => {
-  const { clock, scrolls } = boot(on, board())
+  const { clock, scrolls } = bootGithub(on, board())
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await clock.settle()
@@ -266,8 +266,8 @@ test("at the end of a section the wheel is the engine's, so a short pane can scr
   // Two rows under each header, the least: one card and a count. The tree is
   // taller than the pane.
   expect((await rowKeys(ui)).filter(key => key.startsWith('card:'))).toEqual([
-    'card:md:0011-b',
-    'card:md:0001-h',
+    'card:gh:11',
+    'card:gh:1',
   ])
   // 0-1 toolbar, 2 Active, 3 Backlog, 4 its card, 5 its more row, 6 Human, 7 its card.
   const pointer = { column: 3, row: 4 }
@@ -276,12 +276,12 @@ test("at the end of a section the wheel is the engine's, so a short pane can scr
 
   await wheel(-1)
   expect(scrolls).toHaveLength(1)
-  expect(await row(ui, 'card:md:0011-b')).toBeDefined()
+  expect(await row(ui, 'card:gh:11')).toBeDefined()
 
   await wheel(1)
   expect(scrolls).toHaveLength(1)
-  expect(await row(ui, 'card:md:0011-b')).toBeUndefined()
-  expect(await row(ui, 'card:md:0012-b')).toBeDefined()
+  expect(await row(ui, 'card:gh:11')).toBeUndefined()
+  expect(await row(ui, 'card:gh:12')).toBeDefined()
 
   // The last card, under the count of the rest above it.
   await wheel(40)

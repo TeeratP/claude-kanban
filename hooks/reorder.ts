@@ -1,11 +1,12 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { KanbanCard, KanbanColumn } from '../types'
-import { readBoard } from './atoms'
+import { readBoard, readUi } from './atoms'
 import type { Place } from './board-client'
 import { filterCards } from './filter'
 import { sectionList } from './layout'
 import { isOrdered, isPendingId } from './model'
+import { whoCards } from './people'
 import { moveCard, moveOptions } from './sync'
 
 /**
@@ -32,7 +33,7 @@ export function anchorFor(
  * being made is not on the backend: it is not dropped, and no place is taken
  * from it.
  *
- * Under the board's filter `query`, `place` is among the cards the person sees,
+ * Under the board's view and filter `query`, `place` is among the cards the person sees,
  * and the card goes right after the nearest of them above that place (first
  * when none is above), ahead of the hidden cards that followed it.
  */
@@ -43,14 +44,19 @@ export async function dropCard(
   place?: Place,
   query = '',
 ): Promise<void> {
-  const { cards } = await readBoard($)
+  const { cards, viewer } = await readBoard($)
+  const { who } = await readUi($)
   const card = cards.find(one => one.id === cardId)
   if (card === undefined || isPendingId(cardId)) return
   if (place !== undefined && place.at !== 'top' && isPendingId(place.cardId)) {
     return
   }
 
-  const made = cards.filter(one => !isPendingId(one.id))
+  const made = whoCards(
+    cards.filter(one => !isPendingId(one.id)),
+    who,
+    viewer,
+  )
   const others = sectionList(filterCards(made, query), column).filter(
     one => one.id !== cardId,
   )
@@ -69,7 +75,7 @@ export async function dropCard(
  * Moves a card one place up or down in its section. Resolves its section, where
  * it ended up there and how many cards the section holds, or nothing when it
  * cannot move (at the end, in Done or Cancelled, or still being made). Under
- * the board's filter `query` a place is among the cards the person sees: the
+ * the board's view and filter `query` a place is among the cards the person sees: the
  * card passes the visible one next to it, hidden cards in between staying
  * where they are.
  */
@@ -81,7 +87,8 @@ export async function shiftCard(
 ): Promise<
   { column: KanbanColumn; index: number; length: number } | undefined
 > {
-  const { cards } = await readBoard($)
+  const { cards, viewer } = await readBoard($)
+  const { who } = await readUi($)
   const card = cards.find(one => one.id === cardId)
   if (card === undefined || !isOrdered(card.column) || isPendingId(cardId)) {
     return undefined
@@ -89,7 +96,11 @@ export async function shiftCard(
 
   const list = sectionList(
     filterCards(
-      cards.filter(one => !isPendingId(one.id)),
+      whoCards(
+        cards.filter(one => !isPendingId(one.id)),
+        who,
+        viewer,
+      ),
       query,
     ),
     card.column,

@@ -6,6 +6,7 @@ import type {
 } from 'claude-code'
 
 import type {
+  KanbanBoard,
   KanbanCard,
   KanbanColumn,
   KanbanDetail,
@@ -33,6 +34,7 @@ import {
   updateDetailState,
   updateUi,
 } from './atoms'
+import { assignCard } from './assign'
 import { appendSection, readDetail, readDiff } from './backend'
 import { ensureBackend } from './board'
 import { formatAnswer, formatFeedback, questionOf } from './handoff'
@@ -55,6 +57,7 @@ import {
   isOrdered,
   isPendingId,
 } from './model'
+import { nameOf } from './people'
 import { shiftCard } from './reorder'
 import { S } from './strings'
 import { moveCard, moveOptions, retry } from './sync'
@@ -236,6 +239,45 @@ export async function showTab(
   }
 }
 
+
+// The most people the Owner row offers besides the person.
+const OWNERS_SHOWN = 5
+
+/**
+ * Who the Owner row offers: the signed-in person first, then the others the
+ * board knows (named in its README or assigned a card), then nobody; the
+ * card's current owner is marked. None before the board knows who is signed in.
+ */
+function ownerChoices(
+  board: KanbanBoard,
+  card: KanbanCard,
+): { login: string | null; name: string; isCurrent: boolean }[] {
+  const { viewer, people } = board
+  if (viewer === undefined) return []
+
+  const lower = (login: string) => login.toLowerCase()
+  const known = [
+    ...(card.assignees ?? []),
+    ...Object.keys(people ?? {}),
+    ...board.cards.flatMap(one => one.assignees ?? []),
+  ].filter(login => lower(login) !== lower(viewer))
+  const others = known
+    .filter(
+      (login, index) =>
+        known.findIndex(one => lower(one) === lower(login)) === index,
+    )
+    .slice(0, OWNERS_SHOWN)
+  const current = (card.assignees ?? []).map(lower)
+
+  return [
+    ...[viewer, ...others].map(login => ({
+      login,
+      name: nameOf(people, login),
+      isCurrent: current.includes(lower(login)),
+    })),
+    { login: null, name: S.assignNobody, isCurrent: current.length === 0 },
+  ]
+}
 /**
  * Records the feedback on the card, then returns it to Claude with a prompt to resume.
  * On a card Claude asked a question on, the feedback is the answer.
@@ -778,6 +820,39 @@ export async function renderDetail(
       )}
     </Box>,
   )
+
+  // Who has the card: the person, the others the board knows, nobody.
+  const owners = ownerChoices(board, card)
+  if (owners.length > 0) {
+    blocks.push(
+      labelled(
+        'owner',
+        S.ownerRow,
+        owners.map(({ login, name, isCurrent }) => {
+          const text = `${isCurrent ? `${S.settingCurrent} ` : ''}${name}`
+
+          return {
+            key: login ?? 'nobody',
+            width: cellWidth(text),
+            button: isCurrent ? (
+              <Text key={`owner:${login ?? 'nobody'}`} weight="bold">
+                {text}
+              </Text>
+            ) : (
+              <Button
+                key={`owner:${login ?? 'nobody'}`}
+                plain
+                label={name}
+                onPress={() => assignCard($, card, login)}
+              >
+                <Text color="suggestion">{text}</Text>
+              </Button>
+            ),
+          }
+        }),
+      ),
+    )
+  }
 
   if (canReorder && siblings.length > 1) {
     const arrow = (dir: 'up' | 'down') => {

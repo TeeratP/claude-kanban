@@ -13,7 +13,7 @@ function cardOf(
   labels?: string[],
 ): KanbanCard {
   return {
-    id: `md:${number}`,
+    id: `gh:${number}`,
     number,
     title,
     column,

@@ -5,6 +5,7 @@ import type { Row, SectionCount } from './layout'
 import {
   COLUMNS,
   MOVE_KEY,
+  NEWEST_LIMIT,
   cellWidth,
   fit,
   groupOf,
@@ -14,8 +15,6 @@ import {
   truncate,
 } from './model'
 import type { Copy } from './model'
-import { headerMeta, queuePlace } from './queue'
-import type { QueueView } from './queue'
 import { S } from './strings'
 
 export type RowViewInput = {
@@ -30,15 +29,15 @@ export type RowViewInput = {
   ageOf: (card: KanbanCard) => string
   /** The pieces of a Claude card's second row. */
   detailOf: (card: KanbanCard) => Seg[]
-  /** Claude's limit and who waits for it. */
-  queue: QueueView
+  /** Whose a card is when the row should say so; empty when it should not. */
+  ownerOf?: (card: KanbanCard) => string
   /** Every card on the board: the number column is as wide as its widest number. */
   cards: readonly KanbanCard[]
   /** Whether the surface takes a drag, and whether it has text fields: some copy differs. */
   canDrag: boolean
   canType: boolean
-  /** Whether the cards come from GitHub, which an empty board says. */
-  isGithub: boolean
+  /** Whether GitHub is yet to be set up, which an empty board says. */
+  needsSetup: boolean
 }
 
 /** A message the board's Client posts, checked: it came from code, not a fact. */
@@ -75,8 +74,6 @@ const INDENT = '  '
 const RULE = '─'
 // A rule shorter than this is no rule: the header gives up its meta first.
 const MIN_RULE = 2
-// Under this many columns Claude's meta is written short.
-const SHORT_META_BELOW = 36
 // The "press a group" line needs this much room.
 const FOLDED_MIN_COLUMNS = 30
 // The chips carry the group's name from this many columns.
@@ -258,26 +255,35 @@ function emptyCopy(
   }
 }
 
-/** Whether a card is dim from end to end: finished or dropped, or waiting in Claude's queue. */
-export const isDimCard = (card: KanbanCard, isQueued: boolean) =>
-  card.column === 'done' || card.column === 'cancelled' || isQueued
+/** Whether a card is dim from end to end: finished or dropped. */
+export const isDimCard = (card: KanbanCard) =>
+  card.column === 'done' || card.column === 'cancelled'
 
-// How a card's number, title and age are drawn: its section sets it, a queued
-// card is dim all through, a question stands out and a failed move turns the
-// number red, where the eye scans.
-function cardStyles(
-  card: KanbanCard,
-  isQueued: boolean,
-  glyph: { color: string } | undefined,
-) {
+/**
+ * What a section header shows on its right: Done and Cancelled say they list
+ * only their newest ten once they hold more.
+ */
+export function headerMeta(
+  column: KanbanColumn,
+  total: number,
+): string | undefined {
+  return isOrdered(column) || total <= NEWEST_LIMIT
+    ? undefined
+    : S.newestMeta(NEWEST_LIMIT)
+}
+
+// How a card's number, title and age are drawn: its section sets it, a
+// question stands out and a failed move turns the number red, where the eye
+// scans.
+function cardStyles(card: KanbanCard, glyph: { color: string } | undefined) {
   const { column } = card
-  const isDim = isDimCard(card, isQueued)
+  const isDim = isDimCard(card)
   const number: Partial<Omit<Seg, 'text'>> =
     glyph?.color === 'error'
       ? { color: 'error' }
       : card.tag === 'question'
         ? { bold: true, color: 'permission' }
-        : column === 'suspended' && !isQueued
+        : column === 'suspended'
           ? {}
           : { dim: true }
   const title: Partial<Omit<Seg, 'text'>> = {
@@ -290,7 +296,7 @@ function cardStyles(
 
 /** The list rows (everything under the toolbar) as the Client draws them. */
 export function toRowViews(input: RowViewInput): RowView[] {
-  const { columns, isFiltered, glyphOf, ageOf, detailOf, queue } = input
+  const { columns, isFiltered, glyphOf, ageOf, detailOf } = input
   const views: RowView[] = []
   const numbers = numberColumn(input.cards, columns)
   // Titles, empty-state lines, bars and `more` rows all start at this cell.
@@ -351,16 +357,11 @@ export function toRowViews(input: RowViewInput): RowView[] {
 
       case 'header': {
         const moveKeys = moveKeysOf(row.column)
-        const meta = headerMeta(row.column, row.total, queue)
+        const meta = headerMeta(row.column, row.total)
         const rights: Right[] =
           meta === undefined || row.isLoading === true
             ? []
-            : [
-                ...(columns < SHORT_META_BELOW
-                  ? []
-                  : [{ text: meta.long, style: metaStyle(meta.isWarning) }]),
-                { text: meta.short, style: metaStyle(meta.isWarning) },
-              ]
+            : [{ text: meta, style: { dim: true } }]
         views.push({
           key: `hdr:${row.column}`,
           kind: 'header',
@@ -391,18 +392,14 @@ export function toRowViews(input: RowViewInput): RowView[] {
       case 'card': {
         const { card } = row
         const glyph = glyphOf(card)
-        const place = queuePlace(queue, card.id)
-        // A card not yet made has no age to give; a queued one says its place instead.
-        const age = isPendingId(card.id)
-          ? ''
-          : place === undefined
-            ? ageOf(card)
-            : S.queued(place, columns < SHORT_META_BELOW)
+        // A card not yet made has no age to give.
+        const age = isPendingId(card.id) ? '' : ageOf(card)
         const line = cardLine(card, columns, numbers, {
           mark: glyph?.text ?? '',
           age,
+          owner: input.ownerOf?.(card) ?? '',
         })
-        const styles = cardStyles(card, place !== undefined, glyph)
+        const styles = cardStyles(card, glyph)
         views.push({
           key: `card:${card.id}`,
           kind: 'card',
@@ -414,6 +411,7 @@ export function toRowViews(input: RowViewInput): RowView[] {
               seg(line.number, styles.number),
               seg(' '),
               seg(line.title, styles.title),
+              seg(line.owner, { dim: true }),
               seg(line.gap),
               seg(line.mark, {
                 dim: glyph?.dim ?? false,
@@ -522,38 +520,18 @@ export function toRowViews(input: RowViewInput): RowView[] {
           kind: 'text',
           ...view([
             seg(
-              `${INDENT}${fit(input.isGithub ? S.noIssues : S.noCards, columns - INDENT.length)}`,
+              `${INDENT}${fit(input.needsSetup ? S.notSetUp : S.noIssues, columns - INDENT.length)}`,
               { dim: true },
             ),
           ]),
         })
         break
 
-      case 'hint': {
-        const copy = S.githubHint[row.line]
-        views.push({
-          key: `hint:${row.line}`,
-          kind: 'text',
-          ...view([
-            seg(
-              copy === undefined
-                ? ''
-                : `${INDENT}${fit(copy, columns - INDENT.length)}`,
-              { dim: true },
-            ),
-          ]),
-        })
-        break
-      }
     }
   }
 
   return views
 }
-
-// Claude's meta is dim, and warning when cards are over the limit.
-const metaStyle = (isWarning: boolean): Right['style'] =>
-  isWarning ? { color: 'warning' } : { dim: true }
 
 function placeOf(value: unknown): Place | undefined {
   if (typeof value !== 'object' || value === null) return undefined

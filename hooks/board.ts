@@ -2,9 +2,9 @@ import type { EngineInterface, Timer } from 'claude-code'
 
 import type {
   KanbanBackendInfo,
-  KanbanBackendMode,
   KanbanBoard,
   KanbanCard,
+  KanbanPeople,
   KanbanSync,
 } from '../types'
 import {
@@ -14,19 +14,13 @@ import {
   updatePausedUntil,
   updateTick,
 } from './atoms'
-import { backendMode, detectBackend, loadCards } from './backend'
+import { detectBackend, loadCards } from './backend'
 import type { Loaded } from './backend'
-import { choicesOf, forgetDetected, savedDetected } from './detect'
+import { choicesOf, forgetDetected, savedDetected, setupOf } from './detect'
 import { isRateLimited, withStatusOptions } from './github'
-import {
-  EMPTY_BOARD,
-  PANE,
-  errorMessage,
-  isKanbanFile,
-  isPendingId,
-} from './model'
+import { PANE, errorMessage, isPendingId } from './model'
 import { placeIn } from './order'
-import { releaseQueued } from './queue'
+import { isForViewer } from './people'
 import { limitHit, pauseLeft } from './rate-limit'
 import { S } from './strings'
 
@@ -36,16 +30,17 @@ const AGE_MS = 30_000
 // The size the pane asks for; a retitle repeats it, as each open sets it anew.
 const PANE_ROWS = 30
 const PANE_COLUMNS = 44
-const CACHE_SHAPE = 'cache-2'
+const CACHE_SHAPE = 'cache-4'
 // A load that says the project is gone: a detected board was deleted or moved.
 const BOARD_GONE = /not found|could not resolve/i
 
 // What the pane opens with before the first load of a session answers.
 type BoardCache = {
   shape: typeof CACHE_SHAPE
-  mode: KanbanBackendMode
   backend: KanbanBackendInfo
   cards: KanbanCard[]
+  viewer?: string
+  people?: KanbanPeople
 }
 
 let loading: Promise<KanbanBoard> | undefined
@@ -76,9 +71,15 @@ export function noteClosed(): void {
   closes += 1
 }
 
-/** The status line: how many cards sit in Human, or nothing when none do. */
-function updateStatusLine($: EngineInterface, cards: readonly KanbanCard[]) {
-  const waiting = cards.filter(card => card.column === 'human').length
+/** The status line: how many cards sit in Human for the person (theirs or nobody's), or nothing when none do. */
+function updateStatusLine(
+  $: EngineInterface,
+  cards: readonly KanbanCard[],
+  viewer?: string,
+) {
+  const waiting = cards.filter(
+    card => card.column === 'human' && isForViewer(card, viewer),
+  ).length
   $.ui.status(waiting === 0 ? undefined : S.waiting(waiting))
   if (waiting !== titledFor) {
     titledFor = waiting
@@ -126,31 +127,9 @@ export async function setBoard(
   change: (board: KanbanBoard) => KanbanBoard,
 ): Promise<KanbanBoard> {
   const board = await updateBoard($, change)
-  updateStatusLine($, board.cards)
+  updateStatusLine($, board.cards, board.viewer)
 
   return board
-}
-
-/**
- * Makes the board the one for this `backend` setting. A board kept from
- * another setting (the plugin reloads when the setting changes, the board does
- * not) is dropped, so its cards never show under the new one.
- */
-export async function applyMode(
-  $: EngineInterface,
-  mode: KanbanBackendMode,
-): Promise<void> {
-  const seen = { isReset: false }
-  const board = await updateBoard($, current => {
-    seen.isReset = current.mode !== mode
-
-    return seen.isReset ? { ...EMPTY_BOARD, mode } : current
-  })
-  if (seen.isReset) {
-    // A pause for GitHub's rate limit belongs to the board that is gone.
-    await updatePausedUntil($, () => 0)
-    updateStatusLine($, board.cards)
-  }
 }
 
 // What the person is told about a card that is theirs now: the question Claude asks, or
@@ -176,8 +155,13 @@ function announceHumanChanges(
   const known = new Set(
     before.cards.filter(card => card.column === 'human').map(card => card.id),
   )
+  // Someone else's card waits on them, not on the person.
   for (const card of after.cards)
-    if (card.column === 'human' && !known.has(card.id))
+    if (
+      card.column === 'human' &&
+      !known.has(card.id) &&
+      isForViewer(card, after.viewer)
+    )
       $.ui.toast(waitingText(card))
 }
 
@@ -193,18 +177,6 @@ export function announceHandoff($: EngineInterface, card: KanbanCard): void {
 /** Runs work no hook waits on; a failure goes to the transcript, not nowhere. */
 export function inBackground($: EngineInterface, work: Promise<unknown>): void {
   work.catch((error: unknown) => $.ui.log(S.refreshFailed(errorMessage(error))))
-}
-
-/** Lets a Write or Edit finish, then reloads the board if it touched a card file. */
-export async function refreshAfter<R extends { deny?: string }>(
-  $: EngineInterface,
-  path: unknown,
-  running: Promise<R>,
-): Promise<R> {
-  const ran = await running
-  if (ran.deny === undefined && isKanbanFile(path)) inBackground($, refresh($))
-
-  return ran
 }
 
 /**
@@ -272,11 +244,10 @@ const cacheKey = (cwd: string) => `cache:${cwd}`
 
 function isBoardCache(value: unknown): value is BoardCache {
   if (typeof value !== 'object' || value === null) return false
-  const { shape, mode, backend, cards } = value as Record<string, unknown>
+  const { shape, backend, cards } = value as Record<string, unknown>
 
   return (
     shape === CACHE_SHAPE &&
-    backendMode(mode) === mode &&
     typeof backend === 'object' &&
     backend !== null &&
     Array.isArray(cards)
@@ -289,10 +260,11 @@ async function saveCache($: EngineInterface, board: KanbanBoard) {
   try {
     const entry: BoardCache = {
       shape: CACHE_SHAPE,
-      mode: board.mode,
       backend: board.backend,
       // A card still being made would come back as a ghost at the next start.
       cards: board.cards.filter(card => !isPendingId(card.id)),
+      ...(board.viewer === undefined ? {} : { viewer: board.viewer }),
+      ...(board.people === undefined ? {} : { people: board.people }),
     }
     await $.store.set(cacheKey(await $.session.cwd()), entry)
   } catch (error) {
@@ -309,7 +281,7 @@ async function readCache($: EngineInterface): Promise<BoardCache | undefined> {
 /**
  * Shows the cards saved from the last load while the first load of this session
  * runs. They are not "fetched": a tool must not take them for the board, so
- * `fetchedAt` stays 0. Cards saved under another `backend` setting are not shown.
+ * `fetchedAt` stays 0.
  */
 async function showCached($: EngineInterface) {
   try {
@@ -317,20 +289,16 @@ async function showCached($: EngineInterface) {
     if (cached === undefined) return
 
     await setBoard($, board =>
-      board.fetchedAt === 0 &&
-      board.cards.length === 0 &&
-      board.mode === cached.mode
+      board.fetchedAt === 0 && board.cards.length === 0
         ? {
             ...board,
-            // A saved local backend is not kept: the config may name a board by now.
-            // Nor is a detected board: detection checks it against the origin.
+            // A detected board is not kept: detection checks it against the origin.
             backend:
               board.backend ??
-              (cached.backend.kind === 'github' &&
-              cached.backend.isDetected !== true
-                ? cached.backend
-                : null),
+              (cached.backend.isDetected !== true ? cached.backend : null),
             cards: cached.cards,
+            ...(cached.viewer === undefined ? {} : { viewer: cached.viewer }),
+            ...(cached.people === undefined ? {} : { people: cached.people }),
             isLoading: true,
           }
         : board,
@@ -343,8 +311,8 @@ async function showCached($: EngineInterface) {
 /**
  * Sets the status line from the saved cards while the pane is closed, so it
  * shows what waits on the person without a load. The board is left as it is: no
- * load starts and the cards stay unfetched. A board already loaded, or saved
- * under another `backend` setting, is not the cache's to speak for.
+ * load starts and the cards stay unfetched. A board already loaded is not the
+ * cache's to speak for.
  */
 async function showCachedStatus($: EngineInterface) {
   try {
@@ -353,14 +321,11 @@ async function showCachedStatus($: EngineInterface) {
 
     const seen = { isUnloaded: false }
     await updateBoard($, board => {
-      seen.isUnloaded =
-        board.fetchedAt === 0 &&
-        board.cards.length === 0 &&
-        board.mode === cached.mode
+      seen.isUnloaded = board.fetchedAt === 0 && board.cards.length === 0
 
       return board
     })
-    if (seen.isUnloaded) updateStatusLine($, cached.cards)
+    if (seen.isUnloaded) updateStatusLine($, cached.cards, cached.viewer)
   } catch (error) {
     $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
   }
@@ -368,17 +333,15 @@ async function showCachedStatus($: EngineInterface) {
 
 /**
  * The backend this directory used last, from what is saved and with no call to
- * gh: the one the last load saved under this `backend` setting, else the board a
- * detection found. It only names the backend; the board is not set to it, and
+ * gh: the one the last load saved, else the board a detection found. It only names the backend; the board is not set to it, and
  * the origin is not checked. Undefined when nothing is saved.
  */
 export async function rememberedBackend(
   $: EngineInterface,
-  mode: KanbanBackendMode,
 ): Promise<KanbanBackendInfo | undefined> {
   try {
     const cached = await readCache($)
-    if (cached?.mode === mode) return cached.backend
+    if (cached !== undefined) return cached.backend
   } catch (error) {
     $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
   }
@@ -390,10 +353,10 @@ export async function rememberedBackend(
 export async function ensureBackend(
   $: EngineInterface,
 ): Promise<KanbanBackendInfo> {
-  const { backend, mode } = await readBoard($)
+  const { backend } = await readBoard($)
   if (backend !== null) return backend
 
-  detecting ??= detectInto($, mode).finally(() => {
+  detecting ??= detectInto($).finally(() => {
     detecting = undefined
   })
 
@@ -401,12 +364,9 @@ export async function ensureBackend(
 }
 
 // Detects the backend and puts it on the board, or the boards to pick from when detection asks.
-async function detectInto(
-  $: EngineInterface,
-  mode: KanbanBackendMode,
-): Promise<KanbanBackendInfo> {
+async function detectInto($: EngineInterface): Promise<KanbanBackendInfo> {
   try {
-    const info = await detectBackend($, mode)
+    const info = await detectBackend($)
     await setBoard($, ({ pick: _done, ...board }) => ({
       ...board,
       backend: info,
@@ -434,16 +394,14 @@ async function loadOrRedetect(
     return await loadCards($, info)
   } catch (error) {
     const isGone =
-      info.kind === 'github' &&
-      info.isDetected === true &&
-      BOARD_GONE.test(errorMessage(error))
+      info.isDetected === true && BOARD_GONE.test(errorMessage(error))
     if (!isGone) throw error
 
     await forgetDetected($)
     // The board just written, not the read this dispatch began with.
-    const { mode } = await setBoard($, board => ({ ...board, backend: null }))
+    await setBoard($, board => ({ ...board, backend: null }))
 
-    return loadCards($, await detectInto($, mode))
+    return loadCards($, await detectInto($))
   }
 }
 
@@ -470,33 +428,41 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
     const fetchedAt = await $.clock.now()
 
     const seen: { before?: KanbanBoard } = {}
-    const board = await setBoard($, ({ error: _cleared, ...current }) => {
+    const board = await setBoard($, current => {
+      const { error: _cleared, setup: _done, ...rest } = current
       seen.before = current
 
       return {
-        ...current,
+        ...rest,
         cards: mergeRemote(loaded.cards, current.cards, sync, confirmed),
+        ...(loaded.viewer === '' ? {} : { viewer: loaded.viewer }),
+        people: loaded.people,
         // The board's own Cancelled and Suspended options, as this load found them.
-        ...(current.backend?.kind === 'github'
-          ? {
+        ...(current.backend === null
+          ? {}
+          : {
               backend: withStatusOptions(current.backend, loaded.statusOptions),
-            }
-          : {}),
+            }),
         fetchedAt,
         isLoading: false,
       }
     })
     announceHumanChanges($, seen.before, board)
     await saveCache($, board)
-    // A card may have left Claude behind our back.
-    inBackground($, releaseQueued($))
 
     return board
   } catch (error) {
     const reason = errorMessage(error)
     $.ui.log(S.refreshFailed(reason), { to: 'debug' })
+    // Setup the pane offers to have Claude do, or none: the failure is another.
+    const setup = setupOf(error)
 
-    return setBoard($, board => ({ ...board, isLoading: false, error: reason }))
+    return setBoard($, ({ setup: _old, ...board }) => ({
+      ...board,
+      isLoading: false,
+      error: reason,
+      ...(setup === undefined ? {} : { setup }),
+    }))
   } finally {
     confirmedDuringLoad = undefined
   }
@@ -582,14 +548,14 @@ export async function openBoard($: EngineInterface): Promise<void> {
   await refresh($)
 }
 
-// Under `auto`, with nothing saved to name the backend from, detects it now, as
+// With nothing saved to name the board from, detects it now, as
 // the pane's first load would, and saves it, so the system prompt can name it and
 // a later session needs no detection. No cards are loaded. A failure, a rate
-// limit among them, is only logged.
+// limit among them, is only logged; missing setup is left to the pane.
 async function findBackend($: EngineInterface): Promise<void> {
-  const { mode, backend } = await readBoard($)
-  if (mode !== 'auto' || backend !== null) return
-  if ((await rememberedBackend($, mode)) !== undefined) return
+  const { backend } = await readBoard($)
+  if (backend !== null) return
+  if ((await rememberedBackend($)) !== undefined) return
 
   try {
     await ensureBackend($)
@@ -597,7 +563,11 @@ async function findBackend($: EngineInterface): Promise<void> {
     // began, before the backend was found.
     await saveCache($, await updateBoard($, board => board))
   } catch (error) {
-    $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+    // Missing setup is the pane's to show, and the load that shares this
+    // detection logs it: said here as well, it would be said twice.
+    if (setupOf(error) === undefined) {
+      $.ui.log(S.refreshFailed(errorMessage(error)), { to: 'debug' })
+    }
   }
 }
 

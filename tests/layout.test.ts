@@ -36,7 +36,7 @@ function cardOf(
   extra: Partial<KanbanCard> = {},
 ) {
   return {
-    id: `md:${number}`,
+    id: `gh:${number}`,
     number,
     title: `Card ${number}`,
     column,
@@ -210,21 +210,20 @@ test('sectionBody gives every section floor(avail / 3) rows and the 0 to 2 left 
   expect(sectionBody({ bodyRows: 30 })).toEqual({ body: 7, slack: 2 })
   expect(sectionBody({ bodyRows: 31 })).toEqual({ body: 8, slack: 0 })
   expect(sectionBody({ bodyRows: 32 })).toEqual({ body: 8, slack: 1 })
-  // The picker, filter, form and suggestions come off first.
+  // The picker, filter and form come off first.
   expect(sectionBody({ bodyRows: 30, extraRows: 3 })).toEqual({
     body: 6,
     slack: 2,
   })
-  // An empty board's note and hint rows too.
-  expect(sectionBody({ bodyRows: 30, footRows: 3 })).toEqual({
-    body: 6,
-    slack: 2,
+  // An empty board's note row too.
+  expect(sectionBody({ bodyRows: 30, footRows: 1 })).toEqual({
+    body: 7,
+    slack: 1,
   })
   // A pane too short for two rows each keeps two.
   expect(sectionBody({ bodyRows: 10 })).toEqual({ body: 2, slack: 0 })
-  expect(footRows([], false)).toBe(1)
-  expect(footRows([], true)).toBe(3)
-  expect(footRows(many('backlog', 1), true)).toBe(0)
+  expect(footRows([])).toBe(1)
+  expect(footRows(many('backlog', 1))).toBe(0)
 })
 
 test('all three sections are as tall as each other at 30, 31 and 32 rows, and the leftover rows are at the bottom', () => {
@@ -379,7 +378,7 @@ test('a section that overflows its height shows a count of the rest below, and a
 
 test('a card with a second row that does not fit gives up the second row, never the card', () => {
   const cards = [cardOf(1, 'claude'), cardOf(2, 'claude')]
-  const details = new Set(['md:1', 'md:2'])
+  const details = new Set(['gh:1', 'gh:2'])
   const kindsOf = (window: ReturnType<typeof sectionWindow>) =>
     window.rows.map(row => row.kind)
 
@@ -400,13 +399,13 @@ test('a card with a second row that does not fit gives up the second row, never 
   // Only the first card has a second row, and it does not fit beside the count.
   const three = [cardOf(1, 'claude'), cardOf(2, 'claude'), cardOf(3, 'claude')]
   expect(
-    kindsOf(sectionWindow(three, 'claude', 0, 2, new Set(['md:1']))),
+    kindsOf(sectionWindow(three, 'claude', 0, 2, new Set(['gh:1']))),
   ).toEqual(['card', 'more'])
 })
 
 test('sectionWindow always returns exactly the height it is given', () => {
   const list = many('claude', 9)
-  const details = new Set(['md:2', 'md:5', 'md:6'])
+  const details = new Set(['gh:2', 'gh:5', 'gh:6'])
   for (const body of [2, 3, 4, 5, 7, 12]) {
     for (let offset = -1; offset <= 10; offset += 1) {
       const window = sectionWindow(list, 'claude', offset, body, details)
@@ -472,31 +471,6 @@ test('an empty board adds the note under the groups, and the sections give up it
 
   expect(rows.at(-1)).toEqual({ kind: 'note' })
   expect(rows).toHaveLength(30)
-})
-
-test('an empty board with the hint adds the GitHub lines under the note, and a board with cards none', () => {
-  const empty = layoutBoard({
-    cards: [],
-    ui: INITIAL_UI,
-    bodyRows: 30,
-    hint: true,
-  })
-  const full = layoutBoard({
-    cards: [cardOf(1, 'claude')],
-    ui: INITIAL_UI,
-    bodyRows: 30,
-    hint: true,
-  })
-
-  expect(empty.slice(-3)).toEqual([
-    { kind: 'note' },
-    { kind: 'hint', line: 0 },
-    { kind: 'hint', line: 1 },
-  ])
-  expect(empty).toHaveLength(30)
-  expect(full.some(row => row.kind === 'note' || row.kind === 'hint')).toBe(
-    false,
-  )
 })
 
 test('the filter draws the group with matches: the open one if it has any, else the first that has', () => {
@@ -747,18 +721,17 @@ test('copy fits whole, else short, else cut', () => {
   expect(padStart('日', 3)).toBe(' 日')
 })
 
-test('while the first load runs the open group shows bars and no counts, and no note, hint, legend or folded Inactive summary', () => {
+test('while the first load runs the open group shows bars and no counts, and no note, legend or folded Inactive summary', () => {
   const rows = layoutBoard({
     cards: [],
     ui: INITIAL_UI,
     bodyRows: 30,
-    hint: true,
     legend: true,
     isLoading: true,
   })
 
   expect(rows).toHaveLength(30)
-  expect(rows.some(row => ['note', 'hint', 'legend'].includes(row.kind))).toBe(
+  expect(rows.some(row => ['note', 'legend'].includes(row.kind))).toBe(
     false,
   )
   expect(rows.filter(row => row.kind === 'header')).toEqual(
@@ -821,8 +794,8 @@ test('a pane of two-row sections shows two bars, and a loaded board no bars at a
     block(short, 'human').filter(row => row.kind === 'skeleton'),
   ).toHaveLength(2)
   expect(loaded.some(row => row.kind === 'skeleton')).toBe(false)
-  expect(footRows([], true, true)).toBe(0)
-  expect(footRows([], true, false)).toBe(3)
+  expect(footRows([], true)).toBe(0)
+  expect(footRows([], false)).toBe(1)
 })
 
 test('an empty section says so and leaves plain filler, a section with cards marks its spare room', () => {

@@ -1,6 +1,6 @@
 # claude-kanban
 
-Claude Code mod (plugin): a kanban side pane with two groups of sections: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended). Cards are backed by GitHub Issues + a Projects-v2 board, or by local `.kanban/*.md` files when GitHub isn't set up.
+Claude Code mod (plugin): a kanban side pane with two groups of sections: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended). Cards are GitHub Issues on a Projects-v2 board (GitHub only; the pane offers to have Claude set GitHub up when it is missing). A card's owner is its issue's assignees; the names people go by live in the board README.
 
 Design and API notes: `docs/plan.md` (authoritative spec; cites line numbers in the plugin-authoring types file).
 
@@ -24,4 +24,4 @@ npx -y -p typescript@5.6 tsc -p .
 ## Rules
 - All user-facing strings live in `hooks/strings.ts`.
 - `hooks/register.tsx` is wiring only; add `on(...)` calls there, logic in its own module.
-- Never run mutating `gh` commands against real repos from tests; use the fakes in `tests/fakes.ts`.
+- Never run mutating `gh` commands against real repos from tests; use the fake GitHub in `tests/fake-github.ts` (and `tests/fakes.ts` for the engine).

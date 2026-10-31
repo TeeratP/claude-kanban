@@ -2,7 +2,7 @@ import type { ConfigRow, On, RenderSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import type { KanbanSettingRow } from '../types'
+import type { KanbanGithub, KanbanSettingRow } from '../types'
 import { planStatus } from '../hooks/status'
 import type { StatusInput } from '../hooks/status'
 import {
@@ -10,22 +10,18 @@ import {
   boardAction,
   optionsOf,
   settingsOf,
-  stepped,
 } from '../hooks/settings'
 import { S } from '../hooks/strings'
 import { keys, litRows } from './board-ui'
 import type { BoardUi } from './board-ui'
 import { fakeProcess } from './fake-gh'
-import type { Route } from './fake-gh'
-import { HANDED_OFF, PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
-import { KANBAN, github } from './github-board'
+import { HANDOFF, bootGithub, issue } from './fake-github'
+import { PANE, RUN, SYNC_PAUSE, boot } from './fakes'
 import { overflow, renderPane } from './render'
 import {
   ALL_STATUSES,
   GH_VERSION,
-  NO_GH,
   SIGNED_IN,
-  SIGNED_OUT,
   fieldList,
   graphql,
   lines,
@@ -58,14 +54,8 @@ function row(
   }
 }
 
-// The three rows the mod lists in /config, as `$.config.list()` returns them.
+// The row the mod lists in /config, as `$.config.list()` returns it.
 const rows = (): ConfigRow[] => [
-  row('backend', 'Card backend (default: auto)', 'choice', 'auto', [
-    'auto',
-    'github',
-    'local',
-  ]),
-  row('claudeLimit', 'Claude limit (default: 1)', 'number', 1),
   row('reconcile', 'Reconcile at turn end (default: on)', 'boolean', true),
 ]
 
@@ -107,15 +97,11 @@ async function open(
   on: On,
   surface: RenderSurface = 'terminal',
   listed: ConfigRow[] = rows(),
-  // What `gh` answers: installed and signed in unless a test says otherwise.
-  gh: Route[] = [GH_VERSION, SIGNED_IN],
 ) {
-  const world = boot(on, {
-    [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-    'CLAUDE.md': '# Notes\n',
-  })
+  const world = bootGithub(on, [
+    issue(1, { column: 'human', title: 'Fix login' }),
+  ])
   const config = fakeConfig(on, listed)
-  fakeProcess(on, gh)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -172,6 +158,23 @@ for (const surface of EVERY_SURFACE) {
   })
 }
 
+// The Your name block for TeeratP, who goes by the login, at 44 columns.
+const YOUR_NAME = [
+  'Your name',
+  '  TeeratP · Change',
+  '  What your team sees for @TeeratP. Your',
+  '  cards stay assigned to @TeeratP, so a new',
+  '  name changes no issue.',
+]
+
+// The Board block for the board CLAUDE.md names.
+const NAMED_BOARD = [
+  'Board',
+  '  GitHub · TeeratP/claude-kanban',
+  '  #7',
+  '  Named in CLAUDE.md or AGENTS.md',
+]
+
 test('each setting shows its name without the default, its value, its help and where the default is', async ($, on) => {
   await open($, on)
   const ui = await settingsAt($, 'terminal', 44)
@@ -181,21 +184,13 @@ test('each setting shows its name without the default, its value, its help and w
     '',
     'Settings',
     '',
-    'Card backend',
-    '  ✓ auto (default) · github · local',
-    '  auto uses GitHub when it finds a board.',
-    '',
-    'Claude limit',
-    '  − 1 +  (default 1)',
-    '  Cards Claude works at once; 0 is no limit.',
-    '',
     'Reconcile at turn end',
     '  ✓ on (default) · off',
     '  Remind Claude to hand off at turn end.',
     '',
-    'Board',
-    '  Local · .kanban/',
-    '  Change board',
+    ...YOUR_NAME,
+    '',
+    ...NAMED_BOARD,
     '',
     'Also in /config',
   ])
@@ -204,31 +199,24 @@ test('each setting shows its name without the default, its value, its help and w
 
 test('a changed value moves the mark, and the default stays marked', async ($, on) => {
   const { config } = await open($, on)
-  config.rows = rows().map(one =>
-    one.key === 'kanban.backend'
-      ? { ...one, value: 'github' }
-      : one.key === 'kanban.reconcile'
-        ? { ...one, value: false }
-        : { ...one, value: 3 },
-  )
+  config.rows = rows().map(one => ({ ...one, value: false }))
   const ui = await settingsAt($, 'terminal', 44)
   const lines = await textOf(ui, 44)
 
-  expect(lines).toContain('  auto (default) · ✓ github · local')
   expect(lines).toContain('  on (default) · ✓ off')
-  expect(lines).toContain('  − 3 +  (default 1)')
+  expect(lines).not.toContain('  ✓ on (default) · off')
   await ui.unmount()
 })
 
-test('pressing another choice calls config.set with the row key and shows the new value', async ($, on) => {
+test('pressing another value calls config.set with the row key and shows the new value', async ($, on) => {
   const { config } = await open($, on)
   const ui = await settingsAt($, 'terminal', 44)
 
-  await ui.press({ key: 'set:backend:github' })
+  await ui.press({ key: 'set:reconcile:off' })
 
-  expect(config.sets).toEqual([['kanban.backend', 'github']])
-  expect(await textOf(ui, 44)).toContain('  auto (default) · ✓ github · local')
-  expect(await ui.find({ key: 'set:backend:github' })).toBeUndefined()
+  expect(config.sets).toEqual([['kanban.reconcile', false]])
+  expect(await textOf(ui, 44)).toContain('  on (default) · ✓ off')
+  expect(await ui.find({ key: 'set:reconcile:off' })).toBeUndefined()
   expect(config.lists).toBe(2)
   await ui.unmount()
 })
@@ -252,22 +240,22 @@ test('a boolean flips when its other word is pressed', async ($, on) => {
 
 test('a refused change shows its reason under the row and in a toast, and the value stays', async ($, on) => {
   const { config, toasts } = await open($, on)
-  config.denials['kanban.backend'] = 'gh is not installed.'
+  config.denials['kanban.reconcile'] = 'policy keeps it on.'
   const ui = await settingsAt($, 'terminal', 44)
 
-  await ui.press({ key: 'set:backend:github' })
+  await ui.press({ key: 'set:reconcile:off' })
 
   const lines = await textOf(ui, 44)
-  expect(lines).toContain('  ✓ auto (default) · github · local')
-  expect(lines).toContain('  Not changed: gh is not installed.')
-  const reason = lines.indexOf('  Not changed: gh is not installed.')
-  expect(lines.indexOf('Card backend')).toBeLessThan(reason)
-  expect(reason).toBeLessThan(lines.indexOf('Claude limit'))
-  expect(toasts).toEqual(['Not changed: gh is not installed.'])
+  expect(lines).toContain('  ✓ on (default) · off')
+  expect(lines).toContain('  Not changed: policy keeps it on.')
+  const reason = lines.indexOf('  Not changed: policy keeps it on.')
+  expect(lines.indexOf('Reconcile at turn end')).toBeLessThan(reason)
+  expect(reason).toBeLessThan(lines.indexOf('Board'))
+  expect(toasts).toEqual(['Not changed: policy keeps it on.'])
 
   // A change that goes through clears the reason.
   config.denials = {}
-  await ui.press({ key: 'set:backend:local' })
+  await ui.press({ key: 'set:reconcile:off' })
   expect((await textOf(ui, 44)).join('\n')).not.toContain('Not changed')
   await ui.unmount()
 })
@@ -277,7 +265,7 @@ test('a set that throws is shown like a refusal', async ($, on) => {
   config.failure = 'no such row'
   const ui = await settingsAt($, 'terminal', 44)
 
-  await ui.press({ key: 'set:backend:local' })
+  await ui.press({ key: 'set:reconcile:off' })
 
   expect(config.sets).toEqual([])
   expect((await textOf(ui, 44)).join('\n')).toContain('  Not changed: ')
@@ -286,46 +274,17 @@ test('a set that throws is shown like a refusal', async ($, on) => {
   await ui.unmount()
 })
 
-test('the number row steps by one and does not go below 0', async ($, on) => {
-  const { config } = await open($, on)
-  const ui = await settingsAt($, 'terminal', 44)
-
-  await ui.press({ key: 'more:claudeLimit' })
-  await ui.press({ key: 'less:claudeLimit' })
-  await ui.press({ key: 'less:claudeLimit' })
-
-  expect(config.sets).toEqual([
-    ['kanban.claudeLimit', 2],
-    ['kanban.claudeLimit', 1],
-    ['kanban.claudeLimit', 0],
-  ])
-  // At 0 the minus rests: dim text, no Button.
-  expect(await ui.find({ key: 'less:claudeLimit' })).toBeUndefined()
-  expect(await textOf(ui, 44)).toContain('  − 0 +  (default 1)')
-  expect((await ui.find({ key: 'more:claudeLimit' }))?.props.label).toBe('+')
-  await ui.unmount()
-})
-
-test('stepped clamps at 0 and rounds a decimal down', () => {
-  expect(stepped(0, -1)).toBeUndefined()
-  expect(stepped(0, 1)).toBe(1)
-  expect(stepped(3, -1)).toBe(2)
-  expect(stepped(2.5, -1)).toBe(1)
-  expect(stepped(2.5, 1)).toBe(3)
-})
-
 test('a row a trusted source owns shows its value, says so and has no buttons', async ($, on) => {
   const listed = rows().map(one =>
-    one.key === 'kanban.claudeLimit' ? { ...one, isLocked: true } : one,
+    one.key === 'kanban.reconcile' ? { ...one, isLocked: true } : one,
   )
   const { config } = await open($, on, 'terminal', listed)
   const ui = await settingsAt($, 'terminal', 44)
 
   const lines = await textOf(ui, 44)
-  expect(lines).toContain('  1')
+  expect(lines).toContain('  on')
   expect(lines).toContain('  Set by your organization.')
-  expect(await ui.find({ key: 'less:claudeLimit' })).toBeUndefined()
-  expect(await ui.find({ key: 'more:claudeLimit' })).toBeUndefined()
+  expect(await ui.find({ key: 'set:reconcile:off' })).toBeUndefined()
   expect(config.sets).toEqual([])
   await ui.unmount()
 })
@@ -333,15 +292,12 @@ test('a row a trusted source owns shows its value, says so and has no buttons', 
 for (const surface of ['terminal', 'desktop', 'mobile'] as const) {
   test(`no row runs past the pane at 24, 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
     const { config } = await open($, on, surface)
-    config.denials['kanban.backend'] =
-      'GitHub needs gh, which is not installed.'
-    config.rows = rows().map(one =>
-      one.key === 'kanban.claudeLimit' ? { ...one, value: 12 } : one,
-    )
+    config.denials['kanban.reconcile'] =
+      'Your organization keeps the turn-end reminder on.'
 
     for (const width of WIDTHS) {
       const ui = await settingsAt($, surface, width)
-      await ui.press({ key: 'set:backend:github' })
+      await ui.press({ key: 'set:reconcile:off' })
       const lines = await textOf(ui, width)
 
       expect(overflow(lines, width), `${surface} at ${width}`).toEqual([])
@@ -353,7 +309,7 @@ for (const surface of ['terminal', 'desktop', 'mobile'] as const) {
 }
 
 test('the view says it is loading until the rows are read', async ($, on) => {
-  const world = boot(on, { 'CLAUDE.md': '# Notes\n' })
+  const world = bootGithub(on, [issue(1, { column: 'human' })])
   let release: () => void = () => {}
   const held = new Promise<void>(resolve => {
     release = resolve
@@ -377,21 +333,21 @@ test('the view says it is loading until the rows are read', async ($, on) => {
     '',
     'Loading…',
     '',
-    'Board',
-    '  Local · .kanban/',
-    '  Change board',
+    ...YOUR_NAME,
+    '',
+    ...NAMED_BOARD,
     '',
     'Also in /config',
   ])
 
   release()
   await opening
-  expect((await textOf(ui, 44)).join('\n')).toContain('Card backend')
+  expect((await textOf(ui, 44)).join('\n')).toContain('Reconcile at turn end')
   await ui.unmount()
 })
 
 test('a /config that cannot be read is told, not left blank', async ($, on) => {
-  const world = boot(on, { 'CLAUDE.md': '# Notes\n' })
+  const world = bootGithub(on, [issue(1, { column: 'human' })])
   on('config.list', () => {
     throw new Error('menu unavailable')
   })
@@ -420,7 +376,7 @@ test('rows that are not the mod’s, or not shown, are left out', async ($, on) 
   const text = (await textOf(ui, 44)).join('\n')
   expect(text).not.toContain('Theme')
   expect(text).not.toContain('Note')
-  expect(text).toContain('Claude limit')
+  expect(text).toContain('Reconcile at turn end')
   await ui.unmount()
 })
 
@@ -430,12 +386,12 @@ test('a change made in /config reloads the plugin, and the open view reads the r
   expect(config.lists).toBe(1)
 
   config.rows = rows().map(one =>
-    one.key === 'kanban.claudeLimit' ? { ...one, value: 4 } : one,
+    one.key === 'kanban.reconcile' ? { ...one, value: false } : one,
   )
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   expect(config.lists).toBe(2)
-  expect(await textOf(ui, 44)).toContain('  − 4 +  (default 1)')
+  expect(await textOf(ui, 44)).toContain('  on (default) · ✓ off')
   await ui.unmount()
 })
 
@@ -446,11 +402,9 @@ test('settingsOf keeps the order of the fields, drops the default from the name 
   ] as KanbanSettingRow[])
 
   expect(found.map(one => [one.field, one.name, one.fallback])).toEqual([
-    ['backend', 'Card backend', 'auto'],
-    ['claudeLimit', 'Claude limit', '1'],
     ['reconcile', 'Reconcile at turn end', 'on'],
   ])
-  expect(optionsOf(found[2] as never).map(one => one.text)).toEqual([
+  expect(optionsOf(found[0] as never).map(one => one.text)).toEqual([
     'on',
     'off',
   ])
@@ -460,12 +414,12 @@ test('a title with no default keeps its whole text and marks none', () => {
   const [found] = settingsOf([
     {
       ...rows()[0],
-      label: 'Card backend@marketplace',
-      key: 'kanban@x.y.backend',
+      label: 'Reconcile at turn end@marketplace',
+      key: 'kanban@x.y.reconcile',
     },
   ] as KanbanSettingRow[])
 
-  expect(found?.name).toBe('Card backend@marketplace')
+  expect(found?.name).toBe('Reconcile at turn end@marketplace')
   expect(found?.fallback).toBe('')
 })
 
@@ -481,25 +435,29 @@ const CAST: FakeProject = {
   items: { 'TeeratP/attend-baby': 3 },
 }
 
-test('Change board is not offered when the backend is local by choice, and local under auto finds a board again', async () => {
-  const local = { mode: 'local', backend: { kind: 'local' } } as const
-  const auto = { mode: 'auto', backend: { kind: 'local' } } as const
+test('Change board picks again on a detected board, is not offered on one CLAUDE.md names, and shows a pick that waits', async () => {
+  const named = {
+    kind: 'github',
+    repo: 'TeeratP/claude-kanban',
+    owner: 'TeeratP',
+    projectNumber: 7,
+    projectId: 'PVT_7',
+    statusFieldId: 'F',
+    options: { backlog: 'b', inProgress: 'p', done: 'd' },
+  } satisfies KanbanGithub
 
-  expect(boardAction(local)).toBeUndefined()
-  expect(boardAction(auto)).toBe('detect')
-  expect(boardAction({ mode: 'auto', backend: null })).toBeUndefined()
-  expect(boardAction({ mode: 'auto', backend: null, pick: [] })).toBe('show')
+  expect(boardAction({ backend: { ...named, isDetected: true } })).toBe('pick')
+  expect(boardAction({ backend: named })).toBeUndefined()
+  expect(boardAction({ backend: null })).toBeUndefined()
+  expect(boardAction({ backend: null, pick: [] })).toBe('show')
 })
 
-// The status row's input for a local board that was updated just now.
-const local = (
+// The status row's input for a board that was updated just now.
+const input = (
   columns: number,
   over: Partial<StatusInput> = {},
 ): StatusInput => ({
   columns,
-  mode: 'auto',
-  kind: 'local',
-  note: undefined,
   boardName: '',
   status: 'updated just now',
   isAge: true,
@@ -507,57 +465,55 @@ const local = (
   ...over,
 })
 
-test('the status keeps the backend name and gives way to s: Settings: (auto) first, then the age, then the button shortens', () => {
+test('the status keeps the backend name and gives way to s: Settings: the age first, then the button shortens', () => {
   const plan = (columns: number, over?: Partial<StatusInput>) =>
-    planStatus(local(columns, over))
+    planStatus(input(columns, over))
 
   expect(plan(80)).toEqual({
-    text: ' Local (auto) · updated just now · ↑↓ ⏎ open · m move',
+    text: ' GitHub · updated just now · ↑↓ ⏎ open · m move',
     settings: 'long',
   })
   expect(plan(44)).toEqual({
-    text: ' Local (auto) · updated just now',
+    text: ' GitHub · updated just now',
     settings: 'long',
   })
-  // Below 44 the button takes the room the age had.
-  expect(plan(43)).toEqual({
-    text: ' Local · updated just now',
+  expect(plan(38)).toEqual({
+    text: ' GitHub · updated just now',
     settings: 'long',
   })
-  expect(plan(30)).toEqual({ text: ' Local', settings: 'long' })
-  expect(plan(18)).toEqual({ text: ' Local', settings: 'long' })
-  expect(plan(17)).toEqual({ text: ' Local', settings: 'short' })
-  expect(plan(14)).toEqual({ text: ' Local', settings: 'short' })
+  // Below 38 the button takes the room the age had.
+  expect(plan(37)).toEqual({ text: ' GitHub', settings: 'long' })
+  expect(plan(30)).toEqual({ text: ' GitHub', settings: 'long' })
+  expect(plan(19)).toEqual({ text: ' GitHub', settings: 'long' })
+  expect(plan(18)).toEqual({ text: ' GitHub', settings: 'short' })
+  expect(plan(15)).toEqual({ text: ' GitHub', settings: 'short' })
   // No room for the name and a button: the name wins, cut as before.
-  expect(plan(13)).toEqual({ text: ' Local · upd…' })
+  expect(plan(14)).toEqual({ text: ' GitHub · upd…' })
 })
 
-test('a note on why the board is local and an error stay, cut, beside the button', () => {
-  const noted = planStatus(local(44, { note: 'board config not understood' }))
-  expect(noted).toEqual({
-    text: ' Local · board config not under…',
-    settings: 'long',
-  })
-
+test('an error stays, cut, beside the button', () => {
   const failed = planStatus(
-    local(44, {
+    input(44, {
       status: 'gh auth status failed: run gh auth login',
       isAge: false,
     }),
   )
-  expect(failed.text).toBe(' Local · gh auth status failed:…')
+  expect(failed).toEqual({
+    text: ' GitHub · gh auth status failed…',
+    settings: 'long',
+  })
 })
 
 test('a detected board gets its name where the age gives way', () => {
-  const board = { boardName: "#2 @TeeratP's Kanban", kind: 'github' } as const
+  const board = { boardName: "#2 @TeeratP's Kanban" }
 
-  expect(planStatus(local(30, board))).toEqual({
+  expect(planStatus(input(30, board))).toEqual({
     text: ' GitHub · #2 @Tee…',
     settings: 'long',
   })
-  expect(planStatus(local(44, board)).text).toBe(' GitHub · updated just now')
-  expect(planStatus(local(80, board)).text).toBe(
-    " GitHub (auto) · #2 @TeeratP's Kanban · updated just now",
+  expect(planStatus(input(44, board)).text).toBe(' GitHub · updated just now')
+  expect(planStatus(input(80, board)).text).toBe(
+    " GitHub · #2 @TeeratP's Kanban · updated just now",
   )
 })
 
@@ -577,25 +533,25 @@ const flush = (text: string, columns: number, button = 's: Settings') =>
 test('row 1 holds the status and s: Settings flush right at 24, 30, 44 and 80 columns', async ($, on) => {
   await open($, on)
 
-  expect(await firstRow($, 'terminal', 24)).toBe(flush(' Local', 24))
-  expect(await firstRow($, 'terminal', 30)).toBe(flush(' Local', 30))
+  expect(await firstRow($, 'terminal', 24)).toBe(flush(' GitHub', 24))
+  expect(await firstRow($, 'terminal', 30)).toBe(flush(' GitHub', 30))
   expect(await firstRow($, 'terminal', 44)).toBe(
-    flush(' Local (auto) · updated just now', 44),
+    flush(' GitHub · updated just now', 44),
   )
   expect(await firstRow($, 'terminal', 80)).toBe(
-    flush(' Local (auto) · updated just now · ↑↓ ⏎ open · m move', 80),
+    flush(' GitHub · updated just now · ↑↓ ⏎ open · m move', 80),
   )
   // The mobile app has no key hint.
   expect(await firstRow($, 'mobile', 80)).toBe(
-    flush(' Local (auto) · updated just now', 80),
+    flush(' GitHub · updated just now', 80),
   )
 })
 
 test('row 1 shortens the button to s: Set… when the backend name has no more room', async ($, on) => {
   await open($, on)
 
-  expect(await firstRow($, 'terminal', 17)).toBe(flush(' Local', 17, 's: Set…'))
-  expect(await firstRow($, 'terminal', 12)).toBe(' Local · up…')
+  expect(await firstRow($, 'terminal', 17)).toBe(flush(' GitHub', 17, 's: Set…'))
+  expect(await firstRow($, 'terminal', 12)).toBe(' GitHub · u…')
 })
 
 test('every setting has help', () => {
@@ -607,9 +563,7 @@ const URL = 'https://github.com/TeeratP/attend-baby.git'
 
 // The repo has two linked boards; the one with the most of its issues is used.
 async function openDetected($: Engine, on: On) {
-  const world = boot(on, {
-    [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  })
+  const world = boot(on, {})
   fakeConfig(on, rows())
   fakeProcess(on, [
     GH_VERSION,
@@ -660,29 +614,21 @@ test('a long repo name is cut, not wrapped, in the narrowest pane', async ($, on
 })
 
 test('a GitHub board named in CLAUDE.md is shown, with a note that it is set there and no Change board', async ($, on) => {
-  const world = boot(on, { 'CLAUDE.md': KANBAN })
+  const world = bootGithub(on, [issue(1, { column: 'human' })])
   fakeConfig(on, rows())
-  github(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
   const ui = await settingsAt($, 'terminal', 44)
 
   const text = await textOf(ui, 44)
-  expect(text.slice(text.indexOf('Board'), -2)).toEqual([
-    'Board',
-    '  GitHub · TeeratP/claude-kanban',
-    '  #7',
-    '  Named in CLAUDE.md or AGENTS.md',
-  ])
+  expect(text.slice(text.indexOf('Board'), -2)).toEqual(NAMED_BOARD)
   expect(await ui.find({ key: 'board:change' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('under auto, a local board with no GitHub board found says why, and Change board looks again', async ($, on) => {
-  const world = boot(on, {
-    [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  })
+test('with no GitHub board found the Board row says setup is needed, and offers no Change board', async ($, on) => {
+  const world = boot(on, {})
   fakeConfig(on, rows())
   const commands = fakeProcess(on, [
     GH_VERSION,
@@ -703,65 +649,12 @@ test('under auto, a local board with no GitHub board found says why, and Change 
   const text = await textOf(ui, 44)
   expect(text.slice(text.indexOf('Board'), -2)).toEqual([
     'Board',
-    '  Local · .kanban/',
-    '  no GitHub board for TeeratP/attend-baby',
-    '  Change board',
+    '  GitHub',
+    '  setup needed',
   ])
-
-  await ui.press({ key: 'board:change' })
-  await world.clock.settle()
-
-  expect(searches()).toBe(first * 2)
-  // Nothing was found again, so the view stays.
-  expect(await ui.find({ key: 'back' })).toBeDefined()
-  await ui.unmount()
-})
-
-// What a refusal reads in the view, wrapped lines joined.
-const reasonShown = async (ui: Awaited<ReturnType<typeof mount>>) =>
-  (await textOf(ui, 44)).map(line => line.trim()).join(' ')
-
-test('choosing GitHub in the view is refused while gh is not installed, as /config refuses it', async ($, on) => {
-  const { config, toasts } = await open($, on, 'terminal', rows(), [NO_GH])
-  const ui = await settingsAt($, 'terminal', 44)
-
-  await ui.press({ key: 'set:backend:github' })
-
-  expect(config.sets).toEqual([])
-  expect(toasts).toEqual([`Not changed: ${S.githubNeedsGh}`])
-  expect(await reasonShown(ui)).toContain(`Not changed: ${S.githubNeedsGh}`)
-  expect(await textOf(ui, 44)).toContain('  ✓ auto (default) · github · local')
-
-  // Auto and local never need gh.
-  await ui.press({ key: 'set:backend:local' })
-  expect(config.sets).toEqual([['kanban.backend', 'local']])
-  expect(await reasonShown(ui)).not.toContain('Not changed')
-  await ui.unmount()
-})
-
-test('choosing GitHub in the view is refused while gh is signed out', async ($, on) => {
-  const { config, toasts } = await open($, on, 'terminal', rows(), [
-    GH_VERSION,
-    SIGNED_OUT,
-  ])
-  const ui = await settingsAt($, 'terminal', 44)
-
-  await ui.press({ key: 'set:backend:github' })
-
-  expect(config.sets).toEqual([])
-  expect(toasts).toEqual([`Not changed: ${S.githubNeedsSignIn}`])
-  expect(await reasonShown(ui)).toContain(`Not changed: ${S.githubNeedsSignIn}`)
-  await ui.unmount()
-})
-
-test('choosing GitHub in the view goes through while gh is installed and signed in', async ($, on) => {
-  const { config, toasts } = await open($, on)
-  const ui = await settingsAt($, 'terminal', 44)
-
-  await ui.press({ key: 'set:backend:github' })
-
-  expect(config.sets).toEqual([['kanban.backend', 'github']])
-  expect(toasts).toEqual([])
+  // The setup offer on the board is the way on; there is nothing to pick.
+  expect(await ui.find({ key: 'board:change' })).toBeUndefined()
+  expect(searches()).toBe(first)
   await ui.unmount()
 })
 
@@ -789,23 +682,20 @@ async function typed(ui: BoardUi, ...names: string[]) {
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`m then s moves the carried card to Suspended and does not open Settings, and a bare s opens it on the ${surface}`, async ($, on) => {
-    const files: Record<string, string> = {
-      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-      'CLAUDE.md': '# Notes\n',
-    }
-    const world = boot(on, files)
+    const world = bootGithub(on, [
+      issue(3, { column: 'backlog', title: 'Write docs' }),
+    ])
     fakeConfig(on, rows())
-    fakeProcess(on, [GH_VERSION, SIGNED_IN])
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
     await world.clock.settle()
     const ui = await mount($, surface)
 
-    await goTo(ui, 'card:md:0003-docs')
+    await goTo(ui, 'card:gh:3')
     await typed(ui, 'm', 's')
     await world.clock.advance(SYNC_PAUSE)
 
-    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    expect(world.github.card(3).status).toBe('Suspended')
     expect(await ui.find({ key: 'back' })).toBeUndefined()
 
     // Not carrying, `s` opens Settings.
@@ -815,10 +705,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 
   test(`a fast m then s suspends the card and never opens Settings, though the host hears the Client late on the ${surface}`, async ($, on) => {
-    const files: Record<string, string> = {
-      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-    }
-    const world = boot(on, files)
+    const world = bootGithub(on, [
+      issue(3, { column: 'backlog', title: 'Write docs' }),
+    ])
     fakeConfig(on, rows())
     // What the Client posts reaches the host after the next key: its writes of
     // the pane's state wait until `release`.
@@ -836,7 +725,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await world.clock.settle()
     const ui = await mount($, surface)
 
-    await goTo(ui, 'card:md:0003-docs')
+    await goTo(ui, 'card:gh:3')
     held.isOn = true
     // `m` is sent but not yet heard by the host when `s` comes.
     const carrying = typed(ui, 'm')
@@ -845,27 +734,26 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await Promise.all([carrying, dropping])
     await world.clock.advance(SYNC_PAUSE)
 
-    expect(files[path(3, 'docs')]).toContain('status: suspended')
+    expect(world.github.card(3).status).toBe('Suspended')
     expect(await ui.find({ key: 'back' })).toBeUndefined()
     await ui.unmount()
   })
 
   test(`a carry that ends with another key leaves the card where it was on the ${surface}`, async ($, on) => {
-    const files: Record<string, string> = {
-      [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-    }
-    const world = boot(on, files)
+    const world = bootGithub(on, [
+      issue(3, { column: 'backlog', title: 'Write docs' }),
+    ])
     fakeConfig(on, rows())
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
     await world.clock.settle()
     const ui = await mount($, surface)
 
-    await goTo(ui, 'card:md:0003-docs')
+    await goTo(ui, 'card:gh:3')
     await typed(ui, 'm', 'q')
     await world.clock.advance(SYNC_PAUSE)
 
-    expect(files[path(3, 'docs')]).toContain('status: backlog')
+    expect(world.github.card(3).status).toBe('Backlog')
     expect(await ui.find({ key: 'back' })).toBeUndefined()
     await ui.unmount()
   })
@@ -873,18 +761,14 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
 const KANBAN_TOOL = (name: string) => `mcp__kanban__kanban_${name}` as const
 const ASKED = (n: number) =>
-  `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Human; if you need a decision, kanban_ask; if you are still working, say so and continue.`
+  `Card #${n} is still in Claude. If the work is done, record a handoff and move it to Done (or to Human if it needs the person's approval); if you need a decision, kanban_ask; if you are still working, say so and continue.`
 
 test('turning Reconcile off in the view stops the reconcile prompt, and on brings it back', async ($, on) => {
-  const world = boot(on, {
-    [path(2, 'api')]: card(
-      2,
-      { status: 'claude', title: 'Build API' },
-      HANDED_OFF,
-    ),
-    [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-    [path(4, 'old')]: card(4, { status: 'backlog', title: 'Old idea' }),
-  })
+  const world = bootGithub(on, [
+    issue(2, { column: 'claude', title: 'Build API', comments: [HANDOFF] }),
+    issue(3, { column: 'backlog', title: 'Write docs' }),
+    issue(4, { column: 'backlog', title: 'Old idea' }),
+  ])
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   const config = fakeConfig(on, rows())

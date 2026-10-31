@@ -6,21 +6,15 @@ import type {
   KanbanBoard,
   KanbanCheckRun,
   KanbanDetail,
-  KanbanDismissed,
-  KanbanGhState,
-  KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
   KanbanReconcile,
-  KanbanSuggestion,
   KanbanSync,
   KanbanUi,
 } from '../types'
 import {
   EMPTY_ACTIVITY,
   EMPTY_BOARD,
-  EMPTY_DISMISSED,
-  EMPTY_QUEUE,
   EMPTY_QUICK_ADD,
   EMPTY_SETTINGS,
   EMPTY_RECONCILE,
@@ -55,18 +49,11 @@ const check = atom(
   },
 )
 const tick = atom({ plugin: 'kanban', key: 'tick' } as const, 0)
-const queue = atom({ plugin: 'kanban', key: 'queue' } as const, EMPTY_QUEUE, {
-  shape: 'queue-1',
-})
 // When GitHub loads may resume after the rate limit ran low (0: not paused).
 const pausedUntil = atom({ plugin: 'kanban', key: 'pausedUntil' } as const, 0)
 // The signed-in GitHub login, asked for once ('' until then).
 const viewer = atom({ plugin: 'kanban', key: 'viewer' } as const, '')
 // Whether `gh` is installed, as the /config checks last found it.
-const ghInstalled = atom(
-  { plugin: 'kanban', key: 'ghInstalled' } as const,
-  'unknown' as KanbanGhState,
-)
 const activity = atom(
   { plugin: 'kanban', key: 'activity' } as const,
   EMPTY_ACTIVITY,
@@ -83,20 +70,6 @@ const settings = atom(
   { plugin: 'kanban', key: 'settings' } as const,
   EMPTY_SETTINGS,
   { shape: 'settings-1' },
-)
-// Claude's follow-ups waiting for the person to add or dismiss them.
-const suggestions = atom(
-  { plugin: 'kanban', key: 'suggestions' } as const,
-  [],
-  {
-    shape: 'suggestions-1',
-  },
-)
-// The suggestions the person dismissed, kept so Claude is not let repeat them.
-const dismissed = atom(
-  { plugin: 'kanban', key: 'dismissed' } as const,
-  EMPTY_DISMISSED,
-  { shape: 'dismissed-1' },
 )
 
 // What the turn-end check has seen of the running turn, and what it has said.
@@ -180,17 +153,6 @@ export function updateCheck(
   return update($, check, change)
 }
 
-export function readQueue($: EngineInterface): Promise<KanbanQueue> {
-  return read($, queue)
-}
-
-export function updateQueue(
-  $: EngineInterface,
-  change: (value: KanbanQueue) => KanbanQueue,
-): Promise<KanbanQueue> {
-  return update($, queue, change)
-}
-
 export function readPausedUntil($: EngineInterface): Promise<number> {
   return read($, pausedUntil)
 }
@@ -211,17 +173,6 @@ export function updateViewer(
   change: (value: string) => string,
 ): Promise<string> {
   return update($, viewer, change)
-}
-
-export function readGhInstalled($: EngineInterface): Promise<KanbanGhState> {
-  return read($, ghInstalled)
-}
-
-export function updateGhInstalled(
-  $: EngineInterface,
-  change: (value: KanbanGhState) => KanbanGhState,
-): Promise<KanbanGhState> {
-  return update($, ghInstalled, change)
 }
 
 export function readActivity($: EngineInterface): Promise<KanbanActivity> {
@@ -246,19 +197,6 @@ export function updateQuickAdd(
   return update($, quickAdd, change)
 }
 
-export function readSuggestions(
-  $: EngineInterface,
-): Promise<KanbanSuggestion[]> {
-  return read($, suggestions)
-}
-
-export function updateSuggestions(
-  $: EngineInterface,
-  change: (value: KanbanSuggestion[]) => KanbanSuggestion[],
-): Promise<KanbanSuggestion[]> {
-  return update($, suggestions, change)
-}
-
 export function readSettings($: EngineInterface): Promise<KanbanSettings> {
   return read($, settings)
 }
@@ -268,17 +206,6 @@ export function updateSettings(
   change: (value: KanbanSettings) => KanbanSettings,
 ): Promise<KanbanSettings> {
   return update($, settings, change)
-}
-
-export function readDismissed($: EngineInterface): Promise<KanbanDismissed> {
-  return read($, dismissed)
-}
-
-export function updateDismissed(
-  $: EngineInterface,
-  change: (value: KanbanDismissed) => KanbanDismissed,
-): Promise<KanbanDismissed> {
-  return update($, dismissed, change)
 }
 
 export function updateReconcile(

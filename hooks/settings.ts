@@ -2,14 +2,13 @@ import type { ConfigRow, EngineInterface } from 'claude-code'
 
 import type { KanbanBoard, KanbanSettingRow } from '../types'
 import { readBoard, updateBoard, updateSettings, updateUi } from './atoms'
-import { githubDenial } from './backend-config'
-import { refresh, setBoard } from './board'
+import { saveName } from './assign'
 import { errorMessage } from './model'
 import { changeBoard } from './pick'
 import { S } from './strings'
 
 /** The mod's `userConfig` fields in the order the view lists them. */
-export const SETTING_FIELDS = ['backend', 'claudeLimit', 'reconcile'] as const
+export const SETTING_FIELDS = ['reconcile'] as const
 
 export type SettingField = (typeof SETTING_FIELDS)[number]
 
@@ -44,13 +43,8 @@ export const ownField = (key: string): SettingField | undefined =>
 function rowOf(row: ConfigRow): KanbanSettingRow[] {
   const { kind, value } = row
   if (ownField(row.key) === undefined) return []
-  if (kind !== 'boolean' && kind !== 'choice' && kind !== 'number') return []
-  if (
-    typeof value !== 'boolean' &&
-    typeof value !== 'string' &&
-    typeof value !== 'number'
-  )
-    return []
+  if (kind !== 'boolean' && kind !== 'choice') return []
+  if (typeof value !== 'boolean' && typeof value !== 'string') return []
 
   return [
     {
@@ -83,7 +77,7 @@ export function settingsOf(rows: readonly KanbanSettingRow[]): Setting[] {
   })
 }
 
-/** The values a boolean or choice setting takes, in order; none for a number. */
+/** The values a boolean or choice setting takes, in order. */
 export function optionsOf(setting: Setting): Choice[] {
   const { kind, options } = setting.row
   if (kind === 'boolean') {
@@ -93,9 +87,7 @@ export function optionsOf(setting: Setting): Choice[] {
     ]
   }
 
-  return kind === 'choice'
-    ? (options ?? []).map(text => ({ text, value: text }))
-    : []
+  return (options ?? []).map(text => ({ text, value: text }))
 }
 
 /** How a value reads in the view: `on`/`off` for a boolean, else as it is. */
@@ -108,13 +100,6 @@ export function valueText(value: Value): string {
 /** Whether a value is the one the setting's title names as its default. */
 export const isDefault = (setting: Setting, value: Value) =>
   setting.fallback !== '' && valueText(value) === setting.fallback
-
-/** A number one step up or down, not below 0; undefined when that is no change. */
-export function stepped(value: number, dir: 1 | -1): number | undefined {
-  const next = Math.max(0, Math.floor(value) + dir)
-
-  return next === value ? undefined : next
-}
 
 // Told of each setting the view has just changed, so what reads an option once
 // at load can follow it before the reload that carries the same value.
@@ -175,12 +160,7 @@ export async function setSetting(
 ): Promise<void> {
   let reason: string | undefined
   try {
-    // The engine does not run this plugin's own `config.set` hooks for its own
-    // `$.config.set`, so the check that /config meets in `guardBackend` is made here.
-    if (ownField(key) === 'backend' && value === 'github') {
-      reason = await githubDenial($)
-    }
-    if (reason === undefined) reason = (await $.config.set({ key, value })).deny
+    reason = (await $.config.set({ key, value })).deny
   } catch (error) {
     reason = errorMessage(error)
   }
@@ -202,21 +182,17 @@ export async function setSetting(
 
 /** What `Change board` does with the board as it stands; undefined when nothing can be changed. */
 export function boardAction(
-  board: Pick<KanbanBoard, 'mode' | 'backend' | 'pick'>,
-): 'pick' | 'detect' | 'show' | undefined {
+  board: Pick<KanbanBoard, 'backend' | 'pick'>,
+): 'pick' | 'show' | undefined {
   const { backend } = board
-  if (backend?.kind === 'github') {
-    return backend.isDetected === true ? 'pick' : undefined
-  }
-  if (backend === null) return board.pick === undefined ? undefined : 'show'
+  if (backend !== null) return backend.isDetected === true ? 'pick' : undefined
 
-  return board.mode === 'auto' ? 'detect' : undefined
+  return board.pick === undefined ? undefined : 'show'
 }
 
 /**
- * Opens the board picker when GitHub has several boards linked to the repo, or
- * looks for a board again when `auto` settled for local files. The picker
- * stands on the board, so the view gives way to it.
+ * Opens the board picker when GitHub has several boards linked to the repo.
+ * The picker stands on the board, so the view gives way to it.
  */
 export async function changeBoardFromSettings(
   $: EngineInterface,
@@ -225,11 +201,40 @@ export async function changeBoardFromSettings(
   if (action === undefined) return
 
   if (action === 'pick') await changeBoard($)
-  if (action === 'detect') {
-    await setBoard($, board => ({ ...board, backend: null }))
-    await refresh($)
-  }
 
   const { pick } = await updateBoard($, board => board)
   if (action === 'show' || pick !== undefined) await closeSettings($)
+}
+
+/** Opens the Your name field with the name the person goes by now. */
+export async function openNameField($: EngineInterface): Promise<void> {
+  const { viewer, people } = await readBoard($)
+  if (viewer === undefined) return
+
+  const current = people?.[viewer] ?? ''
+  await updateSettings($, ({ nameError: _old, ...rest }) => ({
+    ...rest,
+    nameDraft: current,
+  }))
+}
+
+/** Keeps what is typed in the Your name field. */
+export async function typeName($: EngineInterface, value: string): Promise<void> {
+  await updateSettings($, current =>
+    current.nameDraft === undefined ? current : { ...current, nameDraft: value },
+  )
+}
+
+/** Closes the Your name field without saving. */
+export async function closeNameField($: EngineInterface): Promise<void> {
+  await updateSettings($, ({ nameDraft: _gone, nameError: _old, ...rest }) => rest)
+}
+
+/** Saves what the Your name field holds as the person's name. */
+export async function submitName(
+  $: EngineInterface,
+  value: string,
+): Promise<void> {
+  const { viewer } = await readBoard($)
+  if (viewer !== undefined) await saveName($, viewer, value)
 }

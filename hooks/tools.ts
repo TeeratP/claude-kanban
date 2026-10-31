@@ -6,13 +6,14 @@ import type {
   KanbanCard,
   KanbanColumn,
 } from '../types'
-import { readDetailState, readQueue, updateDetailState } from './atoms'
+import { readDetailState, updateDetailState } from './atoms'
 import { appendSection, createCard, readDetail } from './backend'
 import { ensureBoard, inBackground, refresh, setBoard } from './board'
 import {
   formatHandoff,
   formatQuestion,
   gistOf,
+  isClosingValid,
   isFilled,
   isHandoffValid,
 } from './handoff'
@@ -26,8 +27,8 @@ import {
   parseColumn,
   withCard,
 } from './model'
+import { isForViewer, ownerOf } from './people'
 import { S } from './strings'
-import { suggestCard } from './suggest'
 import { moveCard } from './sync'
 
 type ToolName =
@@ -37,7 +38,6 @@ type ToolName =
   | 'kanban_move'
   | 'kanban_create'
   | 'kanban_ask'
-  | 'kanban_suggest'
 
 // Where Claude may move a card, and create one. Suspended and Cancelled are the
 // person's calls, so a card in either is left where it is.
@@ -67,6 +67,7 @@ export const TOOL_SPECS: ToolSpec[] = [
           enum: [...COLUMNS],
           description: S.toolList.column,
         },
+        all: { type: 'boolean', description: S.toolList.all },
       },
     },
   },
@@ -95,7 +96,7 @@ export const TOOL_SPECS: ToolSpec[] = [
         changed: { type: 'string', description: S.toolHandoff.changed },
         need: { type: 'string', description: S.toolHandoff.need },
       },
-      required: ['card', 'check', 'need'],
+      required: ['card', 'did', 'check'],
     },
   },
   {
@@ -142,20 +143,6 @@ export const TOOL_SPECS: ToolSpec[] = [
       required: ['card', 'question'],
     },
   },
-  {
-    name: 'kanban_suggest',
-    description: S.toolSuggest.description,
-    isDeferred: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: S.toolSuggest.title },
-        spec: { type: 'string', description: S.toolSuggest.spec },
-        why: { type: 'string', description: S.toolSuggest.why },
-      },
-      required: ['title', 'spec'],
-    },
-  },
 ]
 
 type ToolAnswer = { result: string } | { deny: string }
@@ -172,14 +159,26 @@ async function list(
   const board = await ensureBoard($)
   if (board.fetchedAt === 0) return { deny: S.boardUnavailable(board.error) }
 
-  // A card still being made has no number the tools could name.
+  // A card still being made has no number the tools could name. Someone
+  // else's card is theirs to work: it is listed only when all are asked for.
   const made = board.cards.filter(one => !isPendingId(one.id))
-  const { held } = await readQueue($)
-  const lines = COLUMNS.filter(one => column === undefined || column === one)
+  const listed = COLUMNS.filter(one => column === undefined || column === one)
     .flatMap(one => sectionList(made, one))
-    .map(card => S.listLine(card, held[card.id] !== undefined))
+  const shown =
+    input.all === true
+      ? listed
+      : listed.filter(card => isForViewer(card, board.viewer))
+  const lines = shown.map(card =>
+    S.listLine(card, ownerOf(card, board.viewer, undefined)),
+  )
+  const hidden = listed.length - shown.length
 
-  return { result: lines.length === 0 ? S.listEmpty : lines.join('\n') }
+  return {
+    result: [
+      lines.length === 0 ? S.listEmpty : lines.join('\n'),
+      ...(hidden === 0 ? [] : [S.listHidden(hidden)]),
+    ].join('\n'),
+  }
 }
 
 type Ready = { board: KanbanBoard; info: KanbanBackendInfo }
@@ -264,7 +263,8 @@ async function handoff(
     if (text === undefined) return { deny: S.badText(name) }
     fields[name] = text
   }
-  if (!isFilled(fields.check) || !isFilled(fields.need))
+  // What is needed from the person may be nothing: a card Claude closes needs no one.
+  if (!isFilled(fields.did) || !isFilled(fields.check))
     return { deny: S.handoffIncomplete }
 
   const found = await find($, input)
@@ -338,10 +338,14 @@ async function move(
 
   const { card, info } = found
   if (isSetAside(card)) return { deny: S.setAside(card) }
-  if (to === 'human') {
+  // Human needs a handoff that says what is needed; Done one that says what was done.
+  if (to === 'human' || to === 'done') {
     try {
       const { sections } = await readDetail($, info, card)
-      if (!isHandoffValid(sections)) return { deny: S.needHandoff(card) }
+      if (to === 'human' && !isHandoffValid(sections))
+        return { deny: S.needHandoff(card) }
+      if (to === 'done' && !isClosingValid(sections))
+        return { deny: S.needClosingHandoff(card) }
     } catch (error) {
       return { deny: S.detailFailed(errorMessage(error)) }
     }
@@ -397,26 +401,6 @@ async function create(
   }
 }
 
-async function suggest(
-  $: EngineInterface,
-  input: Record<string, unknown>,
-): Promise<ToolAnswer> {
-  const title = textOf(input.title)?.replace(/\s+/g, ' ')
-  const spec = textOf(input.spec)
-  const why = textOf(input.why)
-  if (title === undefined || title === '') return { deny: S.badTitle }
-  if (spec === undefined) return { deny: S.badText('spec') }
-  if (why === undefined) return { deny: S.badText('why') }
-
-  const outcome = await suggestCard($, { title, spec, why })
-  if (outcome === 'dismissed') return { result: S.suggestDismissed(title) }
-
-  return {
-    result:
-      outcome === 'added' ? S.suggestedResult(title) : S.suggestFolded(title),
-  }
-}
-
 /** Serves one of this plugin's tools. */
 export function runTool(
   $: EngineInterface,
@@ -436,7 +420,5 @@ export function runTool(
       return create($, input)
     case 'kanban_ask':
       return ask($, input)
-    case 'kanban_suggest':
-      return suggest($, input)
   }
 }

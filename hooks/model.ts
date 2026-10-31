@@ -3,9 +3,7 @@ import type {
   KanbanBoard,
   KanbanCard,
   KanbanColumn,
-  KanbanDismissed,
   KanbanGroup,
-  KanbanQueue,
   KanbanQuickAdd,
   KanbanSettings,
   KanbanReconcile,
@@ -13,7 +11,6 @@ import type {
 } from '../types'
 
 export const PANE = 'kanban'
-export const KANBAN_DIR = '.kanban'
 // Done and Cancelled list their newest cards only.
 export const NEWEST_LIMIT = 10
 export const DIFF_LIMIT = 90_000
@@ -62,7 +59,6 @@ export const MOVE_KEY: Record<KanbanColumn, string> = {
 }
 
 export const EMPTY_BOARD: KanbanBoard = {
-  mode: 'auto',
   backend: null,
   cards: [],
   fetchedAt: 0,
@@ -73,14 +69,6 @@ export const EMPTY_ACTIVITY: KanbanActivity = {
   cards: {},
   live: { cardId: '', since: 0, isRunning: false },
   agents: {},
-}
-
-// How many cards Claude works on at once unless the setting says otherwise.
-export const DEFAULT_CLAUDE_LIMIT = 1
-
-export const EMPTY_QUEUE: KanbanQueue = {
-  limit: DEFAULT_CLAUDE_LIMIT,
-  held: {},
 }
 
 export const INITIAL_UI: KanbanUi = {
@@ -97,6 +85,7 @@ export const INITIAL_UI: KanbanUi = {
   draft: '',
   filter: '',
   isFilterOpen: false,
+  who: 'mine',
 }
 
 export const EMPTY_QUICK_ADD: KanbanQuickAdd = {
@@ -111,8 +100,6 @@ export const EMPTY_SETTINGS: KanbanSettings = {
   rows: [],
   denied: {},
 }
-
-export const EMPTY_DISMISSED: KanbanDismissed = { items: [], isShown: false }
 
 export const EMPTY_TURN: KanbanReconcile['turn'] = {
   isReconcile: false,
@@ -278,13 +265,6 @@ export function withCard(
     ...rest,
     { ...card, order: Math.max(card.order, maxOrder(rest, card.column) + 1) },
   ]
-}
-
-const KANBAN_FILE = /(^|\/)\.kanban\/[^/]+\.md$/
-
-/** Whether a path names a card file under a `.kanban/` folder. */
-export function isKanbanFile(path: unknown): boolean {
-  return typeof path === 'string' && KANBAN_FILE.test(path)
 }
 
 /** Text on one line, trimmed: a card title never wraps. */

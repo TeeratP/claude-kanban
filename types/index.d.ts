@@ -22,7 +22,13 @@ export type KanbanCard = {
   prNumbers?: number[]
   /** Why a GitHub issue was closed (or reopened); absent for one never closed. */
   stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'DUPLICATE' | 'REOPENED'
+  /** The GitHub logins the issue is assigned to: whose card it is. */
+  assignees?: string[]
 }
+/** Whose cards the board shows: the person's, theirs and nobody's, or everyone's. */
+export type KanbanWho = 'mine' | 'open' | 'all'
+/** The names people gave themselves, by GitHub login; kept in the board's README. */
+export type KanbanPeople = Record<string, string>
 // `inReview` is missing on a detected board without that status: Human is then the `human` label.
 // `cancelled` and `suspended` are Status options the board happens to have, learned from its loads.
 // `isDetected`: found from git and gh with no config (`title` is the board's name then).
@@ -47,11 +53,7 @@ export type KanbanGithub = {
   title?: string
   isDetected?: true
 }
-// `isConfigUnclear`: under `auto`, a CLAUDE.md or AGENTS.md mentions a board that could not be read.
-// `noBoardFor`: under `auto`, no GitHub board was found for this repo (`owner/name`).
-export type KanbanBackendInfo =
-  | { kind: 'local'; isConfigUnclear?: true; noBoardFor?: string }
-  | KanbanGithub
+export type KanbanBackendInfo = KanbanGithub
 /** A GitHub project the zero-config search found for the repo. */
 export type KanbanChoice = {
   id: string
@@ -59,16 +61,23 @@ export type KanbanChoice = {
   title: string
   owner: string
 }
-export type KanbanBackendMode = 'auto' | 'github' | 'local'
-/** What the /config checks last learned of `gh`: installed, missing, or not known yet. */
-export type KanbanGhState = 'unknown' | 'found' | 'missing'
+/**
+ * What is missing before the board can use GitHub: the gh CLI, a signed-in gh,
+ * a github.com origin, a board for the repo, or a board config that reads.
+ */
+export type KanbanSetupStep = 'gh' | 'auth' | 'remote' | 'board' | 'config'
+export type KanbanSetup = { step: KanbanSetupStep; reason: string }
 export type KanbanBoard = {
-  mode: KanbanBackendMode
   backend: KanbanBackendInfo | null
+  /** The signed-in GitHub login, as the last load gave it. */
+  viewer?: string
+  people?: KanbanPeople
   cards: KanbanCard[]
   fetchedAt: number
   isLoading: boolean
   error?: string
+  /** Set while the board cannot reach GitHub for want of setup; the pane offers to have Claude do it. */
+  setup?: KanbanSetup
   /** The boards to pick from, while the person has to choose one. */
   pick?: KanbanChoice[]
 }
@@ -88,10 +97,6 @@ export type KanbanSync = {
   announce?: boolean
 }
 export type KanbanPrompt = 'work' | 'resume' | 'answer'
-export type KanbanQueue = {
-  limit: number
-  held: Record<string, KanbanPrompt>
-}
 export type KanbanView =
   | { mode: 'board' }
   | { mode: 'detail'; cardId: string; tab: 'card' | 'diff' }
@@ -108,6 +113,8 @@ export type KanbanUi = {
   isFilterOpen: boolean
   /** The group a header press chose while filtering; dropped when the filter changes. */
   filterGroup?: KanbanGroup | 'none'
+  /** Whose cards show; the person's own when the pane opens. */
+  who: KanbanWho
 }
 /** One of the mod's `/config` rows as `$.config.list()` returns it. */
 export type KanbanSettingRow = {
@@ -115,8 +122,8 @@ export type KanbanSettingRow = {
   key: string
   /** The row's label, which ends in ` (default: X)`. */
   label: string
-  kind: 'boolean' | 'choice' | 'number'
-  value: boolean | string | number
+  kind: 'boolean' | 'choice'
+  value: boolean | string
   options?: string[]
   /** Whether a trusted source owns the value, so a change is refused. */
   isLocked: boolean
@@ -128,24 +135,16 @@ export type KanbanSettings = {
   denied: Record<string, string>
   /** Why the rows could not be read. */
   error?: string
+  /** The name being typed in the Your name field; absent while it is not open. */
+  nameDraft?: string
+  /** Why the name could not be saved. */
+  nameError?: string
 }
 export type KanbanQuickAdd = {
   isOpen: boolean
   hasDetails: boolean
   title: string
   spec: string
-}
-export type KanbanSuggestion = {
-  id: number
-  title: string
-  spec: string
-  why?: string
-}
-export type KanbanDismissed = {
-  /** The suggestions the person dismissed, oldest first. */
-  items: KanbanSuggestion[]
-  /** Whether the strip lists them (this session only). */
-  isShown: boolean
 }
 export type KanbanSection = {
   kind: 'handoff' | 'feedback' | 'question' | 'answer' | 'check'
@@ -233,15 +232,11 @@ declare module 'claude-code' {
       detail: Shaped<KanbanDetail | null>
       check: Shaped<Record<string, KanbanCheckRun>>
       tick: number
-      queue: Shaped<KanbanQueue>
       pausedUntil: number
       viewer: string
-      ghInstalled: KanbanGhState
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
       settings: Shaped<KanbanSettings>
-      suggestions: Shaped<KanbanSuggestion[]>
-      dismissed: Shaped<KanbanDismissed>
       reconcile: Shaped<KanbanReconcile>
     }
   }

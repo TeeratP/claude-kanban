@@ -11,7 +11,6 @@ import { detailIds, detailSegs, segProps } from './activity-view'
 import {
   readActivity,
   readBoard,
-  readQueue,
   readPausedUntil,
   readQuickAdd,
   readSync,
@@ -38,15 +37,14 @@ import {
   titleColumn,
 } from './layout'
 import type { Row } from './layout'
-import { TICK_BRIGHT_MS, ageLabel } from './model'
-import { queuePlace, queueView } from './queue'
+import { INITIAL_UI, TICK_BRIGHT_MS, ageLabel } from './model'
+import { nextWho, ownerOf } from './people'
 import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
 import { changeBoard } from './pick'
 import { dropCard, shiftCard } from './reorder'
 import { openSettings } from './settings'
 import { S } from './strings'
-import { readStripRows } from './suggest'
 import {
   SETTINGS_KEY,
   planStatus,
@@ -60,8 +58,8 @@ import type { PlacedAction } from './toolbar'
 import { openDetail } from './view-detail'
 import { clearFilter, renderFilter, toggleFilter } from './view-filter'
 import { pickRows, renderPicker } from './view-pick'
+import { renderSetup, setupRows } from './view-setup'
 import { renderQuickAdd } from './view-quick-add'
-import { renderSuggestions } from './view-suggest'
 
 // Where the pane's window sat at the last draw, and the rows above the list that
 // the layout was told of; a wheel row is relative to it.
@@ -84,28 +82,30 @@ function glyphOf(entry: KanbanSync, tick: number, now: number) {
   }
 }
 
-// Why a local board has no GitHub behind it, when the backend knows.
-export function localNote(info: KanbanBackendInfo | null): string | undefined {
-  if (info?.kind !== 'local') return undefined
-  if (info.isConfigUnclear === true) return S.configUnclear
-
-  return info.noBoardFor === undefined
-    ? undefined
-    : S.noGithubBoard(info.noBoardFor)
+// Shows the next view of whose cards: mine, mine and nobody's, everyone's.
+// Each section starts again at its top, as its list is another one now.
+async function stepWho($: EngineInterface) {
+  await updateUi($, ui => ({
+    ...ui,
+    who: nextWho(ui.who),
+    offsets: INITIAL_UI.offsets,
+  }))
 }
 
 // A press on a group's header opens it, which folds the other, or folds it when
 // it is open. Under a filter it turns the group as drawn, which the filter may
 // have opened, and leaves the stored one for when the filter is gone.
 async function toggleGroup($: EngineInterface, group: KanbanGroup) {
-  const { cards } = await readBoard($)
+  const { cards, viewer } = await readBoard($)
 
   return updateUi($, ui => {
     if (isFiltering(ui.filter)) {
       return {
         ...ui,
         filterGroup:
-          applyFilter(cards, ui).ui.openGroup === group ? 'none' : group,
+          applyFilter(cards, ui, viewer).ui.openGroup === group
+            ? 'none'
+            : group,
       }
     }
 
@@ -129,17 +129,13 @@ async function scrollSection(
   extraRows: number,
   delta: (taken: number) => number,
 ): Promise<boolean> {
-  const { cards } = await readBoard($)
-  const details = detailIds(
-    cards,
-    await readActivity($),
-    (await readQueue($)).held,
-  )
+  const { cards, viewer } = await readBoard($)
+  const details = detailIds(cards, await readActivity($))
 
   const seen = { isMoved: false }
   await updateUi($, ui => {
     // The window moves over the cards the filter lets through.
-    const list = sectionList(applyFilter(cards, ui).cards, column)
+    const list = sectionList(applyFilter(cards, ui, viewer).cards, column)
     const body = bodyOf(cards, bodyRows, extraRows)
     const shown = sectionWindow(list, column, ui.offsets[column], body, details)
     const last = maxOffset(blocksOf(list, column, details), body)
@@ -164,14 +160,10 @@ async function keepInView(
   at: { index: number; length: number },
 ): Promise<void> {
   // The board as the move left it, not as this dispatch first read it.
-  const { cards } = await updateBoard($, board => board)
-  const details = detailIds(
-    cards,
-    await readActivity($),
-    (await readQueue($)).held,
-  )
+  const { cards, viewer } = await updateBoard($, board => board)
+  const details = detailIds(cards, await readActivity($))
   await updateUi($, ui => {
-    const list = sectionList(applyFilter(cards, ui).cards, column)
+    const list = sectionList(applyFilter(cards, ui, viewer).cards, column)
     const body = bodyOf(cards, lastBody.bodyRows, lastBody.extraRows)
     const taken = (from: number) =>
       sectionWindow(list, column, from, body, details).taken
@@ -202,14 +194,15 @@ export async function handleBoardScroll(
 
   const board = await readBoard($)
   const { cards } = board
-  // The picker and the suggestions sit between the toolbar and the list; the layout is told of them.
-  const strip = (await readStripRows($)) + pickRows(board)
+  // The picker and the setup offer sit between the toolbar and the list; the layout is told of them.
+  const strip = pickRows(board) + setupRows(board)
   const rows = layoutBoard({
     cards,
     ui,
     bodyRows: e.bodyRows,
-    details: detailIds(cards, await readActivity($), (await readQueue($)).held),
+    details: detailIds(cards, await readActivity($)),
     extraRows: strip,
+    viewer: board.viewer,
   })
   const column = hitTest(rows, e.pointer.row + lastBody.offset - strip)
   if (column === undefined) return false
@@ -274,8 +267,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const ui = await readUi($)
   const sync = await readSync($)
   const tick = await readTick($)
-  const queued = await readQueue($)
-  const queue = queueView(queued, board.cards, sync)
   const pausedUntil = await readPausedUntil($)
   const activity = await readActivity($)
   const now = await $.clock.now()
@@ -288,12 +279,12 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const isFiltered = isFiltering(ui.filter)
   const filterField = await renderFilter($, e)
   const quickAdd = await renderQuickAdd($, e)
-  const suggested = await renderSuggestions($, e)
   const picker = renderPicker($, e, board)
+  const setup = renderSetup($, e, board)
   // The rows above the list, which the equal-height sections give way to.
   const extraRows =
     pickRows(board) +
-    (await readStripRows($)) +
+    setupRows(board) +
     (filterField === null ? 0 : 1) +
     (quickAdd === null ? 0 : quickAddRows(await readQuickAdd($)))
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows, extraRows }
@@ -309,11 +300,11 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     cards: board.cards,
     ui,
     bodyRows: scroll.bodyRows,
-    details: detailIds(board.cards, activity, queued.held),
-    hint: board.mode === 'auto' && board.backend?.kind === 'local',
+    details: detailIds(board.cards, activity),
     extraRows,
     legend: hasClient,
     isLoading,
+    viewer: board.viewer,
   })
   // A card's second row starts where its title does.
   const titleAt = titleColumn(board.cards, columns)
@@ -328,11 +319,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   // The status text, dim: the backend, the board, how fresh it is, and why not;
   // with `s: Settings` at the right end of the row.
   const statusRow = () => {
-    const note = localNote(board.backend)
     const detected =
-      board.backend?.kind === 'github' && board.backend.isDetected === true
-        ? board.backend
-        : undefined
+      board.backend?.isDetected === true ? board.backend : undefined
     const boardName =
       detected?.title === undefined
         ? ''
@@ -342,7 +330,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       !(board.isLoading || isLoading) &&
       !(pausedUntil > now) &&
       board.fetchedAt !== 0
+    // The setup offer under the toolbar says what is missing; the row only flags it.
     const status =
+      (board.setup === undefined ? undefined : S.setupNeeded) ??
       board.error ??
       (board.isLoading || isLoading
         ? S.loading
@@ -353,9 +343,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             : S.updated(ageLabel(board.fetchedAt, now)))
     const plan = planStatus({
       columns,
-      mode: board.mode,
-      kind: board.backend?.kind,
-      note,
       boardName,
       status,
       isAge,
@@ -408,6 +395,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       canType,
       query: ui.filter,
       failed: failed.length,
+      who: ui.who,
     })
     const button = (action: PlacedAction) => {
       switch (action.key) {
@@ -440,6 +428,17 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
               plain
               hotkey={action.hotkey}
               onPress={() => toggleFilter($)}
+            >
+              {action.label}
+            </Button>
+          )
+        case 'who':
+          return (
+            <Button
+              key="who"
+              plain
+              hotkey={action.hotkey}
+              onPress={() => stepWho($)}
             >
               {action.label}
             </Button>
@@ -483,11 +482,13 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     },
     ageOf: (card: KanbanCard) => ageLabel(card.updatedAt, now),
     detailOf,
-    queue,
+    // Only a view with other people's cards says whose they are.
+    ownerOf: (card: KanbanCard) =>
+      ui.who === 'mine' ? '' : ownerOf(card, board.viewer, board.people),
     cards: board.cards,
     canDrag: hasClient,
     canType,
-    isGithub: board.backend?.kind === 'github',
+    needsSetup: board.setup !== undefined,
   }
   const textOf = (row: Row) => {
     const [made] = toRowViews({ ...rowViewInput, rows: [row] })
@@ -526,7 +527,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       case 'empty':
       case 'skeleton':
       case 'note':
-      case 'hint':
         return <Text wrap="truncate-end">{textOf(row)}</Text>
 
       // The legend is the Client's: the other surfaces have no keys to list.
@@ -558,7 +558,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           <Button
             key={`card:${card.id}`}
             plain
-            dimColor={isDimCard(card, queuePlace(queue, card.id) !== undefined)}
+            dimColor={isDimCard(card)}
             onPress={() => openDetail($, card.id)}
           >
             {textOf(row)}
@@ -585,9 +585,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box flexDirection="column">
         {rows.slice(0, TOOLBAR_ROWS).map(draw)}
         {picker}
+        {setup}
         {filterField}
         {quickAdd}
-        {suggested}
         {rows.slice(TOOLBAR_ROWS).map(draw)}
       </Box>
     )
@@ -603,9 +603,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     <Box flexDirection="column">
       {rows.slice(0, TOOLBAR_ROWS).map(draw)}
       {picker}
+      {setup}
       {filterField}
       {quickAdd}
-      {suggested}
       <Client
         key="board"
         module="./board-client.tsx"

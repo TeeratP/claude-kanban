@@ -13,30 +13,54 @@ import {
   rowKeys,
 } from './board-ui'
 import type { BoardUi } from './board-ui'
-import { PANE, RUN, SYNC_PAUSE, boot, card, path } from './fakes'
+import { PANE, RUN, SYNC_PAUSE } from './fakes'
+import type { FakeCard } from './fake-github'
+import { bootGithub, issue } from './fake-github'
 
 const WITH_CLIENT = ['terminal', 'desktop'] as const
 const WITHOUT_CLIENT = ['vscode', 'mobile'] as const
 
-const cards = () => ({
-  [path(1, 'login')]: card(1, { status: 'human', title: 'Fix login' }),
-  [path(2, 'api')]: card(2, { status: 'claude', title: 'Build API' }),
-  [path(3, 'docs')]: card(3, { status: 'backlog', title: 'Write docs' }),
-  [path(4, 'old')]: card(4, { status: 'done', title: 'Old thing' }),
-})
+const cards = () => [
+  issue(1, { column: 'human', title: 'Fix login' }),
+  issue(2, { column: 'claude', title: 'Build API' }),
+  issue(3, { column: 'backlog', title: 'Write docs' }),
+  issue(4, { column: 'done', title: 'Old thing' }),
+]
 
-const LOGIN = 'card:md:0001-login'
-const API = 'card:md:0002-api'
-const DOCS = 'card:md:0003-docs'
+const LOGIN = 'card:gh:1'
+const API = 'card:gh:2'
+const DOCS = 'card:gh:3'
+const OLD = 'card:gh:4'
+
+// How GitHub holds each closed-group section.
+const HELD = {
+  done: { status: 'Done', state: 'CLOSED', stateReason: 'COMPLETED' },
+  cancelled: {
+    status: 'Cancelled',
+    state: 'CLOSED',
+    stateReason: 'NOT_PLANNED',
+  },
+  suspended: { status: 'Suspended', state: 'OPEN' },
+} as const
+
+// The commands that changed GitHub: none means nothing moved.
+const writes = (github: { commands: { argv: readonly string[] }[] }) =>
+  github.commands.filter(
+    ({ argv }) =>
+      (argv[1] === 'project' && argv[2] !== 'list' && argv[2] !== 'view') ||
+      (argv[1] === 'issue' && argv[2] !== 'view' && argv[2] !== 'list') ||
+      (argv[1] === 'api' &&
+        argv.some(part => part.includes('updateProjectV2ItemPosition'))),
+  )
 
 async function start<S extends RenderSurface>(
   $: Engine,
   on: On,
   surface: S,
-  files: Record<string, string> = cards(),
+  issues: FakeCard[] = cards(),
   bodyColumns: number = PANE.props.bodyColumns,
 ) {
-  const world = boot(on, files)
+  const world = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
@@ -46,7 +70,7 @@ async function start<S extends RenderSurface>(
     props: { ...PANE.props, bodyColumns },
   })
 
-  return { ...world, files, ui }
+  return { ...world, ui }
 }
 
 // Brings the cursor up and walks it down to `key`.
@@ -63,14 +87,10 @@ async function goTo(ui: BoardUi, key: string) {
 const STOP = /^(grp|card|more)\b/
 
 // Eight Backlog cards: six show, a `more` row pages to the rest.
-const backlog = () => {
-  const files: Record<string, string> = {}
-  for (let n = 1; n <= 8; n += 1) {
-    files[path(n, 'b')] = card(n, { title: `Backlog ${n}` })
-  }
-
-  return files
-}
+const backlog = () =>
+  Array.from({ length: 8 }, (_, at) =>
+    issue(at + 1, { title: `Backlog ${at + 1}` }),
+  )
 
 for (const surface of WITH_CLIENT) {
   test(`the first key brings the cursor up and it takes no action on the ${surface}`, async ($, on) => {
@@ -115,9 +135,12 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`the cursor skips rows that are only text on the ${surface}`, async ($, on) => {
-    const files = cards()
-    delete files[path(2, 'api')]
-    const { ui } = await start($, on, surface, files)
+    const { ui } = await start(
+      $,
+      on,
+      surface,
+      cards().filter(one => one.number !== 2),
+    )
     expect(await rowKeys(ui)).toContain('empty:claude')
 
     // A click on a text row records nothing for the keys to start from.
@@ -156,7 +179,7 @@ for (const surface of WITH_CLIENT) {
     await keys(ui, 'down')
     expect(await litRows(ui)).toEqual(['grp:inactive'])
     await keys(ui, 'down')
-    expect(await litRows(ui)).toEqual(['card:md:0004-old'])
+    expect(await litRows(ui)).toEqual([OLD])
 
     // A click while the cursor shows moves it to the row clicked.
     await click(ui, 'grp:active')
@@ -189,12 +212,12 @@ for (const surface of WITH_CLIENT) {
     expect(await inactive()).toMatch(/^▸ Inactive\s+1 Done$/)
     await keys(ui, 'return')
     expect(await inactive()).toBe('▾ Inactive')
-    expect(await row(ui, 'card:md:0004-old')).toBeDefined()
+    expect(await row(ui, OLD)).toBeDefined()
     expect(await row(ui, DOCS)).toBeUndefined()
     expect(await litRows(ui)).toEqual(['grp:inactive'])
     await keys(ui, 'return')
     expect(await inactive()).toMatch(/^▸ Inactive\s+1 Done$/)
-    expect(await row(ui, 'card:md:0004-old')).toBeUndefined()
+    expect(await row(ui, OLD)).toBeUndefined()
     await ui.unmount()
   })
 
@@ -207,15 +230,14 @@ for (const surface of WITH_CLIENT) {
     expect((await row(ui, 'more:backlog:up'))?.text).toMatch(/^ +↑ 2 more$/)
     expect(await row(ui, 'more:backlog:down')).toBeUndefined()
     // Its row gone, the cursor rests on the nearest one.
-    expect(await litRows(ui)).toEqual(['card:md:0008-b'])
+    expect(await litRows(ui)).toEqual(['card:gh:8'])
     await ui.unmount()
   })
 
   test(
     `m then a section key moves the card, as a drop does, on the ${surface}`,
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
-      const { clock, ui, files } = await start($, on, surface)
+      const { clock, ui, github } = await start($, on, surface)
       await goTo(ui, DOCS)
 
       // The other sections show the keys that send the card there, in place of
@@ -240,17 +262,17 @@ for (const surface of WITH_CLIENT) {
       // The cursor follows the card into its new section.
       expect(await litRows(ui)).toEqual([DOCS])
       await clock.advance(SYNC_PAUSE)
-      expect(files[path(3, 'docs')]).toContain('status: human')
+      expect(github.card(3).status).toBe('In review')
 
       await keys(ui, 'm', '1')
       await clock.advance(SYNC_PAUSE)
-      expect(files[path(3, 'docs')]).toContain('status: backlog')
+      expect(github.card(3).status).toBe('Backlog')
       expect(await litRows(ui)).toEqual([DOCS])
 
       // Done is folded: the card is out of sight and the cursor rests near it.
       await keys(ui, 'm', 'd')
       await clock.advance(SYNC_PAUSE)
-      expect(files[path(3, 'docs')]).toContain('status: done')
+      expect(github.card(3)).toMatchObject(HELD.done)
       expect(await row(ui, DOCS)).toBeUndefined()
       expect(await litRows(ui)).toHaveLength(1)
       await ui.unmount()
@@ -266,13 +288,13 @@ for (const surface of WITH_CLIENT) {
     ['6', 'suspended'],
   ] as const) {
     test(`m then ${name} moves the card to ${column}, though that group is folded, on the ${surface}`, async ($, on) => {
-      const { clock, ui, files } = await start($, on, surface)
+      const { clock, ui, github } = await start($, on, surface)
       await goTo(ui, DOCS)
 
       await keys(ui, 'm', name)
       await clock.advance(SYNC_PAUSE)
 
-      expect(files[path(3, 'docs')]).toContain(`status: ${column}`)
+      expect(github.card(3)).toMatchObject(HELD[column])
       expect(await row(ui, DOCS)).toBeUndefined()
       await group(ui, 'inactive')
       expect(await row(ui, DOCS)).toBeDefined()
@@ -282,14 +304,14 @@ for (const surface of WITH_CLIENT) {
 
   test(
     `a card moved from Backlog to Claude by key asks Claude to work on it, any other move does not on the ${surface}`,
-    { options: { claudeLimit: 0 } },
     async ($, on) => {
-      const { clock, ui, prompts, files } = await start($, on, surface)
+      const { clock, ui, prompts, github } = await start($, on, surface)
 
       await goTo(ui, LOGIN)
       await keys(ui, 'm', 'c')
       await clock.advance(SYNC_PAUSE)
-      expect(files[path(1, 'login')]).toContain('status: claude')
+      expect(github.card(1).status).toBe('In progress')
+      expect(github.card(1).labels).toContain('ai')
       expect(prompts).toEqual([])
 
       // Docs is above Login, which went down to Claude with the cursor on it.
@@ -301,7 +323,8 @@ for (const surface of WITH_CLIENT) {
       await keys(ui, 'm', '2')
       expect(prompts).toEqual([])
       await clock.advance(SYNC_PAUSE)
-      expect(files[path(3, 'docs')]).toContain('status: claude')
+      expect(github.card(3).status).toBe('In progress')
+      expect(github.card(3).labels).toContain('ai')
       expect(prompts).toEqual([
         expect.stringMatching(
           /^Work on kanban card #3 "Write docs": read it with/,
@@ -312,8 +335,7 @@ for (const surface of WITH_CLIENT) {
   )
 
   test(`any other key, a click or the card's own section ends a move with nothing moved on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
-    const before = { ...files }
+    const { clock, ui, github } = await start($, on, surface)
     const moving = async () =>
       ((await row(ui, 'hdr:human'))?.text ?? '').includes('3/h')
     await goTo(ui, DOCS)
@@ -338,13 +360,12 @@ for (const surface of WITH_CLIENT) {
     expect(await moving()).toBe(false)
 
     await clock.advance(SYNC_PAUSE)
-    expect(files).toEqual(before)
+    expect(writes(github)).toEqual([])
     await ui.unmount()
   })
 
   test(`keys with ctrl or meta, and keys that mean nothing, do nothing on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
-    const before = { ...files }
+    const { clock, ui, github } = await start($, on, surface)
     await goTo(ui, LOGIN)
 
     await ui.key({ key: 'j', ctrl: true })
@@ -357,34 +378,34 @@ for (const surface of WITH_CLIENT) {
     expect(await ui.find({ type: 'Client' })).toBeDefined()
     expect((await row(ui, 'hdr:human'))?.text).toMatch(/^ {2}Human 1 ─+$/)
     await clock.advance(SYNC_PAUSE)
-    expect(files).toEqual(before)
+    expect(writes(github)).toEqual([])
     await ui.unmount()
   })
 
   test(`the cursor stays on its card when a refresh shifts the rows on the ${surface}`, async ($, on) => {
-    const { ui, calls } = await start($, on, surface)
+    const { ui, github } = await start($, on, surface)
     await goTo(ui, DOCS)
     const was = await rowIndex(ui, DOCS)
 
     // A card that sorts above Docs in its section.
-    calls.edit(
-      path(5, 'new'),
-      card(5, { status: 'backlog', title: 'Fresh', order: 0 }),
-    )
+    github.cards.unshift(issue(5, { column: 'backlog', title: 'Fresh' }))
     await ui.press({ key: 'refresh' })
 
     expect(await rowIndex(ui, DOCS)).toBe(was + 1)
     expect(await litRows(ui)).toEqual([DOCS])
     await keys(ui, 'k')
-    expect(await litRows(ui)).toEqual(['card:md:0005-new'])
+    expect(await litRows(ui)).toEqual(['card:gh:5'])
     await ui.unmount()
   })
 
   test(`the cursor moves to the nearest row when its card goes on the ${surface}`, async ($, on) => {
-    const { ui, files } = await start($, on, surface)
+    const { ui, github } = await start($, on, surface)
     await goTo(ui, DOCS)
 
-    delete files[path(3, 'docs')]
+    github.cards.splice(
+      github.cards.findIndex(one => one.number === 3),
+      1,
+    )
     await ui.press({ key: 'refresh' })
 
     expect(await row(ui, DOCS)).toBeUndefined()
@@ -395,7 +416,7 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a drag still highlights its target with a cursor showing on the ${surface}`, async ($, on) => {
-    const { clock, ui, files } = await start($, on, surface)
+    const { clock, ui, github } = await start($, on, surface)
     await goTo(ui, API)
     const from = await rowIndex(ui, DOCS)
     const to = await rowIndex(ui, 'hdr:human')
@@ -408,21 +429,24 @@ for (const surface of WITH_CLIENT) {
     await ui.pointer({ type: 'up', x: 3, y: to, button: 'left' })
 
     await clock.advance(SYNC_PAUSE)
-    expect(files[path(3, 'docs')]).toContain('status: human')
+    expect(github.card(3).status).toBe('In review')
     await ui.unmount()
   })
 
   test(`the toolbar shows the key hint, until a read fails, on the ${surface}`, async ($, on) => {
-    const { ui, calls } = await start($, on, surface, cards(), 72)
+    const { ui, github } = await start($, on, surface, cards(), 72)
 
     expect(
       await ui.find({ type: 'Text', text: /↑↓ ⏎ open · m move/ }),
     ).toBeDefined()
 
-    calls.edit(path(1, 'login'), card(1, { status: 'human', title: 'Edited' }))
-    calls.denyRead = 'EIO: disk error'
+    github.card(1).title = 'Edited'
+    github.fail['api graphql'] = {
+      exitCode: 1,
+      stderr: 'HTTP 502: Bad Gateway',
+    }
     await ui.press({ key: 'refresh' })
-    expect(await ui.find({ type: 'Text', text: /EIO/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /HTTP 502/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /↑↓/ })).toBeUndefined()
     await ui.unmount()
   })
