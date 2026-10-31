@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { KanbanCard, KanbanPrompt } from '../types'
+import type { KanbanCard, KanbanPrompt, KanbanSetup } from '../types'
 import { noteCardPrompt } from './activity'
 import { errorMessage } from './model'
 import { S } from './strings'
@@ -27,5 +27,13 @@ export function submitPrompt(
   noteCardPrompt(card.id, text)
   $.prompt
     .submit({ text })
+    .catch((error: unknown) => $.ui.log(S.promptFailed(errorMessage(error))))
+}
+
+/** Asks Claude to set GitHub up for the board: what `setup` says is missing, and what else may be. */
+export function askSetup($: EngineInterface, setup: KanbanSetup): void {
+  $.prompt
+    .submit({ text: S.setupPrompt(setup.step, setup.reason) })
+    .then(() => $.ui.toast(S.setupAsked))
     .catch((error: unknown) => $.ui.log(S.promptFailed(errorMessage(error))))
 }

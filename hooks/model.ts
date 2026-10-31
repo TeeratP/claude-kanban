@@ -11,7 +11,6 @@ import type {
 } from '../types'
 
 export const PANE = 'kanban'
-export const KANBAN_DIR = '.kanban'
 // Done and Cancelled list their newest cards only.
 export const NEWEST_LIMIT = 10
 export const DIFF_LIMIT = 90_000
@@ -60,7 +59,6 @@ export const MOVE_KEY: Record<KanbanColumn, string> = {
 }
 
 export const EMPTY_BOARD: KanbanBoard = {
-  mode: 'auto',
   backend: null,
   cards: [],
   fetchedAt: 0,
@@ -266,13 +264,6 @@ export function withCard(
     ...rest,
     { ...card, order: Math.max(card.order, maxOrder(rest, card.column) + 1) },
   ]
-}
-
-const KANBAN_FILE = /(^|\/)\.kanban\/[^/]+\.md$/
-
-/** Whether a path names a card file under a `.kanban/` folder. */
-export function isKanbanFile(path: unknown): boolean {
-  return typeof path === 'string' && KANBAN_FILE.test(path)
 }
 
 /** Text on one line, trimmed: a card title never wraps. */

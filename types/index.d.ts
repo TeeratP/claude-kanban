@@ -47,11 +47,7 @@ export type KanbanGithub = {
   title?: string
   isDetected?: true
 }
-// `isConfigUnclear`: under `auto`, a CLAUDE.md or AGENTS.md mentions a board that could not be read.
-// `noBoardFor`: under `auto`, no GitHub board was found for this repo (`owner/name`).
-export type KanbanBackendInfo =
-  | { kind: 'local'; isConfigUnclear?: true; noBoardFor?: string }
-  | KanbanGithub
+export type KanbanBackendInfo = KanbanGithub
 /** A GitHub project the zero-config search found for the repo. */
 export type KanbanChoice = {
   id: string
@@ -59,16 +55,20 @@ export type KanbanChoice = {
   title: string
   owner: string
 }
-export type KanbanBackendMode = 'auto' | 'github' | 'local'
-/** What the /config checks last learned of `gh`: installed, missing, or not known yet. */
-export type KanbanGhState = 'unknown' | 'found' | 'missing'
+/**
+ * What is missing before the board can use GitHub: the gh CLI, a signed-in gh,
+ * a github.com origin, a board for the repo, or a board config that reads.
+ */
+export type KanbanSetupStep = 'gh' | 'auth' | 'remote' | 'board' | 'config'
+export type KanbanSetup = { step: KanbanSetupStep; reason: string }
 export type KanbanBoard = {
-  mode: KanbanBackendMode
   backend: KanbanBackendInfo | null
   cards: KanbanCard[]
   fetchedAt: number
   isLoading: boolean
   error?: string
+  /** Set while the board cannot reach GitHub for want of setup; the pane offers to have Claude do it. */
+  setup?: KanbanSetup
   /** The boards to pick from, while the person has to choose one. */
   pick?: KanbanChoice[]
 }
@@ -219,7 +219,6 @@ declare module 'claude-code' {
       tick: number
       pausedUntil: number
       viewer: string
-      ghInstalled: KanbanGhState
       activity: Shaped<KanbanActivity>
       quickAdd: Shaped<KanbanQuickAdd>
       settings: Shaped<KanbanSettings>

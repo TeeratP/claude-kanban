@@ -353,7 +353,6 @@ async function execute(
   card: KanbanCard,
   command: string,
   startedAt: number,
-  isLocal: boolean,
 ): Promise<void> {
   // Redraws the elapsed time while the command runs.
   const beat = $.clock.every(BEAT_MS, () =>
@@ -369,17 +368,13 @@ async function execute(
     beat.cancel()
   }
 
-  // A local card is the person's own file, so the run is saved there at once; a
-  // GitHub comment is public and waits for the person's Attach.
-  const isSaved = isLocal && finish.outcome !== 'error'
+  // A GitHub comment is public, so the run waits for the person's Attach.
   const durationMs = (await $.clock.now()) - startedAt
-  const runs = await patchRun($, card.id, startedAt, {
+  await patchRun($, card.id, startedAt, {
     ...finish,
     durationMs,
-    record: isSaved ? 'saving' : 'none',
+    record: 'none',
   })
-  const run = runs[card.id]
-  if (isSaved && run?.startedAt === startedAt) await writeRecord($, card, run)
 }
 
 /**
@@ -392,10 +387,6 @@ export async function startCheck(
   command: string,
 ): Promise<void> {
   const startedAt = await $.clock.now()
-  const isLocal = await ensureBackend($).then(
-    info => info.kind === 'local',
-    () => false,
-  )
   const claim = { isStarted: false }
   await updateCheck($, runs => {
     const current = runs[card.id]
@@ -425,11 +416,11 @@ export async function startCheck(
 
   // A new dispatch, so the run and what follows it read the state as it then stands.
   $.clock.after(0, () =>
-    detach($, execute($, card, command, startedAt, isLocal)),
+    detach($, execute($, card, command, startedAt)),
   )
 }
 
-/** Saves the card's latest run on the card: a section in the file, a comment on GitHub. */
+/** Saves the card's latest run on the card, as a comment on the issue. */
 export async function attachRun(
   $: EngineInterface,
   card: KanbanCard,

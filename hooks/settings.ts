@@ -2,14 +2,12 @@ import type { ConfigRow, EngineInterface } from 'claude-code'
 
 import type { KanbanBoard, KanbanSettingRow } from '../types'
 import { readBoard, updateBoard, updateSettings, updateUi } from './atoms'
-import { githubDenial } from './backend-config'
-import { refresh, setBoard } from './board'
 import { errorMessage } from './model'
 import { changeBoard } from './pick'
 import { S } from './strings'
 
 /** The mod's `userConfig` fields in the order the view lists them. */
-export const SETTING_FIELDS = ['backend', 'reconcile'] as const
+export const SETTING_FIELDS = ['reconcile'] as const
 
 export type SettingField = (typeof SETTING_FIELDS)[number]
 
@@ -161,12 +159,7 @@ export async function setSetting(
 ): Promise<void> {
   let reason: string | undefined
   try {
-    // The engine does not run this plugin's own `config.set` hooks for its own
-    // `$.config.set`, so the check that /config meets in `guardBackend` is made here.
-    if (ownField(key) === 'backend' && value === 'github') {
-      reason = await githubDenial($)
-    }
-    if (reason === undefined) reason = (await $.config.set({ key, value })).deny
+    reason = (await $.config.set({ key, value })).deny
   } catch (error) {
     reason = errorMessage(error)
   }
@@ -188,21 +181,17 @@ export async function setSetting(
 
 /** What `Change board` does with the board as it stands; undefined when nothing can be changed. */
 export function boardAction(
-  board: Pick<KanbanBoard, 'mode' | 'backend' | 'pick'>,
-): 'pick' | 'detect' | 'show' | undefined {
+  board: Pick<KanbanBoard, 'backend' | 'pick'>,
+): 'pick' | 'show' | undefined {
   const { backend } = board
-  if (backend?.kind === 'github') {
-    return backend.isDetected === true ? 'pick' : undefined
-  }
-  if (backend === null) return board.pick === undefined ? undefined : 'show'
+  if (backend !== null) return backend.isDetected === true ? 'pick' : undefined
 
-  return board.mode === 'auto' ? 'detect' : undefined
+  return board.pick === undefined ? undefined : 'show'
 }
 
 /**
- * Opens the board picker when GitHub has several boards linked to the repo, or
- * looks for a board again when `auto` settled for local files. The picker
- * stands on the board, so the view gives way to it.
+ * Opens the board picker when GitHub has several boards linked to the repo.
+ * The picker stands on the board, so the view gives way to it.
  */
 export async function changeBoardFromSettings(
   $: EngineInterface,
@@ -211,10 +200,6 @@ export async function changeBoardFromSettings(
   if (action === undefined) return
 
   if (action === 'pick') await changeBoard($)
-  if (action === 'detect') {
-    await setBoard($, board => ({ ...board, backend: null }))
-    await refresh($)
-  }
 
   const { pick } = await updateBoard($, board => board)
   if (action === 'show' || pick !== undefined) await closeSettings($)

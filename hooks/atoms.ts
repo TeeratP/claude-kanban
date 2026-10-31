@@ -6,7 +6,6 @@ import type {
   KanbanBoard,
   KanbanCheckRun,
   KanbanDetail,
-  KanbanGhState,
   KanbanQuickAdd,
   KanbanSettings,
   KanbanReconcile,
@@ -55,10 +54,6 @@ const pausedUntil = atom({ plugin: 'kanban', key: 'pausedUntil' } as const, 0)
 // The signed-in GitHub login, asked for once ('' until then).
 const viewer = atom({ plugin: 'kanban', key: 'viewer' } as const, '')
 // Whether `gh` is installed, as the /config checks last found it.
-const ghInstalled = atom(
-  { plugin: 'kanban', key: 'ghInstalled' } as const,
-  'unknown' as KanbanGhState,
-)
 const activity = atom(
   { plugin: 'kanban', key: 'activity' } as const,
   EMPTY_ACTIVITY,
@@ -178,17 +173,6 @@ export function updateViewer(
   change: (value: string) => string,
 ): Promise<string> {
   return update($, viewer, change)
-}
-
-export function readGhInstalled($: EngineInterface): Promise<KanbanGhState> {
-  return read($, ghInstalled)
-}
-
-export function updateGhInstalled(
-  $: EngineInterface,
-  change: (value: KanbanGhState) => KanbanGhState,
-): Promise<KanbanGhState> {
-  return update($, ghInstalled, change)
 }
 
 export function readActivity($: EngineInterface): Promise<KanbanActivity> {

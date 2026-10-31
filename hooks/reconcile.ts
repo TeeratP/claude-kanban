@@ -15,7 +15,7 @@ import {
   updateReconcile,
   updateSync,
 } from './atoms'
-import { EMPTY_TURN, errorMessage, isKanbanFile, isPendingId } from './model'
+import { EMPTY_TURN, errorMessage, isPendingId } from './model'
 import { S } from './strings'
 
 // At the end of a turn that worked on a card and left it in Claude with nothing
@@ -66,9 +66,6 @@ async function recordTool(
   const input: Record<string, unknown> = { ...e }
   if (EDIT_TOOLS.includes(e.tool)) {
     if (ran.deny !== undefined || ran.isError === true) return
-
-    const file = input.file_path ?? input.notebook_path
-    if (isKanbanFile(file)) return
 
     await updateReconcile($, state => ({
       ...state,

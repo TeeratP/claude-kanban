@@ -34,8 +34,8 @@ export type RowViewInput = {
   /** Whether the surface takes a drag, and whether it has text fields: some copy differs. */
   canDrag: boolean
   canType: boolean
-  /** Whether the cards come from GitHub, which an empty board says. */
-  isGithub: boolean
+  /** Whether GitHub is yet to be set up, which an empty board says. */
+  needsSetup: boolean
 }
 
 /** A message the board's Client posts, checked: it came from code, not a fact. */
@@ -516,29 +516,13 @@ export function toRowViews(input: RowViewInput): RowView[] {
           kind: 'text',
           ...view([
             seg(
-              `${INDENT}${fit(input.isGithub ? S.noIssues : S.noCards, columns - INDENT.length)}`,
+              `${INDENT}${fit(input.needsSetup ? S.notSetUp : S.noIssues, columns - INDENT.length)}`,
               { dim: true },
             ),
           ]),
         })
         break
 
-      case 'hint': {
-        const copy = S.githubHint[row.line]
-        views.push({
-          key: `hint:${row.line}`,
-          kind: 'text',
-          ...view([
-            seg(
-              copy === undefined
-                ? ''
-                : `${INDENT}${fit(copy, columns - INDENT.length)}`,
-              { dim: true },
-            ),
-          ]),
-        })
-        break
-      }
     }
   }
 

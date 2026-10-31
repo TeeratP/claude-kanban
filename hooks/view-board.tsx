@@ -57,6 +57,7 @@ import type { PlacedAction } from './toolbar'
 import { openDetail } from './view-detail'
 import { clearFilter, renderFilter, toggleFilter } from './view-filter'
 import { pickRows, renderPicker } from './view-pick'
+import { renderSetup, setupRows } from './view-setup'
 import { renderQuickAdd } from './view-quick-add'
 
 // Where the pane's window sat at the last draw, and the rows above the list that
@@ -78,16 +79,6 @@ function glyphOf(entry: KanbanSync, tick: number, now: number) {
     case 'failed':
       return { text: S.failedGlyph, color: 'error', dim: false }
   }
-}
-
-// Why a local board has no GitHub behind it, when the backend knows.
-export function localNote(info: KanbanBackendInfo | null): string | undefined {
-  if (info?.kind !== 'local') return undefined
-  if (info.isConfigUnclear === true) return S.configUnclear
-
-  return info.noBoardFor === undefined
-    ? undefined
-    : S.noGithubBoard(info.noBoardFor)
 }
 
 // A press on a group's header opens it, which folds the other, or folds it when
@@ -190,8 +181,8 @@ export async function handleBoardScroll(
 
   const board = await readBoard($)
   const { cards } = board
-  // The picker sits between the toolbar and the list; the layout is told of it.
-  const strip = pickRows(board)
+  // The picker and the setup offer sit between the toolbar and the list; the layout is told of them.
+  const strip = pickRows(board) + setupRows(board)
   const rows = layoutBoard({
     cards,
     ui,
@@ -275,9 +266,11 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   const filterField = await renderFilter($, e)
   const quickAdd = await renderQuickAdd($, e)
   const picker = renderPicker($, e, board)
+  const setup = renderSetup($, e, board)
   // The rows above the list, which the equal-height sections give way to.
   const extraRows =
     pickRows(board) +
+    setupRows(board) +
     (filterField === null ? 0 : 1) +
     (quickAdd === null ? 0 : quickAddRows(await readQuickAdd($)))
   lastBody = { offset: scroll.offset, bodyRows: scroll.bodyRows, extraRows }
@@ -294,7 +287,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     ui,
     bodyRows: scroll.bodyRows,
     details: detailIds(board.cards, activity),
-    hint: board.mode === 'auto' && board.backend?.kind === 'local',
     extraRows,
     legend: hasClient,
     isLoading,
@@ -312,11 +304,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
   // The status text, dim: the backend, the board, how fresh it is, and why not;
   // with `s: Settings` at the right end of the row.
   const statusRow = () => {
-    const note = localNote(board.backend)
     const detected =
-      board.backend?.kind === 'github' && board.backend.isDetected === true
-        ? board.backend
-        : undefined
+      board.backend?.isDetected === true ? board.backend : undefined
     const boardName =
       detected?.title === undefined
         ? ''
@@ -326,7 +315,9 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       !(board.isLoading || isLoading) &&
       !(pausedUntil > now) &&
       board.fetchedAt !== 0
+    // The setup offer under the toolbar says what is missing; the row only flags it.
     const status =
+      (board.setup === undefined ? undefined : S.setupNeeded) ??
       board.error ??
       (board.isLoading || isLoading
         ? S.loading
@@ -337,9 +328,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
             : S.updated(ageLabel(board.fetchedAt, now)))
     const plan = planStatus({
       columns,
-      mode: board.mode,
-      kind: board.backend?.kind,
-      note,
       boardName,
       status,
       isAge,
@@ -470,7 +458,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     cards: board.cards,
     canDrag: hasClient,
     canType,
-    isGithub: board.backend?.kind === 'github',
+    needsSetup: board.setup !== undefined,
   }
   const textOf = (row: Row) => {
     const [made] = toRowViews({ ...rowViewInput, rows: [row] })
@@ -509,7 +497,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       case 'empty':
       case 'skeleton':
       case 'note':
-      case 'hint':
         return <Text wrap="truncate-end">{textOf(row)}</Text>
 
       // The legend is the Client's: the other surfaces have no keys to list.
@@ -568,6 +555,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box flexDirection="column">
         {rows.slice(0, TOOLBAR_ROWS).map(draw)}
         {picker}
+      {setup}
+        {setup}
         {filterField}
         {quickAdd}
         {rows.slice(TOOLBAR_ROWS).map(draw)}

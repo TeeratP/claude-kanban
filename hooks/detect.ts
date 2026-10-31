@@ -1,6 +1,11 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { KanbanChoice, KanbanGithub } from '../types'
+import type {
+  KanbanChoice,
+  KanbanGithub,
+  KanbanSetup,
+  KanbanSetupStep,
+} from '../types'
 import {
   graphql,
   isRateLimited,
@@ -25,13 +30,33 @@ const PROJECTS = 20
 const COUNTED = 100
 const SHAPE = 'detect-1'
 
-/** What a failed check says: `auto` logs the reason as it is, `github` adds how to fix it. */
+/**
+ * What a failed check says: the reason as it is, or with how to fix it. A check
+ * that setup would fix may give an Error, which is thrown as it is.
+ */
 export type Explain = {
-  gh: (reason: string) => string
-  auth: (reason: string) => string
-  remote: (reason: string) => string
+  gh: (reason: string) => string | Error
+  auth: (reason: string) => string | Error
+  remote: (reason: string) => string | Error
   lookup: (repo: string, reason: string) => string
   board: (number: number, reason: string) => string
+}
+
+/** A check that failed for want of setup the person (or Claude) can do: what is missing, and how to fix it. */
+export class SetupNeeded extends Error {
+  readonly step: KanbanSetupStep
+
+  constructor(step: KanbanSetupStep, message: string) {
+    super(message)
+    this.step = step
+  }
+}
+
+/** What setup a failure asks for; undefined for any other failure. */
+export function setupOf(error: unknown): KanbanSetup | undefined {
+  return error instanceof SetupNeeded
+    ? { step: error.step, reason: error.message }
+    : undefined
 }
 
 const AS_IS = (reason: string) => reason
@@ -45,11 +70,15 @@ export const PLAIN: Explain = {
   board: (_number, reason) => reason,
 }
 
-/** Reasons that name the failing check and how to fix it. */
+/**
+ * Reasons that name the failing check and how to fix it. A missing gh, a gh
+ * signed out and an origin not on github.com are setup; a lookup or a board
+ * that fails is not.
+ */
 export const NAMED: Explain = {
-  gh: S.githubNoGh,
-  auth: S.githubSignedOut,
-  remote: S.githubNoRemote,
+  gh: reason => new SetupNeeded('gh', S.githubNoGh(reason)),
+  auth: reason => new SetupNeeded('auth', S.githubSignedOut(reason)),
+  remote: reason => new SetupNeeded('remote', S.githubNoRemote(reason)),
   lookup: S.githubLookupFailed,
   board: S.githubDetectedFailed,
 }
@@ -57,12 +86,13 @@ export const NAMED: Explain = {
 /** Runs the work; a failure is thrown again with the reason `explain` gives. */
 export async function check<T>(
   work: () => Promise<T>,
-  explain: (reason: string) => string,
+  explain: (reason: string) => string | Error,
 ): Promise<T> {
   try {
     return await work()
   } catch (error) {
-    throw new Error(explain(errorMessage(error)))
+    const explained = explain(errorMessage(error))
+    throw explained instanceof Error ? explained : new Error(explained)
   }
 }
 
@@ -392,32 +422,31 @@ export async function forgetDetected($: EngineInterface): Promise<void> {
   }
 }
 
-/** Auto found no board for this repo. */
-export type NoBoard = { kind: 'local'; noBoardFor: string }
-
 /**
  * Finds the board with no config. The origin comes first, and costs no call to
  * gh: a board remembered for it is used as it is, and an origin that is not on
  * github.com ends the search before gh is asked anything. Otherwise gh must be
  * installed and signed in. One board is used; several go by the most items from
- * this repo, and a tie throws a request to pick (see `choicesOf`). None gives
- * `NoBoard`. A found board is remembered per directory.
+ * this repo, and a tie throws a request to pick (see `choicesOf`). None throws
+ * the setup a board needs. A found board is remembered per directory.
  */
 export async function detectZero(
   $: EngineInterface,
   explain: Explain,
-): Promise<KanbanGithub | NoBoard> {
+): Promise<KanbanGithub> {
   const origin = await check(() => readOrigin($), explain.remote)
   const saved = await readSaved($, origin)
   if (saved !== undefined) return saved
 
-  const repo = repoOf(origin)
+  const repo = await check(async () => repoOf(origin), explain.remote)
   await checkGh($, explain)
   await checkSignedIn($, explain)
 
   const found = pool(await search($, repo, explain))
   const [first, second] = found
-  if (first === undefined) return { kind: 'local', noBoardFor: repo }
+  if (first === undefined) {
+    throw new SetupNeeded('board', S.githubNoBoard(repo))
+  }
   if (second !== undefined && second.count === first.count) {
     throw pickNeeded(repo, found.map(plain))
   }

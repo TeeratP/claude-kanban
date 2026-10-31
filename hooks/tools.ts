@@ -13,6 +13,7 @@ import {
   formatHandoff,
   formatQuestion,
   gistOf,
+  isClosingValid,
   isFilled,
   isHandoffValid,
 } from './handoff'
@@ -93,7 +94,7 @@ export const TOOL_SPECS: ToolSpec[] = [
         changed: { type: 'string', description: S.toolHandoff.changed },
         need: { type: 'string', description: S.toolHandoff.need },
       },
-      required: ['card', 'check', 'need'],
+      required: ['card', 'did', 'check'],
     },
   },
   {
@@ -247,7 +248,8 @@ async function handoff(
     if (text === undefined) return { deny: S.badText(name) }
     fields[name] = text
   }
-  if (!isFilled(fields.check) || !isFilled(fields.need))
+  // What is needed from the person may be nothing: a card Claude closes needs no one.
+  if (!isFilled(fields.did) || !isFilled(fields.check))
     return { deny: S.handoffIncomplete }
 
   const found = await find($, input)
@@ -321,10 +323,14 @@ async function move(
 
   const { card, info } = found
   if (isSetAside(card)) return { deny: S.setAside(card) }
-  if (to === 'human') {
+  // Human needs a handoff that says what is needed; Done one that says what was done.
+  if (to === 'human' || to === 'done') {
     try {
       const { sections } = await readDetail($, info, card)
-      if (!isHandoffValid(sections)) return { deny: S.needHandoff(card) }
+      if (to === 'human' && !isHandoffValid(sections))
+        return { deny: S.needHandoff(card) }
+      if (to === 'done' && !isClosingValid(sections))
+        return { deny: S.needClosingHandoff(card) }
     } catch (error) {
       return { deny: S.detailFailed(errorMessage(error)) }
     }

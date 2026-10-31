@@ -2,7 +2,7 @@ import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
 
 import type { KanbanBoard } from '../types'
 import { readBoard, readSettings } from './atoms'
-import { KANBAN_DIR, cellWidth } from './model'
+import { cellWidth } from './model'
 import { S } from './strings'
 import {
   boardAction,
@@ -15,7 +15,6 @@ import {
   valueText,
 } from './settings'
 import type { Setting } from './settings'
-import { localNote } from './view-board'
 import { dotted, packRows, separatorWidth } from './view-parts'
 
 // Cells a setting's controls and help stand in from its name.
@@ -23,16 +22,15 @@ const INDENT = 2
 
 // The board the mod reads, as two short lines: where it is, then which.
 function boardLines(board: KanbanBoard): [string, string | undefined] {
-  const { backend, mode } = board
-  if (backend === null) return [S.loading, undefined]
-
-  const kind = S.backendLabel(mode, backend.kind, true)
-  if (backend.kind === 'local') {
-    return [`${kind}${S.dot}${KANBAN_DIR}/`, localNote(backend)]
+  const { backend } = board
+  if (backend === null) {
+    return board.setup === undefined
+      ? [S.loading, undefined]
+      : [S.backendName, S.setupNeeded]
   }
 
   return [
-    `${kind}${S.dot}${backend.repo}`,
+    `${S.backendName}${S.dot}${backend.repo}`,
     backend.title === undefined
       ? `#${backend.projectNumber}`
       : S.boardName(backend.projectNumber, backend.title),
@@ -156,7 +154,7 @@ export async function renderSettings(
             </Button>
           )}
           {action === undefined &&
-            board.backend?.kind === 'github' &&
+            board.backend !== null &&
             board.backend.isDetected !== true && (
               <Text dimColor wrap="wrap">
                 {S.boardFromConfig}

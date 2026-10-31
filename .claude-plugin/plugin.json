@@ -1,23 +1,12 @@
 {
   "name": "kanban",
   "version": "0.5.2",
-  "description": "A kanban side pane: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections over GitHub Projects or local .kanban/ cards.",
+  "description": "A kanban side pane over GitHub Issues and a Projects board: Active (Backlog, Claude, Human) and Inactive (Done, Cancelled, Suspended) sections.",
   "author": {
     "name": "TeeratP"
   },
   "types": "./types/index.d.ts",
   "userConfig": {
-    "backend": {
-      "type": "string",
-      "title": "Card backend (default: auto)",
-      "description": "Where cards live. auto: GitHub Issues when gh is installed, signed in and a project board is found for this repo, else local .kanban/*.md files. github: GitHub only; shows what is missing instead of falling back. local: always .kanban/*.md files.",
-      "options": [
-        "auto",
-        "github",
-        "local"
-      ],
-      "default": "auto"
-    },
     "reconcile": {
       "type": "boolean",
       "title": "Reconcile at turn end (default: on)",

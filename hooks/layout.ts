@@ -57,8 +57,6 @@ export type Row =
   // What the list says while both groups are folded.
   | { kind: 'folded' }
   | { kind: 'note' }
-  // A line under the note on how to use GitHub.
-  | { kind: 'hint'; line: number }
 
 /** Rows the toolbar takes: the status, then the actions. */
 export const TOOLBAR_ROWS = 2
@@ -69,8 +67,6 @@ export type LayoutInput = {
   bodyRows: number
   /** The ids of the cards that get a second row. */
   details?: ReadonlySet<string>
-  /** Whether an empty board also says how to use GitHub. */
-  hint?: boolean
   /** Rows the picker, filter field and add form take above the list. */
   extraRows?: number
   /** Whether a row left over at the bottom carries the key hint. */
@@ -158,15 +154,12 @@ export function applyFilter(
   return { cards: matched, ui: { ...ui, openGroup } }
 }
 
-/** Rows an empty board adds under the groups: the note, and with `hint` the GitHub lines; none while loading. */
+/** Rows an empty board adds under the groups: the note; none while loading. */
 export function footRows(
   cards: readonly KanbanCard[],
-  hint = false,
   isLoading = false,
 ): number {
-  if (cards.length > 0 || isLoading) return 0
-
-  return 1 + (hint ? S.githubHint.length : 0)
+  return cards.length > 0 || isLoading ? 0 : 1
 }
 
 /**
@@ -322,7 +315,6 @@ export function layoutBoard({
   ui: stored,
   bodyRows,
   details,
-  hint,
   extraRows,
   legend,
   isLoading,
@@ -332,7 +324,7 @@ export function layoutBoard({
   const { body, slack } = sectionBody({
     bodyRows,
     extraRows: extraRows ?? 0,
-    footRows: footRows(cards, hint, loading),
+    footRows: footRows(cards, loading),
   })
   const rows: Row[] = [
     { kind: 'toolbar', line: 'status' },
@@ -392,9 +384,6 @@ export function layoutBoard({
 
   if (cards.length === 0 && !loading) {
     rows.push({ kind: 'note' })
-    if (hint === true) {
-      S.githubHint.forEach((_, line) => rows.push({ kind: 'hint', line }))
-    }
   }
 
   return rows

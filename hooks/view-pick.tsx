@@ -28,7 +28,7 @@ export function renderPicker(
 
   const { Box, Button, Text } = $.ui.resolve(e)
   // A board in use means the person is changing it.
-  const caption = board.backend?.kind === 'github' ? S.changeBoard : S.pickBoard
+  const caption = board.backend === null ? S.pickBoard : S.changeBoard
   const room = e.props.bodyColumns - cellWidth(caption)
   const shown = pick.slice(0, Math.max(1, Math.floor(room / LEAST)))
   const share = Math.floor(room / shown.length) - cellWidth(S.pickLabel(''))

@@ -384,19 +384,18 @@ async function dispatch($: EngineInterface, cardId: string): Promise<void> {
 
 // The card this move goes after, as the board has it now: null for first, the
 // section's last when that card is gone, nothing when no place was asked. A card
-// arriving in another section with no place asked goes last there on GitHub,
-// where the project keeps the order a reload gives (a local card takes the next
-// order on its own); that default place is best effort, see `send`. A card still
+// arriving in another section with no place asked goes last there, where the
+// project keeps the order a reload gives; that default place is best effort,
+// see `send`. A card still
 // being made is not on the backend to go after.
 function anchorOf(
   cards: readonly KanbanCard[],
   cardId: string,
   sent: KanbanSync,
-  isGithub: boolean,
 ): KanbanCard | null | undefined {
   if (sent.after === null) return null
 
-  const isArrival = isGithub && sent.from !== sent.to && isOrdered(sent.to)
+  const isArrival = sent.from !== sent.to && isOrdered(sent.to)
   if (sent.after === undefined && !isArrival) return undefined
 
   const others = sectionList(cards, sent.to).filter(
@@ -436,7 +435,7 @@ async function send($: EngineInterface, cardId: string): Promise<boolean> {
       info,
       { ...card, column: sent.from },
       sent.to,
-      anchorOf(cards, card.id, sent, info.kind === 'github'),
+      anchorOf(cards, card.id, sent),
       // Without a place asked for, the anchor is only the default one.
       sent.after !== undefined,
     )

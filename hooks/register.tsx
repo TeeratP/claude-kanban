@@ -2,17 +2,7 @@ import type { Register } from 'claude-code'
 
 import { restoreActivity, watchSpawn, watchStep } from './activity'
 import { readUi } from './atoms'
-import { backendMode } from './backend'
-import { describeBackend, guardBackend } from './backend-config'
-import {
-  applyMode,
-  bootstrap,
-  inBackground,
-  noteClosed,
-  openBoard,
-  refreshAfter,
-} from './board'
-import { guardEdit, guardWrite } from './guard'
+import { bootstrap, inBackground, noteClosed, openBoard } from './board'
 import { backlogSection } from './guide'
 import { dropUnfinishedAdds } from './quick-add'
 import { followSettings, resumeSettings } from './settings'
@@ -34,7 +24,6 @@ import { renderDetail } from './view-detail'
 import { renderSettings } from './view-settings'
 
 export const register: Register = (on, options) => {
-  const mode = backendMode(options.backend)
   let isReconciling = reconcileOn(options.reconcile)
   // The Settings view's change counts at once; the reload it causes carries the same value.
   followSettings((field, value) => {
@@ -58,7 +47,6 @@ export const register: Register = (on, options) => {
   ).catch(($, e, next) => next(e))
 
   on('session.start', async ($, e, next) => {
-    await applyMode($, mode)
     await dropUnfinishedAdds($)
     await $.command.register({
       name: 'kanban',
@@ -150,25 +138,5 @@ export const register: Register = (on, options) => {
     const composed = await next(e)
 
     return { sections: await backlogSection($, composed.sections, e.traits) }
-  }).catch(($, e, next) => next(e))
-
-  // The GitHub backend cannot be chosen in /config while gh is missing or signed
-  // out. No key is matched: a marketplace install spells the row
-  // `kanban@<marketplace>.backend`, so these tell it from the rest themselves.
-  on('config.set', guardBackend).catch(($, e, next) => next(e))
-  on('config.describe', describeBackend).catch(($, e, next) => next(e))
-
-  // A card file Claude wrote or edited shows on the board at once, unless the
-  // edit would put a card in Human without a handoff; a guard that breaks lets
-  // the edit through.
-  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
-    const deny = await guardWrite($, e)
-
-    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
-  }).catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
-    const deny = await guardEdit($, e)
-
-    return deny === undefined ? refreshAfter($, e.file_path, next(e)) : { deny }
   }).catch(($, e, next) => next(e))
 }
