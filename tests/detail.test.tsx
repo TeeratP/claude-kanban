@@ -252,7 +252,7 @@ for (const surface of SURFACES) {
 
     await click(ui, 'card:gh:3')
     expect(await labels()).toEqual([
-      ['human', 'Human'],
+      ['human', 'Me'],
       ['claude', 'Claude'],
       ['backlog', undefined],
       ['done', 'Done'],
@@ -269,7 +269,7 @@ for (const surface of SURFACES) {
     await clock.advance(SYNC_PAUSE)
     expect(github.card(3)).toMatchObject({ status: 'Suspended', state: 'OPEN' })
     expect(await labels()).toEqual([
-      ['human', 'Human'],
+      ['human', 'Me'],
       ['claude', 'Claude'],
       ['backlog', 'Backlog'],
       ['done', 'Done'],
@@ -500,7 +500,7 @@ test('a Human card at 44 columns: nav, title, actions, the handoff to review, th
     'b: ← Board         k: ‹ Prev  1/2  n: Next ›',
     '',
     '#1 Fix login redirect loop on Safari',
-    'Human · in review · updated 2w ago · GitHub',
+    'Me · in review · updated 2w ago · GitHub',
     '',
     '[ a: Approve ] [ s: Send back ] [ p: Park ]',
     '[Feedback: What should Claude change?      ]',
@@ -643,10 +643,10 @@ test('the line under the title names the section in its color, then how old the 
   const { ui } = await openAt($, on, reviewing(), 44)
 
   expect(
-    (await ui.find({ type: 'Text', text: /^Human · in review · updated/ }))
+    (await ui.find({ type: 'Text', text: /^Me · in review · updated/ }))
       ?.text,
-  ).toBe('Human · in review · updated 2w ago · GitHub')
-  expect((await ui.find({ type: 'Text', text: /^Human$/ }))?.props.color).toBe(
+  ).toBe('Me · in review · updated 2w ago · GitHub')
+  expect((await ui.find({ type: 'Text', text: /^Me$/ }))?.props.color).toBe(
     'permission',
   )
   const title = await ui.find({ type: 'Text', text: /^#1 / })
@@ -768,8 +768,8 @@ test('on GitHub the line under the title names the tag and links to the issue', 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await click(ui, 'card:gh:3')
 
-  const meta = await ui.find({ type: 'Text', text: /^Human · in review/ })
-  expect(meta?.text).toBe('Human · in review · updated 12d ago · GitHub')
+  const meta = await ui.find({ type: 'Text', text: /^Me · in review/ })
+  expect(meta?.text).toBe('Me · in review · updated 12d ago · GitHub')
   const link = await ui.find({ type: 'Link' })
   expect(link?.props).toMatchObject({
     href: 'https://github.com/TeeratP/claude-kanban/issues/3',
@@ -787,7 +787,7 @@ const moveRows = async (ui: Parameters<typeof renderPane>[0], width: number) =>
 for (const [status, move, aside] of [
   [
     'backlog',
-    'Move to    Claude · Human',
+    'Move to    Claude · Me',
     'Set aside  Done · Cancel · Suspend',
   ],
   [
@@ -797,22 +797,22 @@ for (const [status, move, aside] of [
   ],
   [
     'claude',
-    'Move to    Backlog · Human',
+    'Move to    Backlog · Me',
     'Set aside  Done · Cancel · Suspend',
   ],
   [
     'done',
-    'Move to    Backlog · Claude · Human',
+    'Move to    Backlog · Claude · Me',
     'Set aside  Cancel · Suspend',
   ],
   [
     'suspended',
-    'Move to    Backlog · Claude · Human',
+    'Move to    Backlog · Claude · Me',
     'Set aside  Done · Cancel',
   ],
   [
     'cancelled',
-    'Move to    Backlog · Claude · Human',
+    'Move to    Backlog · Claude · Me',
     'Set aside  Done · Suspend',
   ],
 ] as const) {

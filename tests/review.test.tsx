@@ -51,7 +51,7 @@ type Ui = Pick<Mounted, 'find'>
 // The open card as the detail draws it: its title, its section, and its place in the Human queue.
 async function shown(ui: Ui) {
   const title = (await ui.find({ type: 'Text', text: /^#\d/ }))?.text
-  const meta = (await ui.find({ type: 'Text', text: /^(Human|Claude)/ }))?.text
+  const meta = (await ui.find({ type: 'Text', text: /^(Me|Claude)/ }))?.text
   const place = (await ui.find({ type: 'Text', text: /^\d+\/\d+$/ }))?.text
 
   return { title, section: meta?.split(' · ')[0], place }
@@ -68,13 +68,13 @@ for (const surface of SURFACES) {
     await click(ui, API)
     expect(await shown(ui)).toEqual({
       title: '#2 Build API',
-      section: 'Human',
+      section: 'Me',
       place: '1/3',
     })
     await ui.press({ key: 'next' })
     expect(await shown(ui)).toEqual({
       title: '#3 Write docs',
-      section: 'Human',
+      section: 'Me',
       place: '2/3',
     })
     await ui.unmount()
@@ -126,14 +126,14 @@ for (const surface of SURFACES) {
     await ui.press({ key: 'approve' })
     expect(await shown(ui)).toEqual({
       title: '#3 Write docs',
-      section: 'Human',
+      section: 'Me',
       place: '1/2',
     })
     await clock.advance(SETTLE_MS)
     await ui.press({ key: 'park' })
     expect(await shown(ui)).toEqual({
       title: '#1 Fix login',
-      section: 'Human',
+      section: 'Me',
     })
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     expect(await ui.find({ key: 'prev' })).toBeUndefined()
@@ -160,7 +160,7 @@ for (const surface of SURFACES) {
     await ui.input({ key: 'feedback', text: 'Too soon' })
     expect(await shown(ui)).toEqual({
       title: '#3 Write docs',
-      section: 'Human',
+      section: 'Me',
       place: '1/2',
     })
 
@@ -204,7 +204,7 @@ for (const surface of SURFACES) {
 
     expect(await shown(ui)).toEqual({
       title: '#2 Build API',
-      section: 'Human',
+      section: 'Me',
       place: '1/2',
     })
     await ui.unmount()
@@ -220,7 +220,7 @@ for (const surface of SURFACES) {
 
       expect(await shown(ui)).toEqual({
         title: '#3 Write docs',
-        section: 'Human',
+        section: 'Me',
         place: '1/2',
       })
       expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
@@ -269,7 +269,7 @@ for (const surface of SURFACES) {
     await ui.press({ key: 'next' })
     expect(await shown(ui)).toEqual({
       title: '#1 Fix login',
-      section: 'Human',
+      section: 'Me',
       place: '2/2',
     })
     await ui.press({ key: 'next' })
@@ -290,7 +290,7 @@ for (const surface of SURFACES) {
     await $.tool.call({ ...MOVE, card: 3, to: 'claude' })
     await $.tool.call({ ...MOVE, card: 1, to: 'claude' })
 
-    expect(await shown(ui)).toMatchObject({ section: 'Human' })
+    expect(await shown(ui)).toMatchObject({ section: 'Me' })
     expect((await shown(ui)).place).toBeUndefined()
     expect(await ui.find({ key: 'next' })).toBeUndefined()
     await ui.press({ key: 'approve' })
@@ -357,7 +357,7 @@ for (const surface of SURFACES) {
 
       expect(await shown(ui)).toEqual({
         title: '#3 Write docs',
-        section: 'Human',
+        section: 'Me',
         place: '1/2',
       })
       expect((await ui.find({ key: 'feedback' }))?.props.value).toBe('')
@@ -390,7 +390,7 @@ test('the mobile app walks and decides the queue without a field', async ($, on)
   await ui.press({ key: 'approve' })
   expect(await shown(ui)).toEqual({
     title: '#1 Fix login',
-    section: 'Human',
+    section: 'Me',
     place: '2/2',
   })
   await clock.advance(SYNC_PAUSE)

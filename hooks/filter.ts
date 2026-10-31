@@ -41,7 +41,8 @@ function parseFilter(query: string): Filter {
     const number = NUMBER.exec(term)?.[1]
     const tag = TAG.exec(term)?.[1]
     const section = term.startsWith('@') ? term.slice(1) : ''
-    const column = parseColumn(section)
+    // The pane calls the person's section Me, so `@me` names it too.
+    const column = parseColumn(section === 'me' ? 'human' : section)
 
     if (number !== undefined) filter.numbers.push(Number(number))
     else if (tag !== undefined) filter.tags.push(tag)

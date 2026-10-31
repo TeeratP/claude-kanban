@@ -373,7 +373,7 @@ test('a move that fails after another was asked for sends the newer one', async 
   delete github.fail['project item-edit']
 
   await click(ui, DOCS)
-  expect((await ui.find({ type: 'Text', text: /^Human/ }))?.text).toContain(
+  expect((await ui.find({ type: 'Text', text: /^Me/ }))?.text).toContain(
     'GraphQL: Resource not accessible by integration (attempt 1/4)',
   )
   await ui.press({ key: 'retry' })

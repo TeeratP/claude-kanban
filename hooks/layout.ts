@@ -13,7 +13,7 @@ import {
   padStart,
   truncate,
 } from './model'
-import { whoCards } from './people'
+import { isTheirs, whoCards } from './people'
 import { S } from './strings'
 
 /** How many of a section's cards the filter lets through, out of all of them. */
@@ -21,6 +21,8 @@ export type SectionCount = {
   column: KanbanColumn
   shown: number
   total: number
+  /** The section's cards assigned to the signed-in person; absent before they are known. */
+  mine?: number
 }
 
 // Every Row is exactly one terminal row, so a Row's index is its tree row.
@@ -41,6 +43,7 @@ export type Row =
       column: KanbanColumn
       shown: number
       total: number
+      mine?: number
       isLoading?: true
     }
   | { kind: 'more'; column: KanbanColumn; dir: 'up' | 'down'; n: number }
@@ -339,11 +342,18 @@ export function layoutBoard({
   ]
 
   for (const group of GROUP_ORDER) {
-    const counts = GROUPS[group].map(column => ({
-      column,
-      shown: matched.filter(card => card.column === column).length,
-      total: cards.filter(card => card.column === column).length,
-    }))
+    const counts = GROUPS[group].map(column => {
+      const all = cards.filter(card => card.column === column)
+
+      return {
+        column,
+        shown: matched.filter(card => card.column === column).length,
+        total: all.length,
+        ...(viewer === undefined || viewer === ''
+          ? {}
+          : { mine: all.filter(card => isTheirs(card, viewer)).length }),
+      }
+    })
     const isOpen = ui.openGroup === group
     rows.push({
       kind: 'group',
@@ -354,12 +364,13 @@ export function layoutBoard({
     })
     if (!isOpen) continue
 
-    counts.forEach(({ column, shown, total }, step) => {
+    counts.forEach(({ column, shown, total, mine }, step) => {
       const header: Row = {
         kind: 'header',
         column,
         shown,
         total,
+        ...(mine === undefined ? {} : { mine }),
         ...(loading ? { isLoading: true as const } : {}),
       }
       rows.push(

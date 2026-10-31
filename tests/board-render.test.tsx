@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 import type { On, RenderSurface } from 'claude-code'
 
-import { TOOLBAR_ROWS, group, rowIndex } from './board-ui'
+import { TOOLBAR_ROWS, group, header, rowIndex, under } from './board-ui'
 import { bootGithub, issue } from './fake-github'
 import type { FakeCard } from './fake-github'
 import { CWD, NOW, PANE, RUN, SYNC_PAUSE } from './fakes'
@@ -175,7 +175,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
     ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   v: Mine   f: Find',
     '▾ Active',
-    '  Backlog 8 ────────────────────────────────',
+    '  Backlog 8 mine · 8 all ───────────────────',
     '   #40 Write docs                        20h',
     '   #41 Ship 1.0                           1d',
     '   #42 [KANB-UIX] Polish the board        2d',
@@ -183,7 +183,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
     '   #44 Rate-limit banner                  4d',
     '   #45 Cache warmup                       5d',
     '       ↓ 2 more',
-    '  Claude 2 ─────────────────────────────────',
+    '  Claude 2 mine · 2 all ────────────────────',
     '   #31 Build the sync API                 3m',
     '       ●● Explore · idle 3m · 12m · 48k',
     '   #32 Add a dark theme                   3h',
@@ -191,7 +191,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
     '     ·',
     '     ·',
     '     ·',
-    '  Human 3 ──────────────────────────────────',
+    '  Me 3 mine · 3 all ────────────────────────',
     '    #7 Rewrite the onboarding flow so …   1d',
     '   #12 Fix login redirect loop on Safa…  12m',
     '   ?23 Which auth provider?              10h',
@@ -215,7 +215,7 @@ test('Active open at 30 columns drops the age and Refresh, keeps whose cards sho
     ' GitHub            s: Settings',
     ' n: New   v: Mine   f: Find',
     '▾ Active',
-    '  Backlog 8 ──────────────────',
+    '  Backlog 8 mine · 8 all ─────',
     '   #40 Write docs          20h',
     '   #41 Ship 1.0             1d',
     '   #42 [KANB-UIX] Polish…   2d',
@@ -237,7 +237,7 @@ test('Inactive open: Active is a summary, the dim cards keep the title column an
   expect(await fits(ui, 44, 'inactive open')).toEqual([
     ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   v: Mine   f: Find',
-    '▸ Active      8 Backlog · 2 Claude · 3 Human',
+    '▸ Active         8 Backlog · 2 Claude · 3 Me',
     '▾ Inactive',
     '  Done 12 ──────────────────────── 10 newest',
     '  #100 Finished task 0                    1d',
@@ -277,7 +277,7 @@ test('both groups folded: two summaries and the line that says to press one, whi
   expect(await fits(ui, 44, 'both folded')).toEqual([
     ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   v: Mine   f: Find',
-    '▸ Active      8 Backlog · 2 Claude · 3 Human',
+    '▸ Active         8 Backlog · 2 Claude · 3 Me',
     '▸ Inactive                         12D 1C 1S',
     '  Press a group to open it',
   ])
@@ -299,13 +299,13 @@ test('an empty board says what each section is for, and that the board has no is
     ' GitHub · updated just now       s: Settings',
     ' r: Refresh   n: New   v: Mine   f: Find',
     '▾ Active',
-    '  Backlog 0 ────────────────────────────────',
+    '  Backlog 0 mine · 0 all ───────────────────',
     '       Nothing yet · n adds a card',
     ...blank(6),
-    '  Claude 0 ─────────────────────────────────',
+    '  Claude 0 mine · 0 all ────────────────────',
     '       Idle · drag a card here',
     ...blank(6),
-    '  Human 0 ──────────────────────────────────',
+    '  Me 0 mine · 0 all ────────────────────────',
     '       ✓ All clear, nothing needs you',
     ...blank(6),
     '▸ Inactive                             empty',
@@ -382,7 +382,7 @@ test('the first load draws bars where the cards will be, never an empty board', 
     '',
     '',
     '',
-    '  Human ────────────────────────────────────',
+    '  Me ───────────────────────────────────────',
     '       ────────────────────────',
     '       ───────────────────',
     '       ─────────────',
@@ -507,3 +507,129 @@ for (const columns of WIDTHS) {
     await ui.unmount()
   })
 }
+
+// Backlog holds two of the person's cards, one of mika's and one of nobody's;
+// Claude one of theirs, Me one of mika's; Done one each.
+const shared = (): Board => ({
+  cards: [
+    issue(40, { title: 'Mine one' }),
+    issue(41, { title: 'Theirs', assignees: ['mika'] }),
+    issue(42, { title: 'Nobodys', assignees: [] }),
+    issue(43, { title: 'Mine two' }),
+    issue(31, { column: 'claude', title: 'Mine in Claude' }),
+    issue(12, { column: 'human', title: 'Theirs to review', assignees: ['mika'] }),
+    issue(100, { column: 'done', title: 'Old', assignees: ['mika'] }),
+    issue(101, { column: 'done', title: 'Older' }),
+  ],
+  updated: {},
+})
+
+// The label and counts of the three Active headers.
+const activeHeaders = async (ui: Parameters<typeof header>[0]) => [
+  await header(ui, 'backlog'),
+  await header(ui, 'claude'),
+  await header(ui, 'human'),
+]
+
+test('an Active header says how many of its cards are the person\'s and how many it holds, at 44 columns', async ($, on) => {
+  await start($, on, shared())
+  const ui = await mount($, 44)
+
+  expect(await activeHeaders(ui)).toEqual([
+    'Backlog 2 mine · 4 all',
+    'Claude 1 mine · 1 all',
+    'Me 0 mine · 1 all',
+  ])
+  const lines = await fits(ui, 44, 'mine counts')
+  expect(lines).toContain(`  Backlog 2 mine · 4 all ${'─'.repeat(19)}`)
+  await ui.unmount()
+})
+
+test('a header too narrow for the long counts says mine/all, each header on its own', async ($, on) => {
+  await start($, on, shared())
+
+  const narrow = await mount($, 24)
+  // `  Backlog 2 mine · 4 all` leaves no rule in 24 columns; `  Me 0 mine · 1 all` does.
+  expect(await activeHeaders(narrow)).toEqual([
+    'Backlog 2/4',
+    'Claude 1/1',
+    'Me 0 mine · 1 all',
+  ])
+  await fits(narrow, 24, 'short counts')
+  await narrow.unmount()
+
+  const wider = await mount($, 30)
+  expect(await activeHeaders(wider)).toEqual([
+    'Backlog 2 mine · 4 all',
+    'Claude 1 mine · 1 all',
+    'Me 0 mine · 1 all',
+  ])
+  await fits(wider, 30, 'long counts')
+  await wider.unmount()
+})
+
+test('the counts do not follow whose cards show: all is every card in the section in each view', async ($, on) => {
+  await start($, on, shared())
+  const ui = await mount($, 44)
+  const counts = [
+    'Backlog 2 mine · 4 all',
+    'Claude 1 mine · 1 all',
+    'Me 0 mine · 1 all',
+  ]
+
+  // Mine: the person's two.
+  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:40', 'card:gh:43'])
+  expect(await activeHeaders(ui)).toEqual(counts)
+
+  // Mine + open: and nobody's.
+  await ui.press({ key: 'who' })
+  expect(await under(ui, 'hdr:backlog')).toEqual([
+    'card:gh:40',
+    'card:gh:42',
+    'card:gh:43',
+  ])
+  expect(await activeHeaders(ui)).toEqual(counts)
+
+  // Everyone: all four.
+  await ui.press({ key: 'who' })
+  expect(await under(ui, 'hdr:backlog')).toEqual([
+    'card:gh:40',
+    'card:gh:41',
+    'card:gh:42',
+    'card:gh:43',
+  ])
+  expect(await activeHeaders(ui)).toEqual(counts)
+  await ui.unmount()
+})
+
+test('under a filter a header counts the cards shown out of all it holds', async ($, on) => {
+  await start($, on, shared())
+  const ui = await mount($, 44)
+  const filterBy = async (text: string) => {
+    await ui.press({ key: 'filter' })
+    await ui.input({ key: 'filter:text', text })
+  }
+
+  // In Mine, mika's matching card is not shown, and still counts in all.
+  await filterBy('theirs')
+  expect(await activeHeaders(ui)).toEqual(['Backlog 0/4', 'Claude 0/1', 'Me 0/1'])
+
+  await ui.press({ key: 'who' })
+  await ui.press({ key: 'who' })
+  expect(await activeHeaders(ui)).toEqual(['Backlog 1/4', 'Claude 0/1', 'Me 1/1'])
+
+  await ui.press({ key: 'filter:clear' })
+  expect(await header(ui, 'backlog')).toBe('Backlog 2 mine · 4 all')
+  await fits(ui, 44, 'filtered counts')
+  await ui.unmount()
+})
+
+test('an Inactive header keeps its plain total', async ($, on) => {
+  await start($, on, shared())
+  const ui = await mount($, 44)
+  await group(ui, 'inactive')
+
+  expect(await header(ui, 'done')).toBe('Done 2')
+  await fits(ui, 44, 'inactive counts')
+  await ui.unmount()
+})

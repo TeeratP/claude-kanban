@@ -9,13 +9,17 @@ import type {
 import type { Copy } from './model'
 
 const COL = {
-  human: 'Human',
+  // The person's section: the pane says Me; Claude's tools say human.
+  human: 'Me',
   claude: 'Claude',
   backlog: 'Backlog',
   done: 'Done',
   cancelled: 'Cancelled',
   suspended: 'Suspended',
 } satisfies Record<KanbanColumn, string>
+
+// The sections as Claude's tools name them back: the person's is Human there.
+const TOOL_COL = { ...COL, human: 'Human' } satisfies Record<KanbanColumn, string>
 
 const SECTION_NAME = {
   handoff: 'Handoff',
@@ -81,7 +85,7 @@ export const S = {
     `The kanban board could not be loaded${reason === undefined ? '' : `: ${reason}`}.`,
   listEmpty: 'No cards on the board.',
   moved: (card: KanbanCard, to: KanbanColumn) =>
-    `Moved #${card.number} to ${COL[to]} (syncing).`,
+    `Moved #${card.number} to ${TOOL_COL[to]} (syncing).`,
   noSuchCard: (n: unknown) => `There is no kanban card #${String(n)}.`,
   badColumn: (to: unknown) =>
     `"${String(to)}" is not a column; use human, claude, backlog or done.`,
@@ -316,6 +320,9 @@ export const S = {
   filterSubmit: 'done',
   filterClear: '✕',
   filterCount: (shown: number, total: number) => `${shown}/${total}`,
+  // An active section's header: the person's cards and all of them.
+  mineCount: (mine: number, total: number) => `${mine} mine · ${total} all`,
+  mineCountShort: (mine: number, total: number) => `${mine}/${total}`,
 
   // #31
   positionSkipped: (card: KanbanCard, reason: string) =>
@@ -335,7 +342,7 @@ export const S = {
   noOtherBoard: (repo: string) => `No other GitHub board is linked to ${repo}.`,
   pickFailed: (reason: string) => `Could not use that board: ${reason}`,
   noReviewStatus:
-    'This board has no In review status: Human is the human label on a card in progress.',
+    'This board has no In review status: Me is the human label on a card in progress.',
   humanLabelDescription: 'needs a person (credentials, console, device)',
   detectSaveFailed: (reason: string) =>
     `kanban: could not save the detected board: ${reason}`,
