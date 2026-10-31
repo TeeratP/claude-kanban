@@ -91,7 +91,8 @@ const hasHint = (surface: RenderSurface, width: number) =>
 
 // A symbol-only label with a hotkey after it reads as that symbol's hotkey
 // (`↻n:`, which is what the row said before it had words).
-const SYMBOL_THEN_HOTKEY = /[↻+🔍✕]\s*[nfrv]: /
+// (A symbol ending a word, as in `Mine+`, is part of that label, not one of its own.)
+const SYMBOL_THEN_HOTKEY = /(^|\s)[↻+🔍✕]\s*[nfrv]: /
 
 function expectReadable(rows: string[], width: number) {
   for (const line of rows) {
