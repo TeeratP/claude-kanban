@@ -585,7 +585,6 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box flexDirection="column">
         {rows.slice(0, TOOLBAR_ROWS).map(draw)}
         {picker}
-      {setup}
         {setup}
         {filterField}
         {quickAdd}
@@ -604,6 +603,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     <Box flexDirection="column">
       {rows.slice(0, TOOLBAR_ROWS).map(draw)}
       {picker}
+      {setup}
       {filterField}
       {quickAdd}
       <Client
