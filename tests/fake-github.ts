@@ -131,7 +131,11 @@ const POSITION = 'updateProjectV2ItemPosition'
 export function fakeGithub(
   on: On,
   cards: FakeCard[],
-  opts: { viewer?: string; options?: readonly FakeOption[] } = {},
+  opts: {
+    viewer?: string
+    options?: readonly FakeOption[]
+    readme?: string
+  } = {},
 ) {
   const viewer = opts.viewer ?? VIEWER
   const options = opts.options ?? OPTIONS
@@ -149,6 +153,8 @@ export function fakeGithub(
     hold: undefined as Promise<void> | undefined,
     holdReads: undefined as Promise<void> | undefined,
     viewer,
+    /** The project board's README, where the names people go by are kept. */
+    readme: opts.readme ?? '',
     /** The card numbered `n`, which the test expects to be there. */
     card(n: number): FakeCard {
       const found = cards.find(one => one.number === n)
@@ -175,8 +181,8 @@ export function fakeGithub(
     },
   }
 
-  const node = (card: FakeCard) => ({
-    ...issueNode({
+  const node = (card: FakeCard) => {
+    const made = issueNode({
       number: card.number,
       title: card.title,
       ...(card.status === undefined ? {} : { status: card.status }),
@@ -187,8 +193,16 @@ export function fakeGithub(
       labels: card.labels,
       prs: card.prs.map(number => ({ number })),
       comments: card.comments,
-    }),
-  })
+    })
+
+    return {
+      ...made,
+      content: {
+        ...made.content,
+        assignees: { nodes: card.assignees.map(login => ({ login })) },
+      },
+    }
+  }
 
   const answer = (argv: readonly string[], stdin?: string): Reply => {
     const [tool, one, two] = argv
@@ -207,7 +221,14 @@ export function fakeGithub(
     }
     if (one === 'api' && two === 'graphql') {
       if (!queryOf(argv).includes(POSITION)) {
-        return boardReply(cards.map(node), undefined, viewer, options)(argv)
+        const reply = boardReply(cards.map(node), undefined, viewer, options)(argv)
+        if (!queryOf(argv).includes('readme')) return reply
+
+        // The first page carries the board's README.
+        const data = JSON.parse(reply.stdout ?? '{}')
+        data.data.node.readme = world.readme
+
+        return { stdout: JSON.stringify(data) }
       }
       const at = cards.findIndex(
         card => `PVTI_${card.number}` === field(argv, 'itemId'),
@@ -233,6 +254,12 @@ export function fakeGithub(
 
       return {}
     }
+    if (one === 'project' && two === 'view') return { stdout: `${world.readme}\n` }
+    if (one === 'project' && two === 'edit') {
+      world.readme = flag(argv, '--readme') ?? world.readme
+
+      return {}
+    }
     if (one === 'project' && two === 'item-add') {
       const number = Number(/\/issues\/(\d+)$/.exec(flag(argv, '--url') ?? '')?.[1])
 
@@ -249,10 +276,12 @@ export function fakeGithub(
     if (one === 'issue') {
       if (two === 'create') {
         const number = Math.max(0, ...cards.map(card => card.number)) + 1
+        const assignee = flag(argv, '--assignee')
         cards.push({
           ...issue(number, { title: flag(argv, '--title') ?? '' }, stdin ?? ''),
           labels: [flag(argv, '--label') ?? 'triage'],
           status: undefined,
+          assignees: assignee === undefined ? [] : [assignee],
         })
 
         return { stdout: `https://github.com/${REPO}/issues/${number}\n` }

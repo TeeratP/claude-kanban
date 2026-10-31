@@ -85,6 +85,7 @@ export const INITIAL_UI: KanbanUi = {
   draft: '',
   filter: '',
   isFilterOpen: false,
+  who: 'mine',
 }
 
 export const EMPTY_QUICK_ADD: KanbanQuickAdd = {

@@ -4,6 +4,7 @@ import type {
   KanbanBackendInfo,
   KanbanBoard,
   KanbanCard,
+  KanbanPeople,
   KanbanSync,
 } from '../types'
 import {
@@ -19,6 +20,7 @@ import { choicesOf, forgetDetected, savedDetected, setupOf } from './detect'
 import { isRateLimited, withStatusOptions } from './github'
 import { PANE, errorMessage, isPendingId } from './model'
 import { placeIn } from './order'
+import { isForViewer } from './people'
 import { limitHit, pauseLeft } from './rate-limit'
 import { S } from './strings'
 
@@ -28,7 +30,7 @@ const AGE_MS = 30_000
 // The size the pane asks for; a retitle repeats it, as each open sets it anew.
 const PANE_ROWS = 30
 const PANE_COLUMNS = 44
-const CACHE_SHAPE = 'cache-3'
+const CACHE_SHAPE = 'cache-4'
 // A load that says the project is gone: a detected board was deleted or moved.
 const BOARD_GONE = /not found|could not resolve/i
 
@@ -37,6 +39,8 @@ type BoardCache = {
   shape: typeof CACHE_SHAPE
   backend: KanbanBackendInfo
   cards: KanbanCard[]
+  viewer?: string
+  people?: KanbanPeople
 }
 
 let loading: Promise<KanbanBoard> | undefined
@@ -67,9 +71,15 @@ export function noteClosed(): void {
   closes += 1
 }
 
-/** The status line: how many cards sit in Human, or nothing when none do. */
-function updateStatusLine($: EngineInterface, cards: readonly KanbanCard[]) {
-  const waiting = cards.filter(card => card.column === 'human').length
+/** The status line: how many cards sit in Human for the person (theirs or nobody's), or nothing when none do. */
+function updateStatusLine(
+  $: EngineInterface,
+  cards: readonly KanbanCard[],
+  viewer?: string,
+) {
+  const waiting = cards.filter(
+    card => card.column === 'human' && isForViewer(card, viewer),
+  ).length
   $.ui.status(waiting === 0 ? undefined : S.waiting(waiting))
   if (waiting !== titledFor) {
     titledFor = waiting
@@ -117,7 +127,7 @@ export async function setBoard(
   change: (board: KanbanBoard) => KanbanBoard,
 ): Promise<KanbanBoard> {
   const board = await updateBoard($, change)
-  updateStatusLine($, board.cards)
+  updateStatusLine($, board.cards, board.viewer)
 
   return board
 }
@@ -145,8 +155,13 @@ function announceHumanChanges(
   const known = new Set(
     before.cards.filter(card => card.column === 'human').map(card => card.id),
   )
+  // Someone else's card waits on them, not on the person.
   for (const card of after.cards)
-    if (card.column === 'human' && !known.has(card.id))
+    if (
+      card.column === 'human' &&
+      !known.has(card.id) &&
+      isForViewer(card, after.viewer)
+    )
       $.ui.toast(waitingText(card))
 }
 
@@ -248,6 +263,8 @@ async function saveCache($: EngineInterface, board: KanbanBoard) {
       backend: board.backend,
       // A card still being made would come back as a ghost at the next start.
       cards: board.cards.filter(card => !isPendingId(card.id)),
+      ...(board.viewer === undefined ? {} : { viewer: board.viewer }),
+      ...(board.people === undefined ? {} : { people: board.people }),
     }
     await $.store.set(cacheKey(await $.session.cwd()), entry)
   } catch (error) {
@@ -280,6 +297,8 @@ async function showCached($: EngineInterface) {
               board.backend ??
               (cached.backend.isDetected !== true ? cached.backend : null),
             cards: cached.cards,
+            ...(cached.viewer === undefined ? {} : { viewer: cached.viewer }),
+            ...(cached.people === undefined ? {} : { people: cached.people }),
             isLoading: true,
           }
         : board,
@@ -306,7 +325,7 @@ async function showCachedStatus($: EngineInterface) {
 
       return board
     })
-    if (seen.isUnloaded) updateStatusLine($, cached.cards)
+    if (seen.isUnloaded) updateStatusLine($, cached.cards, cached.viewer)
   } catch (error) {
     $.ui.log(S.cacheFailed(errorMessage(error)), { to: 'debug' })
   }
@@ -416,6 +435,8 @@ async function refreshOnce($: EngineInterface): Promise<KanbanBoard> {
       return {
         ...rest,
         cards: mergeRemote(loaded.cards, current.cards, sync, confirmed),
+        ...(loaded.viewer === '' ? {} : { viewer: loaded.viewer }),
+        people: loaded.people,
         // The board's own Cancelled and Suspended options, as this load found them.
         ...(current.backend === null
           ? {}

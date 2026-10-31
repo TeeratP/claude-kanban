@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type {
   KanbanCard,
+  KanbanPeople,
   KanbanColumn,
   KanbanDetail,
   KanbanGithub,
@@ -11,6 +12,7 @@ import type {
 import { readViewer, updateViewer } from './atoms'
 import { gistOf, parseSections, questionOf } from './handoff'
 import { errorMessage } from './model'
+import { parsePeople, withName } from './people'
 import { S } from './strings'
 
 type Options = KanbanGithub['options']
@@ -331,6 +333,7 @@ export function planMove(
   card: KanbanCard,
   to: KanbanColumn,
   cfg: KanbanGithub,
+  claim?: string,
 ): string[][] {
   const { itemId } = card
   if (itemId === undefined) throw new Error(S.noBoardItem(card))
@@ -399,6 +402,8 @@ export function planMove(
         AI_LABEL,
         ...(human === undefined ? [] : ['--remove-label', human]),
         ...unsuspend,
+        // Taking up a card nobody has makes it the person's.
+        ...(claim === undefined ? [] : ['--add-assignee', claim]),
       ],
       itemEdit(cfg.options.inProgress),
     ]
@@ -534,6 +539,10 @@ export type GithubLoad = {
   cards: KanbanCard[]
   rateLimit?: RateLimit
   statusOptions: StatusOption[]
+  /** The signed-in login; empty when GitHub did not say. */
+  viewer: string
+  /** The names in the board's README; none when it has no people block. */
+  people: KanbanPeople
 }
 
 /** A failure from GitHub's rate limit; `resetAt` is epoch milliseconds when known. */
@@ -565,9 +574,11 @@ const COMMENTS_SEEN = 5
 // even when a CLAUDE.md names only the options it uses. Asked on the first page
 // only, and a list, so it adds no connection to the cost: measured on board #7
 // (2026-10-26), a page costs 3 points with it and without.
+// With the first page: the Status options, and the README that holds the names people go by.
 const STATUS_OPTIONS_FIELD = `field(name: "Status") {
         ... on ProjectV2SingleSelectField { options { id name } }
-      }`
+      }
+      readme`
 
 // One query per page of the project's items: the Status value and, for the
 // issues, only the fields a card shows, plus the newest comments to tell an open
@@ -593,6 +604,7 @@ const boardQuery = (
               number title url state stateReason createdAt updatedAt
               repository { nameWithOwner }
               labels(first: 20) { nodes { name } }
+              assignees(first: 10) { nodes { login } }
               closedByPullRequestsReferences(first: 5) {
                 nodes { number repository { nameWithOwner } }
               }
@@ -624,6 +636,7 @@ type Entry = {
   createdAt: string
   updatedAt: string
   prNumbers: number[]
+  assignees: string[]
   question?: string
 }
 
@@ -632,6 +645,9 @@ type Page = {
   next?: string
   rateLimit?: RateLimit
   statusOptions: StatusOption[]
+  viewer: string
+  /** The board's README, which the first page carries. */
+  readme?: string
 }
 
 const STATE_REASONS = [
@@ -714,6 +730,9 @@ function parsePage(stdout: string, repo: string): Page {
           : { stateReason: reasonOf(content.stateReason) }),
         createdAt: str(content.createdAt),
         updatedAt: str(content.updatedAt),
+        assignees: nodesOf(content.assignees)
+          .map(user => str(user.login))
+          .filter(login => login !== ''),
         prNumbers: nodesOf(content.closedByPullRequestsReferences).flatMap(
           pr =>
             typeof pr.number === 'number' && isRepo(pr.repository, repo)
@@ -742,6 +761,8 @@ function parsePage(stdout: string, repo: string): Page {
     ...(hasNextPage === true ? { next: str(endCursor) } : {}),
     ...(rateLimit === undefined ? {} : { rateLimit }),
     statusOptions,
+    viewer,
+    ...(typeof node.readme === 'string' ? { readme: node.readme } : {}),
   }
 }
 
@@ -820,13 +841,19 @@ export async function loadGithub(
   const entries: Entry[] = []
   let rateLimit: RateLimit | undefined
   let statusOptions: StatusOption[] = []
+  let viewer = ''
+  let readme = ''
   let cursor: string | undefined
 
   for (let pages = 1; ; pages += 1) {
     const page = parsePage(await runPage($, info, cursor), info.repo)
     entries.push(...page.entries)
     rateLimit = page.rateLimit ?? rateLimit
-    if (pages === 1) statusOptions = page.statusOptions
+    if (pages === 1) {
+      statusOptions = page.statusOptions
+      viewer = page.viewer
+      readme = page.readme ?? ''
+    }
     if (page.next === undefined) break
     if (pages === MAX_PAGES) {
       $.ui.log(S.pageLimitReached(MAX_PAGES * PAGE_SIZE), { to: 'debug' })
@@ -865,6 +892,7 @@ export async function loadGithub(
         : { stateReason: entry.stateReason }),
       ...(entry.url === '' ? {} : { url: entry.url }),
       ...(entry.prNumbers.length === 0 ? {} : { prNumbers: entry.prNumbers }),
+      assignees: entry.assignees,
     }
   })
 
@@ -872,6 +900,8 @@ export async function loadGithub(
     cards,
     ...(rateLimit === undefined ? {} : { rateLimit }),
     statusOptions,
+    viewer,
+    people: parsePeople(readme),
   }
 }
 
@@ -1051,7 +1081,13 @@ export async function moveGithub(
     await ensureLabel($, info, SUSPENDED)
   }
 
-  for (const argv of isReorder ? [] : planMove(card, to, info)) {
+  // A card nobody has becomes the person's when it goes to Claude.
+  const claim =
+    !isReorder && to === 'claude' && (card.assignees ?? []).length === 0
+      ? await viewerLogin($)
+      : undefined
+
+  for (const argv of isReorder ? [] : planMove(card, to, info, claim)) {
     if (!isVerify(argv)) {
       await runCommand($, argv)
     } else if (!(await isCloseVerified($, argv, card, to, info))) {
@@ -1081,6 +1117,7 @@ export async function moveGithub(
   return {
     ...(status === undefined ? {} : { status }),
     ...(isRelabelled ? { labels: next } : {}),
+    ...(claim === undefined ? {} : { assignees: [claim] }),
     ...(to === 'human'
       ? {
           tag:
@@ -1181,6 +1218,8 @@ export async function createGithub(
   after?: KanbanCard | null,
 ): Promise<KanbanCard> {
   const triage = await ensureLabel($, info, TRIAGE)
+  // A card someone makes is theirs, whether they or their Claude made it.
+  const viewer = await viewerLogin($)
   const out = await runCommand(
     $,
     [
@@ -1195,6 +1234,8 @@ export async function createGithub(
       '-',
       '--label',
       triage,
+      '--assignee',
+      viewer,
     ],
     { stdin: spec },
   )
@@ -1220,6 +1261,7 @@ export async function createGithub(
       labels: [triage],
       isClosed: false,
       url,
+      assignees: [viewer],
     }
     if (column === 'backlog') return card
 
@@ -1229,6 +1271,62 @@ export async function createGithub(
   } catch (error) {
     throw new Error(S.createdPartly(url, errorMessage(error)))
   }
+}
+
+/**
+ * Makes `login` the issue's one assignee, or nobody's with null: the others it
+ * had are taken off. Resolves the assignees it has now.
+ */
+export async function assignGithub(
+  $: EngineInterface,
+  info: KanbanGithub,
+  card: KanbanCard,
+  login: string | null,
+): Promise<string[]> {
+  const others = (card.assignees ?? []).filter(
+    one => login === null || one.toLowerCase() !== login.toLowerCase(),
+  )
+  const isKept = login !== null && others.length !== (card.assignees ?? []).length
+  const argv = [
+    'gh',
+    'issue',
+    'edit',
+    String(card.number),
+    '--repo',
+    info.repo,
+    ...(login === null || isKept ? [] : ['--add-assignee', login]),
+    ...others.flatMap(one => ['--remove-assignee', one]),
+  ]
+  if (argv.length > 6) await runCommand($, argv)
+
+  return login === null ? [] : [login]
+}
+
+/**
+ * Sets the name `login` goes by in the board's README, read fresh so another
+ * person's change since the last load is kept. Resolves the names it holds now.
+ */
+export async function saveNameGithub(
+  $: EngineInterface,
+  info: KanbanGithub,
+  login: string,
+  name: string,
+): Promise<KanbanPeople> {
+  const board = [String(info.projectNumber), '--owner', info.owner]
+  const readme = await runCommand($, [
+    'gh',
+    'project',
+    'view',
+    ...board,
+    '--format',
+    'json',
+    '--jq',
+    '.readme',
+  ])
+  const next = withName(readme.replace(/\n$/, ''), login, name)
+  await runCommand($, ['gh', 'project', 'edit', ...board, '--readme', next])
+
+  return parsePeople(next)
 }
 
 /** Adds a Handoff, Feedback, Question, Answer or Check run section to the issue as a comment. */

@@ -2,6 +2,7 @@ import type { ConfigRow, EngineInterface } from 'claude-code'
 
 import type { KanbanBoard, KanbanSettingRow } from '../types'
 import { readBoard, updateBoard, updateSettings, updateUi } from './atoms'
+import { saveName } from './assign'
 import { errorMessage } from './model'
 import { changeBoard } from './pick'
 import { S } from './strings'
@@ -203,4 +204,37 @@ export async function changeBoardFromSettings(
 
   const { pick } = await updateBoard($, board => board)
   if (action === 'show' || pick !== undefined) await closeSettings($)
+}
+
+/** Opens the Your name field with the name the person goes by now. */
+export async function openNameField($: EngineInterface): Promise<void> {
+  const { viewer, people } = await readBoard($)
+  if (viewer === undefined) return
+
+  const current = people?.[viewer] ?? ''
+  await updateSettings($, ({ nameError: _old, ...rest }) => ({
+    ...rest,
+    nameDraft: current,
+  }))
+}
+
+/** Keeps what is typed in the Your name field. */
+export async function typeName($: EngineInterface, value: string): Promise<void> {
+  await updateSettings($, current =>
+    current.nameDraft === undefined ? current : { ...current, nameDraft: value },
+  )
+}
+
+/** Closes the Your name field without saving. */
+export async function closeNameField($: EngineInterface): Promise<void> {
+  await updateSettings($, ({ nameDraft: _gone, nameError: _old, ...rest }) => rest)
+}
+
+/** Saves what the Your name field holds as the person's name. */
+export async function submitName(
+  $: EngineInterface,
+  value: string,
+): Promise<void> {
+  const { viewer } = await readBoard($)
+  if (viewer !== undefined) await saveName($, viewer, value)
 }
