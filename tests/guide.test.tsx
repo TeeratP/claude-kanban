@@ -34,7 +34,8 @@ const RULES = [
   '- When the work a card tracks is finished: record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
   "- Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify. Record a handoff that says what you need first.",
   '- Blocked on a decision only the person can make: kanban_ask.',
-  '- Create cards with kanban_create only when asked.',
+  '- Never add a card to the board, by any route, without first asking the person in chat and getting a clear yes. That covers kanban_create, gh issue create, a sub-issue, and adding an existing issue to the board.',
+  '- Propose a card with a direct question instead. A plan the person approved is a yes only for the cards it names.',
   '- Never move cards into or out of Suspended or Cancelled.',
   '- Use the kanban tools, not raw gh issue/gh project edits, so the board stays in sync.',
 ].join('\n')
@@ -327,7 +328,7 @@ test('the section comes once, after the engine section, and is short', async ($,
   expect(second.sections.map(one => one.id)).toEqual(
     first.sections.map(one => one.id),
   )
-  expect(first.sections[1]?.text.length).toBeLessThan(900)
+  expect(first.sections[1]?.text.length).toBeLessThan(1200)
 })
 
 test('the one-line bare prompt gets no section', async ($, on) => {

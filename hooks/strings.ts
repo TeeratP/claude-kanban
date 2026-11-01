@@ -119,7 +119,7 @@ export const S = {
   },
   toolCreate: {
     description:
-      'Create a kanban card: an issue on the GitHub board labeled triage, which the person grooms later.',
+      'Create a kanban card: an issue on the GitHub board labeled triage, which the person grooms later. Call it only after the person has said yes to this card in chat.',
     title: 'A short title for the card.',
     spec: 'The card text: what is to be done and how to tell it is done.',
     column:
@@ -505,7 +505,8 @@ export const S = {
     '- When the work a card tracks is finished: record kanban_handoff (what you did, how to check it), then kanban_move it to done, which closes the issue.',
     "- Move a card to human only when it needs the person: an approval the card asks for, or something only they can do or verify. Record a handoff that says what you need first.",
     '- Blocked on a decision only the person can make: kanban_ask.',
-    '- Create cards with kanban_create only when asked.',
+    '- Never add a card to the board, by any route, without first asking the person in chat and getting a clear yes. That covers kanban_create, gh issue create, a sub-issue, and adding an existing issue to the board.',
+    '- Propose a card with a direct question instead. A plan the person approved is a yes only for the cards it names.',
     '- Never move cards into or out of Suspended or Cancelled.',
     '- Use the kanban tools, not raw gh issue/gh project edits, so the board stays in sync.',
   ].join('\n'),
