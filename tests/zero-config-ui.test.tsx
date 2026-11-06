@@ -179,10 +179,13 @@ test('the board name is cut to the status row at 30, 44 and 80 columns, with the
 
     expect(await toolbar(ui)).toEqual([
       expected[width],
-      // Below 44 columns Refresh gives way to whose cards show.
+      // Below 44 columns Refresh gives way to whose cards show; the spacing
+      // tightens before it, at 44, for the long label.
       width < 44
-        ? ' n: New   v: Mine   f: Find'
-        : ' r: Refresh   n: New   v: Mine   f: Find',
+        ? 'n: New v: Mine + open f: Find'
+        : width < 80
+          ? 'r: Refresh n: New v: Mine + open f: Find'
+          : ' r: Refresh   n: New   v: Mine + open   f: Find',
     ])
     await ui.unmount()
   }

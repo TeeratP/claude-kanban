@@ -5,10 +5,13 @@ import type { Engine } from 'claude-code/testing'
 import type { KanbanCard } from '../types'
 import {
   cleanName,
+  colorLoginOf,
+  colorOf,
   nameOf,
   nextWho,
   ownerOf,
   parsePeople,
+  peopleOnBoard,
   whoCards,
   withName,
 } from '../hooks/people'
@@ -120,16 +123,12 @@ test('a row names whose card it is only when it is someone else’s', () => {
   expect(ownerOf(cardOf(4, ['alice', 'TeeratP']), 'TeeratP', people)).toBe('')
 })
 
-test('the pane opens on my cards and v steps to mine and nobody’s, then everyone’s', async ($, on) => {
+test('the pane opens on Mine + open and v steps to everyone’s, then mine', async ($, on) => {
   const { ui } = await open($, on)
 
-  expect((await toolbar(ui))[1]).toContain('v: Mine')
-  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:1'])
-  expect(await under(ui, 'hdr:human')).toEqual(['card:gh:5'])
-
-  await ui.press({ key: 'who' })
   expect((await toolbar(ui))[1]).toContain('v: Mine + open')
   expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:1', 'card:gh:2'])
+  expect(await under(ui, 'hdr:human')).toEqual(['card:gh:5'])
 
   await ui.press({ key: 'who' })
   expect((await toolbar(ui))[1]).toContain('v: Everyone')
@@ -144,7 +143,58 @@ test('the pane opens on my cards and v steps to mine and nobody’s, then everyo
 
   await ui.press({ key: 'who' })
   expect((await toolbar(ui))[1]).toContain('v: Mine')
+  expect((await toolbar(ui))[1]).not.toContain('open')
+  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:1'])
+  await ui.press({ key: 'who' })
+  expect((await toolbar(ui))[1]).toContain('v: Mine + open')
   await ui.unmount()
+})
+
+test('a login’s colour is the same every time and whatever the case', () => {
+  expect(colorOf('TeeratP')).toBe(colorOf('TeeratP'))
+  expect(colorOf('TeeratP')).toBe(colorOf('teeratp'))
+  expect(colorOf('alice')).toBe(colorOf('ALICE'))
+  expect(typeof colorOf('alice')).toBe('string')
+  expect(colorOf('alice')).not.toBe('')
+  // The colours vary: a handful of logins do not all share one.
+  const used = new Set(['alice', 'bob', 'carol', 'dave', 'erin', 'frank'].map(colorOf))
+  expect(used.size).toBeGreaterThan(1)
+})
+
+test('a card is coloured by the viewer when they are assigned, else by its first assignee, else not at all', () => {
+  const card = cardOf(1, ['alice', 'TeeratP'])
+
+  expect(colorLoginOf(card, 'teeratp')).toBe('TeeratP')
+  expect(colorLoginOf(card, 'bob')).toBe('alice')
+  expect(colorLoginOf(card, undefined)).toBe('alice')
+  expect(colorLoginOf(cardOf(2, []), 'TeeratP')).toBeUndefined()
+  expect(colorLoginOf(cardOf(3), 'TeeratP')).toBeUndefined()
+})
+
+test('the people on the board are the viewer first, then by the name they go by, each once', () => {
+  const list = [
+    cardOf(1, ['zed']),
+    cardOf(2, ['alice', 'TeeratP']),
+    cardOf(3, ['ALICE']),
+    cardOf(4, []),
+    cardOf(5, ['mika']),
+  ]
+  // `zed` goes by Aaron, so sorts before `alice` (Alice Smith) and `mika`.
+  const named = { alice: 'Alice Smith', zed: 'Aaron', TeeratP: 'Teerat' }
+
+  expect(peopleOnBoard(list, 'teeratp', named)).toEqual([
+    'TeeratP',
+    'zed',
+    'alice',
+    'mika',
+  ])
+  expect(peopleOnBoard(list, undefined, named)).toEqual([
+    'zed',
+    'alice',
+    'mika',
+    'TeeratP',
+  ])
+  expect(peopleOnBoard([cardOf(9, [])], 'TeeratP', named)).toEqual([])
 })
 
 test('only my cards and nobody’s count as waiting on me', async ($, on) => {

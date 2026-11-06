@@ -102,11 +102,19 @@ function expectReadable(rows: string[], width: number) {
 }
 
 // Whose cards show sits before Find; below 44 columns Refresh gives way.
-const ACTIONS = ' r: Refresh   n: New   v: Mine   f: Find'
-const NARROW_ACTIONS = ' n: New   v: Mine   f: Find'
-const MOBILE_ACTIONS = ' r: Refresh   v: Mine'
+// The pane opens on Mine + open, which is wide: the spacing tightens at 44 and 30.
+const ACTIONS = ' r: Refresh   n: New   v: Mine + open   f: Find'
+const TIGHT_ACTIONS = 'r: Refresh n: New v: Mine + open f: Find'
+const NARROW_ACTIONS = 'n: New v: Mine + open f: Find'
+const MOBILE_ACTIONS = ' r: Refresh   v: Mine + open'
 const actionsAt = (surface: RenderSurface, width: number) =>
-  surface === 'mobile' ? MOBILE_ACTIONS : width < 44 ? NARROW_ACTIONS : ACTIONS
+  surface === 'mobile'
+    ? MOBILE_ACTIONS
+    : width < 44
+      ? NARROW_ACTIONS
+      : width < 80
+        ? TIGHT_ACTIONS
+        : ACTIONS
 
 for (const surface of EVERY_SURFACE) {
   test(`row 1 is the status and row 2 the labelled actions at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
@@ -131,17 +139,17 @@ for (const surface of EVERY_SURFACE) {
     const expected =
       surface === 'mobile'
         ? {
-            80: ' r: Refresh   v: Mine   ✕2 retry',
-            44: ' r: Refresh   v: Mine   ✕2 retry',
-            // The spacing tightens first.
-            30: 'r: Refresh v: Mine ✕2 retry',
+            80: ' r: Refresh   v: Mine + open   ✕2 retry',
+            44: ' r: Refresh   v: Mine + open   ✕2 retry',
+            // Refresh gives way: the board refreshes itself.
+            30: ' v: Mine + open   ✕2 retry',
           }
         : {
-            80: ' r: Refresh   n: New   v: Mine   f: Find   ✕2 retry',
-            // The spacing tightens first.
-            44: 'r: Refresh n: New v: Mine f: Find ✕2 retry',
-            // Refresh and New give way: the board refreshes itself.
-            30: ' v: Mine   f: Find   ✕2 retry',
+            80: ' r: Refresh   n: New   v: Mine + open   f: Find   ✕2 retry',
+            // The spacing tightens, then Refresh gives way and the view goes by
+            // its short name: the board refreshes itself.
+            44: 'n: New v: Mine + open f: Find ✕2 retry',
+            30: ' v: Mine+   f: Find   ✕2 retry',
           }
 
     for (const width of WIDTHS) {
@@ -201,9 +209,9 @@ for (const surface of TYPING) {
   test(`a filter shows as f: Find "<query>" with a clear cross, the spacing and then Refresh giving way for the query, at 30, 44 and 80 columns on the ${surface}`, async ($, on) => {
     await open($, on, surface)
     const expected = {
-      80: ` r: Refresh   n: New   v: Mine   f: Find "${QUERY}" ✕`,
-      44: 'r: Refresh n: New v: Mine f: Find "fix l…" ✕',
-      30: 'n: New v: Mine f: Find "fi…" ✕',
+      80: ` r: Refresh   n: New   v: Mine + open   f: Find "${QUERY}" ✕`,
+      44: ' n: New   v: Mine + open   f: Find "fix …" ✕',
+      30: ' v: Mine + open   f: Find ✕',
     }
 
     for (const width of WIDTHS) {
@@ -245,7 +253,7 @@ for (const surface of TYPING) {
     await filterBy(ui, 'label:ai label:feature words that go on')
 
     expect((await toolbar(ui))[1]).toBe(
-      'r: Refresh n: New v: Mine f: Find "label…" ✕',
+      ' n: New   v: Mine + open   f: Find "labe…" ✕',
     )
     await ui.unmount()
   })
@@ -254,9 +262,9 @@ for (const surface of TYPING) {
     const world = await open($, on, surface)
     await failTwoMoves($, world)
     const expected = {
-      80: ` r: Refresh   n: New   v: Mine   f: Find "${QUERY}" ✕   ✕2 retry`,
-      44: 'n: New v: Mine f: Find "fix log…" ✕ ✕2 retry',
-      30: 'v: Mine f: Find ✕ ✕2 retry',
+      80: ` r: Refresh   n: New   v: Mine + open   f: Find "${QUERY}" ✕   ✕2 retry`,
+      44: 'n: New v: Mine + open f: Find ✕ ✕2 retry',
+      30: 'v: Mine+ f: Find ✕ ✕2 retry',
     }
 
     for (const width of WIDTHS) {
@@ -304,14 +312,14 @@ test('in a narrow pane the view goes by its short name before its button gives w
     await ui.unmount()
   }
 
-  expect(await rowAt(20)).toBe(' v: Mine   f: Find')
-  await step()
-  // `Mine + open` does not fit beside Find: it goes by `Mine+`.
+  // The pane opens on Mine + open, which does not fit beside Find at 20: it goes by `Mine+`.
   expect(await rowAt(20)).toBe(' v: Mine+   f: Find')
   expect(await rowAt(24)).toBe('v: Mine + open f: Find')
   await step()
   expect(await rowAt(20)).toBe('v: Everyone f: Find')
   expect(await rowAt(16)).toBe('v: All f: Find')
+  await step()
+  expect(await rowAt(20)).toBe(' v: Mine   f: Find')
 })
 
 for (const surface of ['terminal', 'vscode'] as const) {
@@ -357,7 +365,7 @@ test('setup needed keeps the error colour on row 1 and the actions stay on row 2
 
   expect(first?.props.color).toBe('error')
   expect(rows[0]).toMatch(/^ GitHub · setup needed/)
-  expect(rows[1]).toBe(ACTIONS)
+  expect(rows[1]).toBe(TIGHT_ACTIONS)
   expectReadable(rows, 44)
   await ui.unmount()
 })
@@ -462,7 +470,7 @@ test('once gh works, a refresh loads the board and the setup rows are gone', asy
   expect(
     await ui.find({ type: 'Text', text: S.setupMissing.gh.trim() }),
   ).toBeUndefined()
-  expect(await toolbar(ui)).toEqual([status(44, false), ACTIONS])
+  expect(await toolbar(ui)).toEqual([status(44, false), TIGHT_ACTIONS])
   expect((await row(ui, 'card:gh:1'))?.text).toContain('#1 Fix login')
   expect(world.github.loads()).toBeGreaterThanOrEqual(1)
   await ui.unmount()

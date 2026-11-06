@@ -125,7 +125,7 @@ for (const surface of EVERY_SURFACE) {
 }
 
 for (const surface of ['vscode', 'mobile'] as const) {
-  test(`on the ${surface} a section header is a label, and only the group headers press`, async ($, on) => {
+  test(`on the ${surface} an active section header presses to copy its cards, and an inactive one is a label`, async ($, on) => {
     const { clock } = bootGithub(on, cards())
     await $.session.start({ cwd: '/', surface, isInteractive: true })
     await $.command.run({ ...RUN })
@@ -133,10 +133,10 @@ for (const surface of ['vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
 
     for (const label of ['Backlog', 'Me', 'Claude']) {
-      const header = new RegExp(`^ {2}${label} 1 mine · 1 all ─+`)
+      const header = new RegExp(`^ {2}${label} 1 mine · 1 all ─+ \\[copy\\]$`)
 
-      expect(await ui.find({ type: 'Text', text: header })).toBeDefined()
-      expect(await ui.find({ type: 'Button', text: header })).toBeUndefined()
+      expect(await ui.find({ type: 'Button', text: header })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: header })).toBeUndefined()
     }
     expect(await ui.find({ type: 'Button', key: 'grp:active' })).toBeDefined()
     expect(await ui.find({ type: 'Button', key: 'grp:inactive' })).toBeDefined()

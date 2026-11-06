@@ -49,12 +49,17 @@ async function start<S extends RenderSurface>(
   on: On,
   surface: S,
   issues: FakeCard[] = board(),
+  columns: number = PANE.props.bodyColumns,
 ) {
   const world = bootGithub(on, issues)
   await $.session.start({ cwd: '/', surface, isInteractive: true })
   await $.command.run({ ...RUN })
   await world.clock.settle()
-  const ui = await $.ui.mount({ ...PANE, surface })
+  const ui = await $.ui.mount({
+    ...PANE,
+    surface,
+    props: { ...PANE.props, bodyColumns: columns },
+  })
 
   return { ...world, ui }
 }
@@ -669,7 +674,14 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`a refused reorder waits for a retry and, out of tries, the card goes back with the reason on the ${surface}`, async ($, on) => {
-    const { clock, ui, github, toasts } = await start($, on, surface)
+    // Wide, so Refresh still shows beside the retry.
+    const { clock, ui, github, toasts } = await start(
+      $,
+      on,
+      surface,
+      board(),
+      80,
+    )
     failPositions(github, {
       exitCode: 1,
       stderr: 'GraphQL: Resource not accessible by integration',
