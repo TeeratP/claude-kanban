@@ -130,7 +130,7 @@ const PickScene: React.FC<SceneProps> = ({ len }) => {
         at={frame >= flip ? flip : 4}
       />
       <Stage>
-        <Camera len={len} from={1} to={1.06} x={0.72} y={0.35}>
+        <Camera len={len} from={1} to={1.04} x={0.72} y={0.35}>
           <Split
             chat={
               <>
@@ -172,7 +172,7 @@ const HandoffScene: React.FC<SceneProps> = ({ len }) => {
         at={done ? press + 3 : 4}
       />
       <Stage>
-        <Camera len={len} from={1.02} to={1.07} x={0.72} y={0.3}>
+        <Camera len={len} from={1} to={1.04} x={0.72} y={0.3}>
           <Split
             paneTitle={tab ? 'Kanban · 1' : 'Kanban'}
             tabGlow={tab ? 1 - ramp(frame, 15, 40) * 0.5 : 0}
@@ -308,9 +308,14 @@ const MineScene: React.FC<SceneProps> = ({ len }) => {
   const claude: Card[] = [{ ...C14, age: '2m', activity: <Activity dots={[ACCENT]} who="Claude" doing="⟳ Edit src/theme.ts" time="3m" tok="14k" /> }]
   return (
     <AbsoluteFill>
-      <Caption title="Whose card is whose" sub="Mine + open by default · v steps the view · titles in each owner's colour" />
+      <Caption
+        key={hover ? 'copy' : 'whose'}
+        title={hover ? 'Hover a card: [copy]' : 'Whose card is whose'}
+        sub={hover ? 'copies the card as #15 Cache search results' : "Mine + open by default · v steps the view · titles in each owner's colour"}
+        at={hover ? copy - 20 : 4}
+      />
       <Stage>
-        <Camera len={len} from={1} to={1.05} x={0.72} y={0.3}>
+        <Camera len={len} from={1} to={1.04} x={0.72} y={0.3}>
           <Split
             chat={
               <>
@@ -334,11 +339,6 @@ const MineScene: React.FC<SceneProps> = ({ len }) => {
         </Camera>
       </Stage>
       <Keycap label="v" at={v} />
-      {frame >= copy - 20 && frame < copy + 40 ? (
-        <div style={{ position: 'absolute', right: 70, bottom: 200, fontFamily: UI, fontSize: 30, color: DIM, opacity: ramp(frame, copy - 20, 8) }}>
-          hover a card: <span style={{ color: ACCENT, fontFamily: MONO }}>[copy]</span>
-        </div>
-      ) : null}
     </AbsoluteFill>
   )
 }

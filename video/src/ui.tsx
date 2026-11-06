@@ -392,12 +392,14 @@ export const Section: React.FC<{
   empty: string
   color?: string
   everyone?: boolean
-}> = ({ name, cards, rows, empty, color, everyone }) => {
+  // Other people's cards the view hides: the header still counts them.
+  hidden?: number
+}> = ({ name, cards, rows, empty, color, everyone, hidden = 0 }) => {
   const mine = cards.filter(c => c.owner === 'You').length
   const used = cards.reduce((sum, c) => sum + (c.activity === undefined ? 1 : 2), 0)
   return (
     <>
-      <SectionHeader name={name} count={`${mine} mine · ${cards.length} all`} color={color} />
+      <SectionHeader name={name} count={`${mine} mine · ${cards.length + hidden} all`} color={color} />
       {cards.map(c => (
         <CardRow key={c.n} card={{ ...c, showOwnerName: everyone }} />
       ))}
@@ -420,7 +422,8 @@ export const PeopleRow: React.FC<{ show?: number }> = ({ show = 1 }) => (
   </div>
 )
 
-// The whole board in the pane: toolbar, Active open, Inactive folded.
+// The whole board in the pane: toolbar, Active open, Inactive folded. Ann's
+// and Bo's two Backlog cards show only in the Everyone view, but count always.
 export const Board: React.FC<{
   backlog: Card[]
   claude: Card[]
@@ -435,7 +438,7 @@ export const Board: React.FC<{
   <>
     <Toolbar view={view} viewLit={viewLit} status={status} />
     <GroupHeader name="Active" open />
-    <Section name="Backlog" cards={backlog} rows={4} empty="Nothing yet · n adds a card" everyone={everyone} />
+    <Section name="Backlog" cards={backlog} rows={4} empty="Nothing yet · n adds a card" everyone={everyone} hidden={everyone ? 0 : 2} />
     <Section name="Claude" cards={claude} rows={3} empty="Idle · drag a card here" color={ACCENT} everyone={everyone} />
     <Section name="Me" cards={me} rows={2} empty="✓ All clear, nothing needs you" color={AMBER} everyone={everyone} />
     <GroupHeader name="Inactive" open={false} summary={inactive} />

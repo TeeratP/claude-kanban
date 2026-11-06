@@ -98,7 +98,7 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
     <AbsoluteFill>
       <Caption key={phase} title={captions.title} sub={captions.sub} at={captions.at} />
       <Stage>
-        <Camera len={len} from={1} to={1.05} x={0.72} y={0.3}>
+        <Camera len={len} from={1} to={1.04} x={0.72} y={0.3}>
           <Split
             paneTitle={inMe ? 'Kanban · 1' : 'Kanban'}
             tabGlow={inMe ? 1 - ramp(frame, handed, 40) * 0.5 : 0}
@@ -166,7 +166,8 @@ const Montage: React.FC<SceneProps> = ({ len }) => {
         <>
           <SectionHeader name="Claude" count="1 mine · 1 all" color={ACCENT} />
           <CardRow card={{ ...C14, age: 'now', sync: '⟳', arrive: ramp(local, 4, 12) }} />
-          <Line dim>m, then b c h d x s: any section</Line>
+          <Line dim>drag a card onto any section,</Line>
+          <Line dim>or m, then b c h d x s</Line>
         </>
       ),
     },
