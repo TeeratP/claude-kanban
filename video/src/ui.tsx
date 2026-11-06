@@ -139,9 +139,9 @@ const PANE_W = 960
 const PANE_PAD = 16
 const SPLIT_LEFT = 110
 const SPLIT_TOP = 20
-// The pane's middle in the Stage, where the camera centres on it. Its
-// first row's top is at SPLIT_TOP + 53 + PANE_PAD (89 px).
-export const PANE_MID_X = STAGE_W - SPLIT_LEFT - PANE_W / 2
+// The pane's first row's top is at SPLIT_TOP + 53 + PANE_PAD (89 px).
+// The Split window's middle in the Stage (it is 800 px tall at SPLIT_TOP).
+export const WINDOW_MID = { x: STAGE_W / 2, y: SPLIT_TOP + 400 }
 
 // The terminal with the kanban side pane: the chat on the left, the pane on
 // the right with its own tab title (`Kanban`, `Kanban · N`). `open` slides
@@ -218,9 +218,9 @@ export const PromptBox: React.FC<{ children?: React.ReactNode; faint?: boolean; 
   </div>
 )
 
-// A key being pressed: pops in at the bottom left, left of the pane even
-// when the camera is pushed in on it, so it never covers the board's text,
-// and fades.
+// A key being pressed: pops in over the empty lower part of the chat,
+// above the toast lane and far left of the pane, so it is always whole in
+// the frame and never covers the board's (or the chat's) text; it fades.
 export const Keycap: React.FC<{ label: string; at: number }> = ({ label, at }) => {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
@@ -230,7 +230,7 @@ export const Keycap: React.FC<{ label: string; at: number }> = ({ label, at }) =
   return (
     <div
       style={{
-        position: 'absolute', left: 40, bottom: 60, minWidth: 116, height: 116, padding: '0 28px', borderRadius: 24,
+        position: 'absolute', left: 170, bottom: 150, minWidth: 116, height: 116, padding: '0 28px', borderRadius: 24,
         background: '#24262f', border: `3px solid ${ACCENT}`, color: TEXT, fontFamily: UI, fontSize: 54, fontWeight: 800,
         display: 'flex', alignItems: 'center', justifyContent: 'center', transform: `scale(${0.5 + 0.5 * s})`, opacity: fade,
         boxShadow: `0 0 60px ${ACCENT}77`, zIndex: 3,
