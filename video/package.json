@@ -1,0 +1,24 @@
+{
+  "name": "kanban-video",
+  "private": true,
+  "scripts": {
+    "dev": "remotion studio",
+    "music": "mkdir -p public && ${PYTHON:-python3} scripts/music.py intro public/music.wav && ${PYTHON:-python3} scripts/music.py teaser public/music-25.wav",
+    "render:intro": "mkdir -p out && remotion render src/index.ts Intro out/kanban-intro-45s.mp4 --codec h264 --crf 18 && sh scripts/mux.sh intro-45s music",
+    "render:teaser": "mkdir -p out && remotion render src/index.ts Teaser out/kanban-teaser-25s.mp4 --codec h264 --crf 18 && sh scripts/mux.sh teaser-25s music-25",
+    "render": "npm run music && npm run render:teaser && npm run render:intro"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.300",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.300"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "typescript": "5.6.3"
+  },
+  "allowScripts": {
+    "esbuild@0.25.0": true
+  }
+}
