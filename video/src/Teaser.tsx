@@ -9,8 +9,8 @@ import React from 'react'
 import { AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion'
 import {
   ACCENT, Activity, Board, Cam, Caption, Card, CrossFade, DIM, Detail, EXPLORE, KanbanMark, Keycap, LINE, Line, MINT, MONO,
-  PANE_MID_X, PANE_ROW, PANEL, Pointer, PromptBox, ROW, Reel, SceneProps, Shot, Split, Stage, TEXT, Terminal, Toast, UI, View,
-  WIDE, ramp, reelFrames,
+  PANE_ROW, PANEL, Pointer, PromptBox, ROW, Reel, SceneProps, Shot, Split, Stage, TEXT, Terminal, Toast, UI, View,
+  WINDOW_MID, ramp, reelFrames,
 } from './ui'
 import timing from './timing.json'
 
@@ -37,10 +37,10 @@ const C25: Card = { n: 25, title: 'Add a keyboard help sheet', age: '2w' }
 const REST = [C17, C15, C16, C18, C19, C22, C21, C23, C24, C25]
 const DONE_13 = '13 Done · 2 Cancelled · 1 Suspended'
 
-// A pushed-in shot on the pane, centred on its middle at Stage height `y`;
-// the wide shot.
-const onPane = (f: number, s: number, y: number): Shot => ({ f, s, x: PANE_MID_X, y })
-const wide = (f: number): Shot => ({ f, ...WIDE })
+// The calm camera: the hero opens on the whole window and pushes in once,
+// slowly, to HELD, centred on the window; the montage holds that framing.
+// It never zooms back out. The window stays whole inside the Stage at HELD.
+const HELD: Shot = { f: 0, s: 1.06, ...WINDOW_MID }
 
 // 0-3 s. The hook: where does the work stand? One command.
 const Hook: React.FC<SceneProps> = () => {
@@ -81,10 +81,9 @@ const Slam: React.FC<SceneProps> = () => {
 
 // 5-13 s. One continuous shot: m c sends #12 to Claude, Claude works it
 // live, hands it to you (Kanban · 1), you open it and press a: Done. The
-// camera opens on the whole window, pushes in on Backlog and Claude as the
-// card moves, follows it down to Me, eases back for the detail, looks at
-// Inactive as Done ticks up, and pulls back out.
-const Hero: React.FC<SceneProps> = () => {
+// camera opens on the whole window and pushes in once, slowly, over the
+// whole scene; the cursor, the lit rows and the toasts point at the action.
+const Hero: React.FC<SceneProps> = ({ len }) => {
   const frame = useCurrentFrame()
   const [m, c, approve] = T.keys.hero
   const moved = frame >= c
@@ -126,19 +125,7 @@ const Hero: React.FC<SceneProps> = () => {
       me={[...(inMe ? [{ ...C12, owner: 'You' as const, age: 'now', arrive: ramp(frame, handed, 12) }] : []), C11]}
     />
   )
-  const shots: Shot[] = [
-    wide(0),
-    wide(34),
-    onPane(56, 1.6, 290),
-    onPane(118, 1.6, 330),
-    onPane(146, 1.6, 500),
-    onPane(152, 1.6, 500),
-    onPane(170, 1.45, 300),
-    onPane(196, 1.45, 300),
-    onPane(210, 1.45, 600),
-    onPane(216, 1.45, 600),
-    wide(234),
-  ]
+  const shots: Shot[] = [{ ...HELD, f: 0, s: 1 }, { ...HELD, f: len }]
   return (
     <AbsoluteFill>
       <Caption key={phase} title={captions.title} sub={captions.sub} at={captions.at} />
@@ -197,8 +184,8 @@ const Hero: React.FC<SceneProps> = () => {
 }
 
 // 13-19 s. Three quick beats, two bars each, of what else it does, each on
-// the whole board: it opens wide, pushes in on the row that acts, and the
-// next beat cuts back to wide. 1: drag #14 into Claude. 2: v steps to
+// the whole board, held still at the hero's last framing; the pointer and
+// the lit rows show where to look. 1: drag #14 into Claude. 2: v steps to
 // Everyone (Ann's and Bo's cards, their names, the people row). 3: [copy].
 const Montage: React.FC<SceneProps> = ({ len }) => {
   const frame = useCurrentFrame()
@@ -248,11 +235,6 @@ const Montage: React.FC<SceneProps> = ({ len }) => {
     C20,
     theirs(C13, 4),
   ]
-  const shots: Shot[][] = [
-    [wide(0), wide(8), onPane(26, 1.6, 290)],
-    [wide(0), wide(8), onPane(22, 1.6, 290), onPane(36, 1.6, 290), onPane(50, 1.6, 591)],
-    [wide(0), wide(8), onPane(24, 1.8, 250), onPane(36, 1.8, 250), wide(52)],
-  ]
   const titles = ['Drag and drop, or keys', 'Whose card is whose', '[copy] on hover']
   // Each beat fades in from the last, a quick deliberate cut.
   const pop = ramp(local, 0, 6)
@@ -268,7 +250,7 @@ const Montage: React.FC<SceneProps> = ({ len }) => {
       </div>
       <Stage>
         <AbsoluteFill style={{ opacity: pop }}>
-          <Cam key={i} shots={shots[i] ?? []} from={i * beat}>
+          <Cam shots={[HELD]}>
             <Split
               chat={
                 <>
