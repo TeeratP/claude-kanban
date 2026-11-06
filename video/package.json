@@ -3,10 +3,9 @@
   "private": true,
   "scripts": {
     "dev": "remotion studio",
-    "music": "mkdir -p public && ${PYTHON:-python3} scripts/music.py intro public/music.wav && ${PYTHON:-python3} scripts/music.py teaser public/music-25.wav",
-    "render:intro": "mkdir -p out && remotion render src/index.ts Intro out/kanban-intro-45s.mp4 --codec h264 --crf 18 --concurrency=1 --gl=swangle && sh scripts/mux.sh intro-45s music",
+    "music": "mkdir -p public && ${PYTHON:-python3} scripts/music.py public/music-25.wav",
     "render:teaser": "mkdir -p out && remotion render src/index.ts Teaser out/kanban-teaser-25s.mp4 --codec h264 --crf 18 --concurrency=1 --gl=swangle && sh scripts/mux.sh teaser-25s music-25",
-    "render": "npm run music && npm run render:teaser && npm run render:intro"
+    "render": "npm run music && npm run render:teaser"
   },
   "dependencies": {
     "@remotion/cli": "4.0.300",
