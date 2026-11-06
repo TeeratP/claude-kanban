@@ -8,7 +8,7 @@
 import React from 'react'
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig, Easing } from 'remotion'
 import {
-  ACCENT, Activity, Board, Camera, Caption, Card, DIM, Detail, EXPLORE, KanbanMark, Keycap, LINE, Line, MINT, MONO,
+  ACCENT, Activity, Board, Camera, Caption, Card, CrossFade, DIM, Detail, EXPLORE, KanbanMark, Keycap, LINE, Line, MINT, MONO,
   PANEL, Pointer, PromptBox, Reel, SceneProps, Split, Stage, TEXT, Terminal, Toast, UI, ramp, reelFrames,
 } from './ui'
 import timing from './timing.json'
@@ -107,10 +107,12 @@ const PickScene: React.FC<SceneProps> = ({ len }) => {
   const [lift, land] = T.keys.pick
   const moved = frame >= lift
   const work = (from: number) => ramp(frame, from, 10)
+  // The second row follows the chat: each step shows a few frames after its
+  // chat line (Explore 75, Edit 100, Bash 150).
   const activity =
-    frame < 100 ? (
+    frame < 104 ? (
       <Activity dots={[ACCENT, EXPLORE]} who="Explore" doing="⟳ Grep redirect" time="1m" tok="12k" />
-    ) : frame < 150 ? (
+    ) : frame < 154 ? (
       <Activity dots={[ACCENT, EXPLORE]} who="Claude" doing="⟳ Edit src/auth.ts" time="4m" tok="31k" />
     ) : (
       <Activity dots={[ACCENT, EXPLORE]} who="Claude" doing="⟳ Bash npm test" time="7m" tok="48k" />
@@ -118,7 +120,7 @@ const PickScene: React.FC<SceneProps> = ({ len }) => {
   const live: Card = {
     ...C12, owner: 'You', age: 'now', arrive: ramp(frame, lift, 14),
     sync: frame < land ? '⟳' : frame < land + 40 ? '✓' : undefined,
-    activity: frame >= land + 10 ? activity : undefined,
+    activity: frame >= 79 ? activity : undefined,
   }
   const flip = 105
   return (
@@ -158,11 +160,15 @@ const HandoffScene: React.FC<SceneProps> = ({ len }) => {
   const [press] = T.keys.handoff
   const detailAt = 75
   const done = frame >= press + 12
-  const inDetail = frame >= detailAt && !done
   const tab = frame >= 15 && !done
   const toast = frame >= 20 && frame < detailAt + 10 ? ramp(frame, 20, 10) * (1 - ramp(frame, detailAt, 10)) : 0
   const approved = frame >= press ? 1 - ramp(frame, press, 20) * 0.5 : 0
   const doneGlow = done ? 1 - ramp(frame, press + 12, 40) : 0
+  // The board with #12 waiting in Me; the detail fades in over it, and the
+  // board after Approve over the detail, so the pane is never empty.
+  const waiting = (
+    <Board backlog={[C14, C15, C16]} claude={[]} me={[{ ...C12, owner: 'You', age: 'now', arrive: ramp(frame, 12, 14) }]} />
+  )
   return (
     <AbsoluteFill>
       <Caption
@@ -187,28 +193,26 @@ const HandoffScene: React.FC<SceneProps> = ({ len }) => {
               </>
             }
             pane={
-              inDetail ? (
-                <div style={{ opacity: ramp(frame, detailAt, 8) }}>
-                  <Detail approve={approved} />
-                </div>
-              ) : done ? (
-                <div style={{ opacity: ramp(frame, press + 12, 8) }}>
-                  <Board
-                    backlog={[C14, C15, C16]}
-                    claude={[]}
-                    me={[]}
-                    inactive={
-                      <span>
-                        <span style={{ color: MINT, textShadow: `0 0 ${24 * doneGlow}px ${MINT}` }}>13 Done</span> · 2 Cancelled · 1 Suspended
-                      </span>
-                    }
-                  />
-                </div>
+              frame < detailAt ? (
+                waiting
+              ) : !done ? (
+                <CrossFade t={ramp(frame, detailAt, 8)} from={waiting} to={<Detail approve={approved} />} />
               ) : (
-                <Board
-                  backlog={[C14, C15, C16]}
-                  claude={[]}
-                  me={[{ ...C12, owner: 'You', age: 'now', arrive: ramp(frame, 12, 14) }]}
+                <CrossFade
+                  t={ramp(frame, press + 12, 8)}
+                  from={<Detail approve={approved} />}
+                  to={
+                    <Board
+                      backlog={[C14, C15, C16]}
+                      claude={[]}
+                      me={[]}
+                      inactive={
+                        <span>
+                          <span style={{ color: MINT, textShadow: `0 0 ${24 * doneGlow}px ${MINT}` }}>13 Done</span> · 2 Cancelled · 1 Suspended
+                        </span>
+                      }
+                    />
+                  }
                 />
               )
             }
@@ -227,13 +231,24 @@ const MovesScene: React.FC<SceneProps> = ({ len }) => {
   const dragging = frame >= grab && frame < drop
   const dropped = frame >= drop
   const suspended = frame >= s
-  // Pane-relative rows: Backlog's first card, Claude's first row.
+  // Pane-relative rows, as the pointer's tip sees them: Backlog's first card,
+  // then Claude's header. As in the pane, the dragged row stays in place (dim,
+  // slanted, a `›` in front), a line shows where it would land and that
+  // section's name is lit; over its own row nothing shows.
   const fromY = 150
   const toY = 323
   const t = interpolate(frame, [grab, drop - 4], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic) })
-  const ghostY = fromY + (toY - fromY) * t
+  const dragY = fromY + (toY - fromY) * t
   const pointerY = interpolate(frame, [0, grab], [400, fromY + 10], { extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) })
-  const py = frame < grab ? pointerY : dropped ? toY + 10 : ghostY + 10
+  const py = frame < grab ? pointerY : dropped ? toY + 10 : dragY + 10
+  const tip = py - 14
+  const target: React.ComponentProps<typeof Board>['drop'] = !dragging
+    ? undefined
+    : tip >= 290
+      ? { section: 'claude', lineAfter: -1 }
+      : tip >= 182
+        ? { section: 'backlog', lineAfter: tip >= 217 ? 2 : 1 }
+        : undefined
   const backlog: Card[] = [
     ...(dropped ? [] : [{ ...C14, lifted: dragging }]),
     C15,
@@ -269,21 +284,9 @@ const MovesScene: React.FC<SceneProps> = ({ len }) => {
                   backlog={backlog}
                   claude={claude}
                   me={[]}
+                  drop={target}
                   inactive={suspended ? '13 Done · 2 Cancelled · 2 Suspended' : '13 Done · 2 Cancelled · 1 Suspended'}
                 />
-                {dragging ? (
-                  <div
-                    style={{
-                      position: 'absolute', left: 0, right: 0, top: ghostY - 16, background: PANEL, border: `1px solid ${ACCENT}`,
-                      borderRadius: 8, boxShadow: `0 16px 40px rgba(0,0,0,0.6), 0 0 30px ${ACCENT}55`, transform: 'rotate(-1.2deg)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', whiteSpace: 'pre', color: '#6cb6ff' }}>
-                      <span style={{ width: '4ch', textAlign: 'right', color: DIM }}>#14</span>
-                      <span style={{ marginLeft: '1ch' }}>Add dark mode toggle</span>
-                    </div>
-                  </div>
-                ) : null}
                 <Pointer x={300} y={py - 16} show={frame < 95 ? 1 - ramp(frame, 85, 10) : 0} />
               </div>
             }

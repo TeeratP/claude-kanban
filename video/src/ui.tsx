@@ -191,7 +191,8 @@ export const PromptBox: React.FC<{ children?: React.ReactNode; faint?: boolean; 
   </div>
 )
 
-// A key being pressed: pops in at the bottom right and fades.
+// A key being pressed: pops in at the bottom right, inside the window's
+// corner (clear of its border and the pane's text), and fades.
 export const Keycap: React.FC<{ label: string; at: number }> = ({ label, at }) => {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
@@ -201,7 +202,7 @@ export const Keycap: React.FC<{ label: string; at: number }> = ({ label, at }) =
   return (
     <div
       style={{
-        position: 'absolute', right: 70, bottom: 60, minWidth: 116, height: 116, padding: '0 28px', borderRadius: 24,
+        position: 'absolute', right: 150, bottom: 84, minWidth: 116, height: 116, padding: '0 28px', borderRadius: 24,
         background: '#24262f', border: `3px solid ${ACCENT}`, color: TEXT, fontFamily: UI, fontSize: 54, fontWeight: 800,
         display: 'flex', alignItems: 'center', justifyContent: 'center', transform: `scale(${0.5 + 0.5 * s})`, opacity: fade,
         boxShadow: `0 0 60px ${ACCENT}77`, zIndex: 3,
@@ -295,11 +296,13 @@ export const GroupHeader: React.FC<{ name: string; open: boolean; summary?: Reac
 )
 
 // A section's header: name and count, a rule to the right edge, `[copy]`.
-export const SectionHeader: React.FC<{ name: string; count: string; color?: string; copy?: boolean }> = ({
-  name, count, color = TEXT, copy = true,
+// `lit`: a dragged card would land in this section, so its name is drawn
+// inverse; `line`: the drop's insertion line runs under this row.
+export const SectionHeader: React.FC<{ name: string; count: string; color?: string; copy?: boolean; lit?: boolean; line?: boolean }> = ({
+  name, count, color = TEXT, copy = true, lit = false, line = false,
 }) => (
-  <div style={{ display: 'flex', alignItems: 'center', whiteSpace: 'pre', marginTop: 4 }}>
-    <span style={{ color, fontWeight: 700 }}>{name}</span>
+  <div style={{ display: 'flex', alignItems: 'center', whiteSpace: 'pre', marginTop: 4, ...(line ? INSERT_LINE : {}) }}>
+    <span style={{ color: lit ? BG : color, background: lit ? color : 'transparent', fontWeight: 700 }}>{name}</span>
     <span style={{ color: DIM }}> {count} </span>
     <div style={{ flex: 1, borderTop: `1px solid ${LINE}`, margin: '0 12px' }} />
     {copy ? <span style={{ color: DIM }}>[copy]</span> : null}
@@ -319,8 +322,10 @@ export type Card = {
   hover?: boolean
   // A `⟳` or `✓` sync glyph before the age.
   sync?: string
-  // Lifted by a drag: drawn faint in its place.
+  // Being dragged: stays in its place, dim and slanted, with a `›` in front.
   lifted?: boolean
+  // The drop's insertion line runs under this card.
+  line?: boolean
   // Shown only in the Everyone view.
   showOwnerName?: boolean
   // The keyboard cursor rests on it.
@@ -329,10 +334,15 @@ export type Card = {
 
 const NUM_W = '4ch'
 
+// The insertion line a drag draws under the row the card would land after:
+// the terminal's underline, run to the pane's edge.
+const INSERT_LINE: React.CSSProperties = { boxShadow: `inset 0 -2px 0 ${TEXT}` }
+
 // A card row: right-aligned number, title (in its owner's colour), the
 // owner's name dim for someone else's card, and flush right a sync glyph and
 // its age.
 export const CardRow: React.FC<{ card: Card }> = ({ card }) => {
+  const lifted = card.lifted === true
   const a = card.arrive ?? 1
   const glow = card.arrive === undefined ? 0 : 1 - ramp(a * 30, 10, 20)
   const ownerColor = card.owner === undefined ? TEXT : PEOPLE[card.owner]
@@ -340,14 +350,17 @@ export const CardRow: React.FC<{ card: Card }> = ({ card }) => {
     <>
       <div
         style={{
-          display: 'flex', whiteSpace: 'pre', opacity: card.lifted ? 0.3 : Math.min(1, a * 1.5),
+          display: 'flex', whiteSpace: 'pre', opacity: lifted ? 0.5 : Math.min(1, a * 1.5), fontStyle: lifted ? 'italic' : 'normal',
           transform: `translateX(${(1 - a) * 40}px)`, borderRadius: 6,
           background: glow > 0 ? `rgba(217,119,87,${0.22 * glow})` : card.hover || card.cursor ? '#23252e' : 'transparent',
           outline: card.cursor ? `2px solid ${ACCENT}` : 'none',
-          boxShadow: glow > 0 ? `0 0 ${30 * glow}px ${ACCENT}55` : 'none',
+          boxShadow: glow > 0 ? `0 0 ${30 * glow}px ${ACCENT}55` : card.line ? INSERT_LINE.boxShadow : 'none',
         }}
       >
-        <span style={{ width: NUM_W, textAlign: 'right', color: DIM }}>#{card.n}</span>
+        <span style={{ width: NUM_W, display: 'flex', color: DIM }}>
+          <span style={{ flex: 1, color: TEXT, fontWeight: 700, fontStyle: 'normal' }}>{lifted ? '›' : ''}</span>
+          #{card.n}
+        </span>
         <span style={{ marginLeft: '1ch', color: ownerColor }}>{card.title}</span>
         {card.owner !== undefined && card.owner !== 'You' && card.showOwnerName ? (
           <span style={{ color: DIM }}>  {card.owner}</span>
@@ -394,14 +407,17 @@ export const Section: React.FC<{
   everyone?: boolean
   // Other people's cards the view hides: the header still counts them.
   hidden?: number
-}> = ({ name, cards, rows, empty, color, everyone, hidden = 0 }) => {
+  // A drag would land here: the name is lit and the insertion line is drawn
+  // under the header (`-1`, first in the section) or under card `lineAfter`.
+  drop?: { lineAfter: number }
+}> = ({ name, cards, rows, empty, color, everyone, hidden = 0, drop }) => {
   const mine = cards.filter(c => c.owner === 'You').length
   const used = cards.reduce((sum, c) => sum + (c.activity === undefined ? 1 : 2), 0)
   return (
     <>
-      <SectionHeader name={name} count={`${mine} mine · ${cards.length + hidden} all`} color={color} />
-      {cards.map(c => (
-        <CardRow key={c.n} card={{ ...c, showOwnerName: everyone }} />
+      <SectionHeader name={name} count={`${mine} mine · ${cards.length + hidden} all`} color={color} lit={drop !== undefined} line={drop?.lineAfter === -1} />
+      {cards.map((c, i) => (
+        <CardRow key={c.n} card={{ ...c, showOwnerName: everyone, line: drop?.lineAfter === i }} />
       ))}
       {cards.length === 0 ? <SpareRow text={empty} /> : null}
       {Array.from({ length: Math.max(0, rows - Math.max(used, 1)) }, (_, i) => (
@@ -434,13 +450,15 @@ export const Board: React.FC<{
   status?: string
   people?: number
   everyone?: boolean
-}> = ({ backlog, claude, me, inactive = '12 Done · 2 Cancelled · 1 Suspended', view, viewLit, status, people = 0, everyone }) => (
+  // Where a dragged card would land, if anywhere.
+  drop?: { section: 'backlog' | 'claude' | 'me'; lineAfter: number }
+}> = ({ backlog, claude, me, inactive = '12 Done · 2 Cancelled · 1 Suspended', view, viewLit, status, people = 0, everyone, drop }) => (
   <>
     <Toolbar view={view} viewLit={viewLit} status={status} />
     <GroupHeader name="Active" open />
-    <Section name="Backlog" cards={backlog} rows={4} empty="Nothing yet · n adds a card" everyone={everyone} hidden={everyone ? 0 : 2} />
-    <Section name="Claude" cards={claude} rows={3} empty="Idle · drag a card here" color={ACCENT} everyone={everyone} />
-    <Section name="Me" cards={me} rows={2} empty="✓ All clear, nothing needs you" color={AMBER} everyone={everyone} />
+    <Section name="Backlog" cards={backlog} rows={4} empty="Nothing yet · n adds a card" everyone={everyone} hidden={everyone ? 0 : 2} drop={drop?.section === 'backlog' ? drop : undefined} />
+    <Section name="Claude" cards={claude} rows={3} empty="Idle · drag a card here" color={ACCENT} everyone={everyone} drop={drop?.section === 'claude' ? drop : undefined} />
+    <Section name="Me" cards={me} rows={2} empty="✓ All clear, nothing needs you" color={AMBER} everyone={everyone} drop={drop?.section === 'me' ? drop : undefined} />
     <GroupHeader name="Inactive" open={false} summary={inactive} />
     {people > 0 ? <PeopleRow show={people} /> : null}
   </>
@@ -500,6 +518,15 @@ export const Detail: React.FC<{ approve: number }> = ({ approve }) => (
       What should Claude change?
     </div>
   </>
+)
+
+// Swaps one pane view for another: `to` fades in over `from`, so the pane is
+// never empty between them. `t` runs 0 → 1.
+export const CrossFade: React.FC<{ t: number; from: React.ReactNode; to: React.ReactNode }> = ({ t, from, to }) => (
+  <div style={{ position: 'relative' }}>
+    {t < 1 ? <div style={{ position: 'absolute', top: 0, left: 0, right: 0, opacity: 1 - t }}>{from}</div> : null}
+    <div style={{ opacity: t }}>{to}</div>
+  </div>
 )
 
 // A mouse pointer, drawn in code.

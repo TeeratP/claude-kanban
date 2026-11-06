@@ -8,7 +8,7 @@
 import React from 'react'
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion'
 import {
-  ACCENT, Activity, Board, Btn, Camera, Caption, Card, CardRow, DIM, Detail, EXPLORE, KanbanMark, Keycap, LINE, Line,
+  ACCENT, Activity, Board, Btn, Camera, Caption, Card, CardRow, CrossFade, DIM, Detail, EXPLORE, KanbanMark, Keycap, LINE, Line,
   MINT, MONO, PANEL, PeopleRow, PromptBox, Reel, SceneProps, SectionHeader, Split, Stage, TEXT, Terminal, Toast, UI,
   ramp, reelFrames,
 } from './ui'
@@ -71,11 +71,12 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
   const detailAt = 152
   const done = frame >= approve + 10
   const inMe = frame >= handed && !done
-  const inDetail = frame >= detailAt && !done
+  // The second row follows the chat: each step shows a few frames after its
+  // chat line (Explore c + 16, Edit 98, Bash 118).
   const activity =
-    frame < 98 ? (
+    frame < 102 ? (
       <Activity dots={[ACCENT, EXPLORE]} who="Explore" doing="⟳ Grep redirect" time="1m" tok="12k" />
-    ) : frame < 118 ? (
+    ) : frame < 122 ? (
       <Activity dots={[ACCENT, EXPLORE]} who="Claude" doing="⟳ Edit src/auth.ts" time="4m" tok="31k" />
     ) : (
       <Activity dots={[ACCENT, EXPLORE]} who="Claude" doing="⟳ Bash npm test" time="7m" tok="48k" />
@@ -83,7 +84,7 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
   const live: Card = {
     ...C12, owner: 'You', age: 'now', arrive: ramp(frame, c, 12),
     sync: frame < c + 12 ? '⟳' : frame < c + 30 ? '✓' : undefined,
-    activity: frame >= c + 18 ? activity : undefined,
+    activity: frame >= c + 20 ? activity : undefined,
   }
   const backlog = moved ? [C14, C15, C16] : [{ ...C12, cursor: frame >= 10 }, C14, C15, C16]
   const doneGlow = done ? 1 - ramp(frame, approve + 10, 40) : 0
@@ -94,6 +95,16 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
     done: { title: 'Approve. Done.', sub: 'the issue closes on GitHub', at: approve + 10 },
   }[phase]
   const work = (from: number) => ramp(frame, from, 8)
+  const approved = frame >= approve ? 1 - ramp(frame, approve, 20) * 0.5 : 0
+  // The live board; the detail fades in over it, and the board after Approve
+  // over the detail, so the pane is never empty.
+  const board = (
+    <Board
+      backlog={backlog}
+      claude={moved && !inMe ? [live] : []}
+      me={inMe ? [{ ...C12, owner: 'You', age: 'now', arrive: ramp(frame, handed, 12) }] : []}
+    />
+  )
   return (
     <AbsoluteFill>
       <Caption key={phase} title={captions.title} sub={captions.sub} at={captions.at} />
@@ -118,28 +129,26 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
               </>
             }
             pane={
-              inDetail ? (
-                <div style={{ opacity: ramp(frame, detailAt, 6) }}>
-                  <Detail approve={frame >= approve ? 1 - ramp(frame, approve, 20) * 0.5 : 0} />
-                </div>
-              ) : done ? (
-                <div style={{ opacity: ramp(frame, approve + 10, 6) }}>
-                  <Board
-                    backlog={[C14, C15, C16]}
-                    claude={[]}
-                    me={[]}
-                    inactive={
-                      <span>
-                        <span style={{ color: MINT, textShadow: `0 0 ${24 * doneGlow}px ${MINT}` }}>13 Done</span> · 2 Cancelled · 1 Suspended
-                      </span>
-                    }
-                  />
-                </div>
+              frame < detailAt ? (
+                board
+              ) : !done ? (
+                <CrossFade t={ramp(frame, detailAt, 6)} from={board} to={<Detail approve={approved} />} />
               ) : (
-                <Board
-                  backlog={backlog}
-                  claude={moved && !inMe ? [live] : []}
-                  me={inMe ? [{ ...C12, owner: 'You', age: 'now', arrive: ramp(frame, handed, 12) }] : []}
+                <CrossFade
+                  t={ramp(frame, approve + 10, 6)}
+                  from={<Detail approve={approved} />}
+                  to={
+                    <Board
+                      backlog={[C14, C15, C16]}
+                      claude={[]}
+                      me={[]}
+                      inactive={
+                        <span>
+                          <span style={{ color: MINT, textShadow: `0 0 ${24 * doneGlow}px ${MINT}` }}>13 Done</span> · 2 Cancelled · 1 Suspended
+                        </span>
+                      }
+                    />
+                  }
                 />
               )
             }
@@ -189,7 +198,7 @@ const Montage: React.FC<SceneProps> = ({ len }) => {
       title: '[copy] on hover',
       body: (
         <>
-          <SectionHeader name="Backlog" count="2 mine · 4 all" />
+          <SectionHeader name="Backlog" count="1 mine · 4 all" />
           <CardRow card={{ ...C15, hover: local >= 12 }} />
           <CardRow card={C16} />
           <div style={{ marginTop: 12, color: MINT, opacity: ramp(local, 26, 6) }}>Copied 1 card.</div>
@@ -246,7 +255,7 @@ const End: React.FC<SceneProps> = () => {
         <span style={{ color: ACCENT }}>/plugin install</span> kanban --marketplace TeeratP/claude-kanban
       </div>
       <div style={{ marginTop: 26, fontSize: 26, color: DIM, opacity: ramp(frame, final, 10) }}>
-        for the Claude Code terminal · zero config: found from git and gh
+        a Claude Code mod · needs the gh CLI
       </div>
     </AbsoluteFill>
   )
