@@ -3,7 +3,8 @@
 <p align="center"><b>See who holds the ball.</b><br>
 A Claude Code mod that puts a kanban board in a side pane. Cards are your GitHub Issues, laid out by a Projects board. Claude works the board with its own tools, and you review what it hands back.</p>
 
-<!-- video: kanban intro -->
+<p align="center"><a href="https://github.com/TeeratP/claude-kanban/releases/download/v0.6.4/kanban-teaser-25s.mp4"><img src="docs/media/teaser-poster.jpg" width="720" alt="The kanban pane beside a Claude Code chat: Backlog, Claude and Me sections, cards in their owners' colours, and [copy] on the hovered card"></a><br>
+<sub>▶ <a href="https://github.com/TeeratP/claude-kanban/releases/download/v0.6.4/kanban-teaser-25s.mp4">Watch the 25-second teaser</a></sub></p>
 
 <!-- screenshot: the board pane (Active open: Backlog / Claude / Me, Inactive folded), with the two-row toolbar: the dim status row over `r: Refresh   n: New   v: Mine + open   f: Find` -->
 
