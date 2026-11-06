@@ -1,14 +1,14 @@
-"""Synthesize a claude-kanban video track that follows the picture: upbeat electronic,
+"""Synthesize the claude-kanban teaser's track that follows the picture: upbeat electronic,
 120 BPM, A minor.
 
-Usage: music.py intro|teaser OUT.wav
+Usage: music.py OUT.wav
 
 The timing comes from src/timing.json, the same file the video reads, so the
 music and the picture can't drift apart. The energy follows the video:
-  - before the drop (the problem): a quiet pad and a filtered 8th-note arp;
+  - before the drop (the hook): a quiet pad and a filtered 8th-note arp;
   - the drop (start of the 'logo' scene): impact, then a half-time groove;
   - 'full' (the features, fast): four-on-the-floor, 16th arp, hats, bass;
-  - 'end' (feature list, install, logo): the drums stop and the tempo slows
+  - 'end' (logo, tagline, install): the drums stop and the tempo slows
     (ritardando) on the 'outro' beats, landing on a final A minor chord that
     rings out to silence.
 Every keypress in the video gets a soft key click; the Approve press gets an
@@ -21,8 +21,8 @@ import numpy as np
 from scipy.io import wavfile
 from scipy.signal import butter, lfilter
 
-VIDEO, OUT = sys.argv[1], sys.argv[2]
-TIMING = json.loads((pathlib.Path(__file__).parent.parent / 'src' / 'timing.json').read_text())[VIDEO]
+OUT = sys.argv[1]
+TIMING = json.loads((pathlib.Path(__file__).parent.parent / 'src' / 'timing.json').read_text())['teaser']
 FPS = 30
 SR = 44100
 BEAT = 0.5

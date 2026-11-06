@@ -1,4 +1,4 @@
-// The 25 s claude-kanban teaser, its own script (not a cut of the intro): a
+// The 25 s claude-kanban teaser: a
 // 3 s hook, the logo on the drop, one continuous hero shot (a card goes to
 // Claude, Claude works it live, hands it to you, you approve), a fast montage
 // of the rest, and the end card. 120 BPM: a beat is 15 frames. All timing
@@ -6,23 +6,41 @@
 // on the drop, keys land on beats, the music slows on the end card. The
 // board is a made-up demo board.
 import React from 'react'
-import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion'
+import { AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion'
 import {
-  ACCENT, Activity, Board, Btn, Camera, Caption, Card, CardRow, CrossFade, DIM, Detail, EXPLORE, KanbanMark, Keycap, LINE, Line,
-  MINT, MONO, PANEL, PeopleRow, PromptBox, Reel, SceneProps, SectionHeader, Split, Stage, TEXT, Terminal, Toast, UI,
-  ramp, reelFrames,
+  ACCENT, Activity, Board, Cam, Caption, Card, CrossFade, DIM, Detail, EXPLORE, KanbanMark, Keycap, LINE, Line, MINT, MONO,
+  PANE_MID_X, PANE_ROW, PANEL, Pointer, PromptBox, ROW, Reel, SceneProps, Shot, Split, Stage, TEXT, Terminal, Toast, UI, View,
+  WIDE, ramp, reelFrames,
 } from './ui'
 import timing from './timing.json'
 
 const T = timing.teaser
 
-// The demo board's cards (made up), the same as the intro's.
+// The demo board (made up): yours, nobody's, and Ann's and Bo's. Mine + open
+// shows yours and nobody's; the headers count every card in the section.
+const C11: Card = { n: 11, title: 'Check the pricing page copy', age: '1d', owner: 'Ann' }
 const C12: Card = { n: 12, title: 'Fix login redirect', age: '2d' }
+const C13: Card = { n: 13, title: 'Add retries to webhooks', age: '3h', owner: 'Bo' }
 const C14: Card = { n: 14, title: 'Add dark mode toggle', age: '5h', owner: 'You' }
 const C15: Card = { n: 15, title: 'Cache search results', age: '1d' }
 const C16: Card = { n: 16, title: 'Update onboarding copy', age: '3h', owner: 'You' }
 const C17: Card = { n: 17, title: 'Retry failed uploads', age: '4h', owner: 'Ann' }
 const C18: Card = { n: 18, title: 'Speed up the CI cache', age: '6h', owner: 'Bo' }
+const C19: Card = { n: 19, title: 'Add CSV export', age: '2d' }
+const C20: Card = { n: 20, title: 'Pin the lint version', age: '1h', owner: 'You' }
+const C21: Card = { n: 21, title: 'Show unread count in tab', age: '4d' }
+const C22: Card = { n: 22, title: 'Tidy the settings page', age: '5d', owner: 'Ann' }
+const C23: Card = { n: 23, title: 'Lazy-load profile images', age: '1w' }
+const C24: Card = { n: 24, title: 'Fix date picker on Safari', age: '6d' }
+const C25: Card = { n: 25, title: 'Add a keyboard help sheet', age: '2w' }
+// Backlog under its top card (#12, then #14 in the montage), in board order.
+const REST = [C17, C15, C16, C18, C19, C22, C21, C23, C24, C25]
+const DONE_13 = '13 Done · 2 Cancelled · 1 Suspended'
+
+// A pushed-in shot on the pane, centred on its middle at Stage height `y`;
+// the wide shot.
+const onPane = (f: number, s: number, y: number): Shot => ({ f, s, x: PANE_MID_X, y })
+const wide = (f: number): Shot => ({ f, ...WIDE })
 
 // 0-3 s. The hook: where does the work stand? One command.
 const Hook: React.FC<SceneProps> = () => {
@@ -62,8 +80,11 @@ const Slam: React.FC<SceneProps> = () => {
 }
 
 // 5-13 s. One continuous shot: m c sends #12 to Claude, Claude works it
-// live, hands it to you (Kanban · 1), you open it and press a: Done.
-const Hero: React.FC<SceneProps> = ({ len }) => {
+// live, hands it to you (Kanban · 1), you open it and press a: Done. The
+// camera opens on the whole window, pushes in on Backlog and Claude as the
+// card moves, follows it down to Me, eases back for the detail, looks at
+// Inactive as Done ticks up, and pulls back out.
+const Hero: React.FC<SceneProps> = () => {
   const frame = useCurrentFrame()
   const [m, c, approve] = T.keys.hero
   const moved = frame >= c
@@ -86,7 +107,7 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
     sync: frame < c + 12 ? '⟳' : frame < c + 30 ? '✓' : undefined,
     activity: frame >= c + 20 ? activity : undefined,
   }
-  const backlog = moved ? [C14, C15, C16] : [{ ...C12, cursor: frame >= 10 }, C14, C15, C16]
+  const backlog = moved ? [C14, ...REST] : [{ ...C12, cursor: frame >= 10 }, C14, ...REST]
   const doneGlow = done ? 1 - ramp(frame, approve + 10, 40) : 0
   const phase = done ? 'done' : frame >= handed ? 'handoff' : 'take'
   const captions = {
@@ -101,15 +122,28 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
   const board = (
     <Board
       backlog={backlog}
-      claude={moved && !inMe ? [live] : []}
-      me={inMe ? [{ ...C12, owner: 'You', age: 'now', arrive: ramp(frame, handed, 12) }] : []}
+      claude={[...(moved && !inMe ? [live] : []), C20, C13]}
+      me={[...(inMe ? [{ ...C12, owner: 'You' as const, age: 'now', arrive: ramp(frame, handed, 12) }] : []), C11]}
     />
   )
+  const shots: Shot[] = [
+    wide(0),
+    wide(34),
+    onPane(56, 1.6, 290),
+    onPane(118, 1.6, 330),
+    onPane(146, 1.6, 500),
+    onPane(152, 1.6, 500),
+    onPane(170, 1.45, 300),
+    onPane(196, 1.45, 300),
+    onPane(210, 1.45, 600),
+    onPane(216, 1.45, 600),
+    wide(234),
+  ]
   return (
     <AbsoluteFill>
       <Caption key={phase} title={captions.title} sub={captions.sub} at={captions.at} />
       <Stage>
-        <Camera len={len} from={1} to={1.04} x={0.72} y={0.3}>
+        <Cam shots={shots}>
           <Split
             paneTitle={inMe ? 'Kanban · 1' : 'Kanban'}
             tabGlow={inMe ? 1 - ramp(frame, handed, 40) * 0.5 : 0}
@@ -139,9 +173,9 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
                   from={<Detail approve={approved} />}
                   to={
                     <Board
-                      backlog={[C14, C15, C16]}
-                      claude={[]}
-                      me={[]}
+                      backlog={[C14, ...REST]}
+                      claude={[C20, C13]}
+                      me={[C11]}
                       inactive={
                         <span>
                           <span style={{ color: MINT, textShadow: `0 0 ${24 * doneGlow}px ${MINT}` }}>13 Done</span> · 2 Cancelled · 1 Suspended
@@ -153,7 +187,7 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
               )
             }
           />
-        </Camera>
+        </Cam>
       </Stage>
       <Keycap label="m" at={m} />
       <Keycap label="c" at={c} />
@@ -162,64 +196,111 @@ const Hero: React.FC<SceneProps> = ({ len }) => {
   )
 }
 
-// 13-19 s. Three quick beats, two bars each, of what else it does, one card each.
+// 13-19 s. Three quick beats, two bars each, of what else it does, each on
+// the whole board: it opens wide, pushes in on the row that acts, and the
+// next beat cuts back to wide. 1: drag #14 into Claude. 2: v steps to
+// Everyone (Ann's and Bo's cards, their names, the people row). 3: [copy].
 const Montage: React.FC<SceneProps> = ({ len }) => {
   const frame = useCurrentFrame()
-  const card = Math.floor(len / 3)
-  const i = Math.min(2, Math.floor(frame / card))
-  const local = frame - i * card
-  const cards: Array<{ title: string; body: React.ReactNode }> = [
-    {
-      title: 'Drag and drop, or keys',
-      body: (
-        <>
-          <SectionHeader name="Claude" count="1 mine · 1 all" color={ACCENT} />
-          <CardRow card={{ ...C14, age: 'now', sync: '⟳', arrive: ramp(local, 4, 12) }} />
-          <Line dim>drag a card onto any section,</Line>
-          <Line dim>or m, then b c h d x s</Line>
-        </>
-      ),
-    },
-    {
-      title: 'Whose card is whose',
-      body: (
-        <>
-          <div style={{ whiteSpace: 'pre' }}>
-            <Btn k="v" label="Everyone" lit={1 - ramp(local, 0, 30)} />
-          </div>
-          <CardRow card={{ ...C16, showOwnerName: true }} />
-          <CardRow card={{ ...C17, showOwnerName: true }} />
-          <CardRow card={{ ...C18, showOwnerName: true }} />
-          <PeopleRow />
-        </>
-      ),
-    },
-    {
-      title: '[copy] on hover',
-      body: (
-        <>
-          <SectionHeader name="Backlog" count="1 mine · 4 all" />
-          <CardRow card={{ ...C15, hover: local >= 12 }} />
-          <CardRow card={C16} />
-          <div style={{ marginTop: 12, color: MINT, opacity: ramp(local, 26, 6) }}>Copied 1 card.</div>
-        </>
-      ),
-    },
+  const beat = Math.floor(len / 3)
+  const i = Math.min(2, Math.floor(frame / beat))
+  const local = frame - i * beat
+  // The montage's keys, as frames inside their own beat.
+  const [dropAt, vAt, copyAt] = T.keys.montage
+  const drop = dropAt
+  const v = vAt - beat
+  const copy = copyAt - 2 * beat
+  // Beat 1: the pointer takes #14 (Backlog's first card) to Claude's header.
+  const grab = 10
+  const dragging = i === 0 && local >= grab && local < drop
+  const dropped = i > 0 || local >= drop
+  const rowTop = (r: number) => r * PANE_ROW
+  const fromY = rowTop(ROW.backlog + 1)
+  const toY = rowTop(ROW.claude)
+  const t = interpolate(local, [grab, drop - 2], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic) })
+  const tipY = local < grab ? interpolate(local, [0, grab], [fromY + 90, fromY + 8], { extrapolateRight: 'clamp' }) : fromY + 8 + (toY - fromY) * t
+  const tipRow = Math.floor(tipY / PANE_ROW)
+  const target: React.ComponentProps<typeof Board>['drop'] = !dragging
+    ? undefined
+    : tipRow >= ROW.claude
+      ? { section: 'claude', lineAfter: -1 }
+      : tipRow > ROW.backlog + 1
+        ? { section: 'backlog', lineAfter: tipRow - ROW.backlog - 1 }
+        : undefined
+  const everyone = i === 2 || (i === 1 && local >= v + 3)
+  const view: View = everyone ? 'Everyone' : 'Mine + open'
+  const hover = i === 2 && local >= 12
+  // Ann's and Bo's cards slide in as the view widens.
+  const theirs = (card: Card, k: number): Card =>
+    i === 1 && card.owner !== undefined && card.owner !== 'You' ? { ...card, arrive: ramp(local, v + 3 + k * 2, 12) } : card
+  const backlog: Card[] = [
+    ...(dropped ? [] : [{ ...C14, lifted: dragging }]),
+    ...REST.map((c, k) => (c.n === 15 ? { ...theirs(c, k), hover } : theirs(c, k))),
   ]
+  const claude: Card[] = [
+    ...(dropped
+      ? [{
+          ...C14, age: 'now', arrive: i === 0 ? ramp(local, drop, 12) : undefined,
+          sync: i === 0 ? (local < drop + 14 ? '⟳' : '✓') : undefined,
+          activity: i > 0 || local >= drop + 12 ? <Activity dots={[ACCENT]} who="Claude" doing="⟳ Read src/theme.ts" time="1m" tok="6k" /> : undefined,
+        }]
+      : []),
+    C20,
+    theirs(C13, 4),
+  ]
+  const shots: Shot[][] = [
+    [wide(0), wide(8), onPane(26, 1.6, 290)],
+    [wide(0), wide(8), onPane(22, 1.6, 290), onPane(36, 1.6, 290), onPane(50, 1.6, 591)],
+    [wide(0), wide(8), onPane(24, 1.8, 250), onPane(36, 1.8, 250), wide(52)],
+  ]
+  const titles = ['Drag and drop, or keys', 'Whose card is whose', '[copy] on hover']
+  // Each beat fades in from the last, a quick deliberate cut.
   const pop = ramp(local, 0, 6)
   return (
-    <AbsoluteFill style={{ alignItems: 'center', justifyContent: 'center', fontFamily: UI }}>
-      <div style={{ opacity: pop, transform: `scale(${0.92 + 0.08 * pop})`, textAlign: 'center' }}>
-        <div style={{ fontSize: 80, fontWeight: 800, color: TEXT, letterSpacing: -1 }}>{cards[i]?.title}</div>
-        <div
-          style={{
-            marginTop: 40, width: 1000, background: PANEL, border: `1px solid ${LINE}`, borderRadius: 18, padding: '26px 40px',
-            fontFamily: MONO, fontSize: 30, lineHeight: 1.6, textAlign: 'left', color: TEXT, boxShadow: `0 0 80px ${ACCENT}1f`,
-          }}
-        >
-          {cards[i]?.body}
-        </div>
+    <AbsoluteFill>
+      <div
+        style={{
+          position: 'absolute', top: 56, left: 0, right: 0, textAlign: 'center', fontFamily: UI, fontSize: 80, fontWeight: 800,
+          color: TEXT, letterSpacing: -1, opacity: pop, transform: `scale(${0.92 + 0.08 * pop})`, zIndex: 2,
+        }}
+      >
+        {titles[i]}
       </div>
+      <Stage>
+        <AbsoluteFill style={{ opacity: pop }}>
+          <Cam key={i} shots={shots[i] ?? []} from={i * beat}>
+            <Split
+              chat={
+                <>
+                  <Line dim>⏺ #12 is Done.</Line>
+                  <Line show={dropped ? (i === 0 ? ramp(local, drop + 6) : 1) : 0}>⏺ kanban_show(card: 14)</Line>
+                  <Line dim show={dropped ? (i === 0 ? ramp(local, drop + 12) : 1) : 0}>⏺ Read(src/theme.ts)</Line>
+                  <Toast show={i === 2 && local >= copy ? ramp(local, copy, 8) : 0} color={MINT}>
+                    Copied 1 card.
+                  </Toast>
+                </>
+              }
+              pane={
+                <div style={{ position: 'relative' }}>
+                  <Board
+                    backlog={backlog}
+                    claude={claude}
+                    me={[theirs(C11, 5)]}
+                    view={view}
+                    viewLit={i === 1 && local >= v ? 1 - ramp(local, v, 30) : 0}
+                    peopleLit={i === 1 && local >= 40 ? 1 - ramp(local, 40, 20) : 0}
+                    drop={target}
+                    inactive={DONE_13}
+                  />
+                  {i === 0 ? <Pointer x={220} y={tipY - 2} show={local < drop + 8 ? 1 : 1 - ramp(local, drop + 8, 8)} /> : null}
+                  {i === 2 ? <Pointer x={560} y={rowTop(ROW.backlog + 2) + 8} show={ramp(local, 6, 6) * (1 - ramp(local, 44, 8))} /> : null}
+                </div>
+              }
+            />
+          </Cam>
+        </AbsoluteFill>
+      </Stage>
+      <Keycap label="v" at={vAt} />
     </AbsoluteFill>
   )
 }

@@ -1,8 +1,7 @@
-// Shared look and building blocks for the kanban videos: colours, the
+// Shared look and building blocks for the kanban teaser: colours, the
 // terminal window with the kanban side pane, the board's rows, captions,
 // keycaps, quick cuts and camera moves. The palette, type, easing and frame
-// follow the next-steps-plus videos so the two read as one family. Each
-// video (the 45 s intro, the 25 s teaser) is its own script built from these.
+// follow the next-steps-plus videos so the two read as one family.
 import React from 'react'
 import {
   AbsoluteFill,
@@ -57,15 +56,31 @@ export const SceneCut: React.FC<{ len: number; children: React.ReactNode }> = ({
   )
 }
 
-// A slow camera push over a scene: scales from `from` to `to`, centred on a
-// point (fractions of the frame), with a smooth ease.
-export const Camera: React.FC<{ len: number; from?: number; to?: number; x?: number; y?: number; children: React.ReactNode }> = ({
-  len, from = 1, to = 1.1, x = 0.5, y = 0.55, children,
-}) => {
-  const frame = useCurrentFrame()
-  const s = interpolate(frame, [0, len], [from, to], { easing: Easing.inOut(Easing.quad), extrapolateRight: 'clamp' })
+// The camera: a list of shots, each a frame, a zoom and the point (in the
+// Stage's pixels) it centres on; between shots it eases. A zoom of 1 on the
+// Stage's centre is the wide shot. It moves live DOM text with a CSS
+// transform, so the text is laid out and drawn at the zoomed size, never a
+// scaled bitmap. `from`: the frame the shots count from.
+export type Shot = { f: number; s: number; x: number; y: number }
+export const STAGE_W = 1920
+export const STAGE_H = 1080 - 220
+export const WIDE = { s: 1, x: STAGE_W / 2, y: STAGE_H / 2 }
+
+export const Cam: React.FC<{ shots: Shot[]; from?: number; children: React.ReactNode }> = ({ shots, from = 0, children }) => {
+  const frame = useCurrentFrame() - from
+  const next = shots.findIndex(one => one.f > frame)
+  const a = shots[next === -1 ? shots.length - 1 : Math.max(0, next - 1)] ?? { f: 0, ...WIDE }
+  const b = next <= 0 ? a : (shots[next] ?? a)
+  const t = b.f === a.f ? 0 : Easing.inOut(Easing.cubic)(Math.min(1, Math.max(0, (frame - a.f) / (b.f - a.f))))
+  const s = a.s + (b.s - a.s) * t
+  const x = a.x + (b.x - a.x) * t
+  const y = a.y + (b.y - a.y) * t
   return (
-    <AbsoluteFill style={{ transform: `scale(${s})`, transformOrigin: `${x * 100}% ${y * 100}%` }}>{children}</AbsoluteFill>
+    <AbsoluteFill
+      style={{ transform: `translate(${STAGE_W / 2 - x * s}px, ${STAGE_H / 2 - y * s}px) scale(${s})`, transformOrigin: '0 0' }}
+    >
+      {children}
+    </AbsoluteFill>
   )
 }
 
@@ -116,6 +131,18 @@ export const Terminal: React.FC<{ children: React.ReactNode; top?: number; heigh
   </div>
 )
 
+// The kanban pane's text: 18 px on a 24.5 px terminal row, so the whole
+// board (29 rows) fits the pane. The chat keeps its larger type.
+export const PANE_FONT = 18
+export const PANE_ROW = 24.5
+const PANE_W = 960
+const PANE_PAD = 16
+const SPLIT_LEFT = 110
+const SPLIT_TOP = 20
+// The pane's middle in the Stage, where the camera centres on it. Its
+// first row's top is at SPLIT_TOP + 53 + PANE_PAD (89 px).
+export const PANE_MID_X = STAGE_W - SPLIT_LEFT - PANE_W / 2
+
 // The terminal with the kanban side pane: the chat on the left, the pane on
 // the right with its own tab title (`Kanban`, `Kanban · N`). `open` slides
 // the pane in (0 → 1).
@@ -127,10 +154,10 @@ export const Split: React.FC<{
   top?: number
   height?: number
   tabGlow?: number
-}> = ({ chat, pane, paneTitle = 'Kanban', open = 1, top = 20, height = 800, tabGlow = 0 }) => {
-  const paneWidth = 960 * open
+}> = ({ chat, pane, paneTitle = 'Kanban', open = 1, top = SPLIT_TOP, height = 800, tabGlow = 0 }) => {
+  const paneWidth = PANE_W * open
   return (
-    <div style={frameStyle(top, height, 110, 110)}>
+    <div style={frameStyle(top, height, SPLIT_LEFT, SPLIT_LEFT)}>
       <div style={{ height: 52, display: 'flex', alignItems: 'center', borderBottom: `1px solid ${LINE}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingLeft: 22, flex: 1 }}>
           <Dots />
@@ -155,7 +182,7 @@ export const Split: React.FC<{
             width: paneWidth, overflow: 'hidden', borderLeft: open > 0 ? `1px solid ${LINE}` : 'none', background: '#14151a',
           }}
         >
-          <div style={{ width: 960, padding: '16px 26px', fontFamily: MONO, fontSize: 23, lineHeight: 1.5, color: TEXT, opacity: open }}>
+          <div style={{ width: PANE_W, padding: `${PANE_PAD}px 26px`, fontFamily: MONO, fontSize: PANE_FONT, lineHeight: `${PANE_ROW}px`, color: TEXT, opacity: open }}>
             {pane}
           </div>
         </div>
@@ -191,8 +218,9 @@ export const PromptBox: React.FC<{ children?: React.ReactNode; faint?: boolean; 
   </div>
 )
 
-// A key being pressed: pops in at the bottom right, inside the window's
-// corner (clear of its border and the pane's text), and fades.
+// A key being pressed: pops in at the bottom left, left of the pane even
+// when the camera is pushed in on it, so it never covers the board's text,
+// and fades.
 export const Keycap: React.FC<{ label: string; at: number }> = ({ label, at }) => {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
@@ -202,7 +230,7 @@ export const Keycap: React.FC<{ label: string; at: number }> = ({ label, at }) =
   return (
     <div
       style={{
-        position: 'absolute', right: 150, bottom: 84, minWidth: 116, height: 116, padding: '0 28px', borderRadius: 24,
+        position: 'absolute', left: 40, bottom: 60, minWidth: 116, height: 116, padding: '0 28px', borderRadius: 24,
         background: '#24262f', border: `3px solid ${ACCENT}`, color: TEXT, fontFamily: UI, fontSize: 54, fontWeight: 800,
         display: 'flex', alignItems: 'center', justifyContent: 'center', transform: `scale(${0.5 + 0.5 * s})`, opacity: fade,
         boxShadow: `0 0 60px ${ACCENT}77`, zIndex: 3,
@@ -263,6 +291,21 @@ export const KanbanMark: React.FC<{ size: number; style?: React.CSSProperties }>
 }
 
 // ── The board's rows, as the pane draws them ────────────────────────────
+// Every row is one terminal row (PANE_ROW px) with no margins, and every
+// column is counted in cells (`ch`), as in hooks/layout.ts and
+// hooks/board-rows.ts: a 2-cell indent, the number right-aligned in the
+// number column, a space, the title; ages are 3 cells flush right.
+
+// Cells before a card's number, and the width of the number column (`#25`).
+const INDENT = 2
+const NUM = 3
+// The cell a card's title starts at: titles, empty lines, second rows and
+// `more` rows all start here.
+const TITLE_AT = INDENT + NUM + 1
+const AGE = 3
+// Someone else's name beside a title takes at most this many cells.
+const OWNER_CELLS = 8
+const ch = (n: number) => `${n}ch`
 
 // A key and its label, as on the pane's buttons: `r: Refresh`.
 export const Btn: React.FC<{ k: string; label: string; lit?: number }> = ({ k, label, lit = 0 }) => (
@@ -273,9 +316,7 @@ export const Btn: React.FC<{ k: string; label: string; lit?: number }> = ({ k, l
 )
 
 // The two-row toolbar: the dim status row, then the buttons.
-export const Toolbar: React.FC<{ status?: string; view?: string; viewLit?: number }> = ({
-  status = 'GitHub · #7 Demo board · updated just now', view = 'Mine + open', viewLit = 0,
-}) => (
+const Toolbar: React.FC<{ status: string; view: View; viewLit: number }> = ({ status, view, viewLit }) => (
   <>
     <div style={{ display: 'flex', color: DIM, whiteSpace: 'pre' }}>
       <span style={{ flex: 1 }}>{status}</span>
@@ -288,24 +329,28 @@ export const Toolbar: React.FC<{ status?: string; view?: string; viewLit?: numbe
 )
 
 // A group's header: `▾ Active`, or a folded one with what it holds.
-export const GroupHeader: React.FC<{ name: string; open: boolean; summary?: React.ReactNode }> = ({ name, open, summary }) => (
-  <div style={{ whiteSpace: 'pre', marginTop: 6, fontWeight: 700 }}>
+const GroupHeader: React.FC<{ name: string; open: boolean; summary?: React.ReactNode }> = ({ name, open, summary }) => (
+  <div style={{ whiteSpace: 'pre', fontWeight: 700 }}>
     <span style={{ color: ACCENT }}>{open ? '▾' : '▸'}</span> {name}
     {summary === undefined ? null : <span style={{ color: DIM, fontWeight: 400 }}>{'   '}{summary}</span>}
   </div>
 )
 
-// A section's header: name and count, a rule to the right edge, `[copy]`.
-// `lit`: a dragged card would land in this section, so its name is drawn
-// inverse; `line`: the drop's insertion line runs under this row.
-export const SectionHeader: React.FC<{ name: string; count: string; color?: string; copy?: boolean; lit?: boolean; line?: boolean }> = ({
-  name, count, color = TEXT, copy = true, lit = false, line = false,
+// The insertion line a drag draws under the row the card would land after:
+// the terminal's underline, run to the pane's edge.
+const INSERT_LINE = `inset 0 -2px 0 ${TEXT}`
+
+// A section's header: indent, name, `N mine · M all`, a rule to the right
+// edge, `[copy]`. `lit`: a dragged card would land in this section, so its
+// name is drawn inverse; `line`: the drop's insertion line runs under it.
+const SectionHeader: React.FC<{ name: string; count: string; color: string; lit: boolean; line: boolean }> = ({
+  name, count, color, lit, line,
 }) => (
-  <div style={{ display: 'flex', alignItems: 'center', whiteSpace: 'pre', marginTop: 4, ...(line ? INSERT_LINE : {}) }}>
+  <div style={{ display: 'flex', alignItems: 'center', whiteSpace: 'pre', paddingLeft: ch(INDENT), boxShadow: line ? INSERT_LINE : 'none' }}>
     <span style={{ color: lit ? BG : color, background: lit ? color : 'transparent', fontWeight: 700 }}>{name}</span>
     <span style={{ color: DIM }}> {count} </span>
-    <div style={{ flex: 1, borderTop: `1px solid ${LINE}`, margin: '0 12px' }} />
-    {copy ? <span style={{ color: DIM }}>[copy]</span> : null}
+    <div style={{ flex: 1, borderTop: `1px solid ${LINE}` }} />
+    <span style={{ color: DIM }}> [copy]</span>
   </div>
 )
 
@@ -324,67 +369,62 @@ export type Card = {
   sync?: string
   // Being dragged: stays in its place, dim and slanted, with a `›` in front.
   lifted?: boolean
-  // The drop's insertion line runs under this card.
-  line?: boolean
-  // Shown only in the Everyone view.
-  showOwnerName?: boolean
   // The keyboard cursor rests on it.
   cursor?: boolean
 }
 
-const NUM_W = '4ch'
-
-// The insertion line a drag draws under the row the card would land after:
-// the terminal's underline, run to the pane's edge.
-const INSERT_LINE: React.CSSProperties = { boxShadow: `inset 0 -2px 0 ${TEXT}` }
-
-// A card row: right-aligned number, title (in its owner's colour), the
-// owner's name dim for someone else's card, and flush right a sync glyph and
-// its age.
-export const CardRow: React.FC<{ card: Card }> = ({ card }) => {
+// A card row: the number right-aligned in its column, the title in its
+// owner's colour, someone else's name dim after it (not in Mine), and flush
+// right a sync glyph and the age, or `[copy]` under the pointer.
+const CardRow: React.FC<{ card: Card; named: boolean; line: boolean }> = ({ card, named, line }) => {
   const lifted = card.lifted === true
   const a = card.arrive ?? 1
   const glow = card.arrive === undefined ? 0 : 1 - ramp(a * 30, 10, 20)
   const ownerColor = card.owner === undefined ? TEXT : PEOPLE[card.owner]
+  const owner = named && card.owner !== undefined && card.owner !== 'You' ? card.owner.slice(0, OWNER_CELLS) : ''
   return (
     <>
       <div
         style={{
           display: 'flex', whiteSpace: 'pre', opacity: lifted ? 0.5 : Math.min(1, a * 1.5), fontStyle: lifted ? 'italic' : 'normal',
-          transform: `translateX(${(1 - a) * 40}px)`, borderRadius: 6,
+          transform: `translateX(${(1 - a) * 40}px)`, borderRadius: 4,
           background: glow > 0 ? `rgba(217,119,87,${0.22 * glow})` : card.hover || card.cursor ? '#23252e' : 'transparent',
           outline: card.cursor ? `2px solid ${ACCENT}` : 'none',
-          boxShadow: glow > 0 ? `0 0 ${30 * glow}px ${ACCENT}55` : card.line ? INSERT_LINE.boxShadow : 'none',
+          boxShadow: glow > 0 ? `0 0 ${30 * glow}px ${ACCENT}55` : line ? INSERT_LINE : 'none',
         }}
       >
-        <span style={{ width: NUM_W, display: 'flex', color: DIM }}>
-          <span style={{ flex: 1, color: TEXT, fontWeight: 700, fontStyle: 'normal' }}>{lifted ? '›' : ''}</span>
-          #{card.n}
-        </span>
+        <span style={{ width: ch(INDENT), color: TEXT, fontWeight: 700, fontStyle: 'normal', textAlign: 'right' }}>{lifted ? '› ' : ''}</span>
+        <span style={{ width: ch(NUM), textAlign: 'right', color: DIM }}>#{card.n}</span>
         <span style={{ marginLeft: '1ch', color: ownerColor }}>{card.title}</span>
-        {card.owner !== undefined && card.owner !== 'You' && card.showOwnerName ? (
-          <span style={{ color: DIM }}>  {card.owner}</span>
-        ) : null}
-        <span style={{ flex: 1 }} />
-        {card.sync === undefined ? null : <span style={{ color: card.sync === '✓' ? MINT : ACCENT }}>{card.sync} </span>}
-        <span style={{ color: card.hover ? ACCENT : DIM, minWidth: '6ch', textAlign: 'right' }}>{card.hover ? '[copy]' : card.age}</span>
+        {owner === '' ? null : <span style={{ color: DIM }}> {owner}</span>}
+        <span style={{ flex: 1, minWidth: '2ch' }} />
+        {card.hover ? (
+          <span style={{ color: ACCENT }}>[copy]</span>
+        ) : (
+          <>
+            {card.sync === undefined ? null : <span style={{ color: card.sync === '✓' ? MINT : ACCENT }}>{card.sync} </span>}
+            <span style={{ color: DIM, width: ch(AGE), textAlign: 'right' }}>{card.age}</span>
+          </>
+        )}
       </div>
       {card.activity === undefined ? null : (
-        <div style={{ whiteSpace: 'pre', color: DIM, paddingLeft: `calc(${NUM_W} + 1ch)`, opacity: Math.min(1, a * 1.5) }}>{card.activity}</div>
+        <div style={{ whiteSpace: 'pre', color: DIM, paddingLeft: ch(TITLE_AT), opacity: Math.min(1, a * 1.5) }}>{card.activity}</div>
       )}
     </>
   )
 }
 
-// The room left under a section's cards: a quiet dot under the numbers.
-export const SpareRow: React.FC<{ text?: string }> = ({ text }) => (
-  <div style={{ display: 'flex', whiteSpace: 'pre', color: DIM }}>
-    <span style={{ width: NUM_W, textAlign: 'right', opacity: text === undefined ? 0.5 : 1 }}>{text === undefined ? '·' : ''}</span>
-    {text === undefined ? null : <span style={{ marginLeft: '1ch' }}>{text}</span>}
-  </div>
+// A spare row in a section: a quiet dot under the number column's last cell.
+const SlotRow: React.FC = () => (
+  <div style={{ whiteSpace: 'pre', color: DIM, paddingLeft: ch(TITLE_AT - 2), opacity: 0.5 }}>·</div>
 )
 
-// The agents' dots on a Claude card's second row: `●● Explore · idle 3m · 12m · 48k`.
+// A dim row that starts at the title cell: `↓ 3 more`, a section's empty line.
+const TextRow: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div style={{ whiteSpace: 'pre', color: DIM, paddingLeft: ch(TITLE_AT) }}>{children}</div>
+)
+
+// The agents' dots on a Claude card's second row: `●● Explore · ⟳ Grep redirect · 1m · 12k`.
 export const Activity: React.FC<{ dots: string[]; who: string; doing: string; time: string; tok: string }> = ({ dots, who, doing, time, tok }) => (
   <span>
     {dots.map((c, i) => (
@@ -396,71 +436,111 @@ export const Activity: React.FC<{ dots: string[]; who: string; doing: string; ti
   </span>
 )
 
-// A section: its header, its cards, then spare rows (or the empty line)
-// up to a fixed height, so nothing jumps when a card moves.
-export const Section: React.FC<{
+// The pane's views, as `v` steps through them.
+export type View = 'Mine + open' | 'Everyone'
+
+// What a view lets through: Mine + open shows your cards and nobody's.
+const shows = (view: View, card: Card) => view === 'Everyone' || card.owner === undefined || card.owner === 'You'
+
+// Rows under each section's header, the same for all three sections.
+export const SECTION_BODY = 7
+
+// A section: its header (counting every card in it, shown or not), then a
+// window of SECTION_BODY rows: the cards that fit, a `↓ N more` row when
+// some do not, and dotted spare rows (or the empty line) after them.
+const Section: React.FC<{
   name: string
   cards: Card[]
-  rows: number
-  empty: string
-  color?: string
-  everyone?: boolean
-  // Other people's cards the view hides: the header still counts them.
-  hidden?: number
-  // A drag would land here: the name is lit and the insertion line is drawn
-  // under the header (`-1`, first in the section) or under card `lineAfter`.
-  drop?: { lineAfter: number }
-}> = ({ name, cards, rows, empty, color, everyone, hidden = 0, drop }) => {
+  view: View
+  empty: React.ReactNode
+  color: string
+  drop?: number
+}> = ({ name, cards, view, empty, color, drop }) => {
+  const shown = cards.filter(c => shows(view, c))
+  const sizes = shown.map(c => (c.activity === undefined ? 1 : 2))
+  const fits = sizes.reduce((s, n) => s + n, 0) <= SECTION_BODY
+  let used = 0
+  let taken = 0
+  if (fits) {
+    taken = shown.length
+    used = sizes.reduce((s, n) => s + n, 0)
+  } else {
+    while (taken < shown.length && used + (sizes[taken] ?? 1) <= SECTION_BODY - 1) used += sizes[taken++] ?? 1
+  }
+  const below = shown.length - taken
+  const rows = used + (below > 0 ? 1 : 0) + (shown.length === 0 ? 1 : 0)
   const mine = cards.filter(c => c.owner === 'You').length
-  const used = cards.reduce((sum, c) => sum + (c.activity === undefined ? 1 : 2), 0)
   return (
     <>
-      <SectionHeader name={name} count={`${mine} mine · ${cards.length + hidden} all`} color={color} lit={drop !== undefined} line={drop?.lineAfter === -1} />
-      {cards.map((c, i) => (
-        <CardRow key={c.n} card={{ ...c, showOwnerName: everyone, line: drop?.lineAfter === i }} />
+      <SectionHeader name={name} count={`${mine} mine · ${cards.length} all`} color={color} lit={drop !== undefined} line={drop === -1} />
+      {shown.slice(0, taken).map((c, i) => (
+        <CardRow key={c.n} card={c} named line={drop === i} />
       ))}
-      {cards.length === 0 ? <SpareRow text={empty} /> : null}
-      {Array.from({ length: Math.max(0, rows - Math.max(used, 1)) }, (_, i) => (
-        <SpareRow key={i} />
-      ))}
+      {below > 0 ? <TextRow>↓ {below} more</TextRow> : null}
+      {shown.length === 0 ? <TextRow>{empty}</TextRow> : null}
+      {Array.from({ length: Math.max(0, SECTION_BODY - rows) }, (_, i) =>
+        shown.length === 0 ? <div key={i}>{'\u00a0'}</div> : <SlotRow key={i} />,
+      )}
     </>
   )
 }
 
 // The last row of the list: each person in their colour, you first.
-export const PeopleRow: React.FC<{ show?: number }> = ({ show = 1 }) => (
-  <div style={{ whiteSpace: 'pre', opacity: show, marginTop: 6 }}>
+const PeopleRow: React.FC<{ lit?: number }> = ({ lit = 0 }) => (
+  <div style={{ whiteSpace: 'pre', paddingLeft: ch(INDENT) }}>
     {(Object.keys(PEOPLE) as Person[]).map((p, i) => (
-      <span key={p} style={{ color: PEOPLE[p] }}>
+      <span key={p} style={{ color: PEOPLE[p], textShadow: lit > 0 ? `0 0 ${18 * lit}px ${PEOPLE[p]}` : 'none' }}>
         {i === 0 ? '' : '  '}● {p}
       </span>
     ))}
   </div>
 )
 
-// The whole board in the pane: toolbar, Active open, Inactive folded. Ann's
-// and Bo's two Backlog cards show only in the Everyone view, but count always.
+// The rows the board takes, top to bottom, and where a row sits in the
+// pane, so a camera or a pointer can find it: the toolbar (0, 1), Active (2),
+// Backlog's header (3), Claude's (11), Me's (19), Inactive (27), people (28).
+export const ROW = {
+  backlog: 3,
+  claude: 3 + SECTION_BODY + 1,
+  me: 3 + 2 * (SECTION_BODY + 1),
+  inactive: 3 + 3 * (SECTION_BODY + 1),
+  people: 4 + 3 * (SECTION_BODY + 1),
+}
+
+// The whole board in the pane: toolbar, Active open, Inactive folded, the
+// people row. Sections get every card they hold; the view picks which show,
+// and the headers count them all.
 export const Board: React.FC<{
   backlog: Card[]
   claude: Card[]
   me: Card[]
   inactive?: React.ReactNode
-  view?: string
+  view?: View
   viewLit?: number
   status?: string
-  people?: number
-  everyone?: boolean
-  // Where a dragged card would land, if anywhere.
+  peopleLit?: number
+  // Where a dragged card would land: its section, and the row it goes under
+  // (-1: under the header).
   drop?: { section: 'backlog' | 'claude' | 'me'; lineAfter: number }
-}> = ({ backlog, claude, me, inactive = '12 Done · 2 Cancelled · 1 Suspended', view, viewLit, status, people = 0, everyone, drop }) => (
+}> = ({
+  backlog, claude, me, inactive = '12 Done · 2 Cancelled · 1 Suspended', view = 'Mine + open', viewLit = 0,
+  status = 'GitHub · #7 Demo board · updated just now', peopleLit, drop,
+}) => (
   <>
     <Toolbar view={view} viewLit={viewLit} status={status} />
     <GroupHeader name="Active" open />
-    <Section name="Backlog" cards={backlog} rows={4} empty="Nothing yet · n adds a card" everyone={everyone} hidden={everyone ? 0 : 2} drop={drop?.section === 'backlog' ? drop : undefined} />
-    <Section name="Claude" cards={claude} rows={3} empty="Idle · drag a card here" color={ACCENT} everyone={everyone} drop={drop?.section === 'claude' ? drop : undefined} />
-    <Section name="Me" cards={me} rows={2} empty="✓ All clear, nothing needs you" color={AMBER} everyone={everyone} drop={drop?.section === 'me' ? drop : undefined} />
+    <Section name="Backlog" cards={backlog} view={view} empty="Nothing yet · n adds a card" color={TEXT} drop={drop?.section === 'backlog' ? drop.lineAfter : undefined} />
+    <Section name="Claude" cards={claude} view={view} empty="Idle · drag a card here" color={ACCENT} drop={drop?.section === 'claude' ? drop.lineAfter : undefined} />
+    <Section
+      name="Me"
+      cards={me}
+      view={view}
+      empty={<><span style={{ color: MINT }}>✓ </span>All clear, nothing needs you</>}
+      color={AMBER}
+      drop={drop?.section === 'me' ? drop.lineAfter : undefined}
+    />
     <GroupHeader name="Inactive" open={false} summary={inactive} />
-    {people > 0 ? <PeopleRow show={people} /> : null}
+    <PeopleRow lit={peopleLit} />
   </>
 )
 
