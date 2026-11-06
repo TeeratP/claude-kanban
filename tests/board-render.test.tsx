@@ -173,9 +173,9 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
 
   expect(await fits(ui, 44, 'active open')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   v: Mine   f: Find',
+    'r: Refresh n: New v: Mine + open f: Find',
     '▾ Active',
-    '  Backlog 8 mine · 8 all ───────────────────',
+    '  Backlog 8 mine · 8 all ──────────── [copy]',
     '   #40 Write docs                        20h',
     '   #41 Ship 1.0                           1d',
     '   #42 [KANB-UIX] Polish the board        2d',
@@ -183,7 +183,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
     '   #44 Rate-limit banner                  4d',
     '   #45 Cache warmup                       5d',
     '       ↓ 2 more',
-    '  Claude 2 mine · 2 all ────────────────────',
+    '  Claude 2 mine · 2 all ───────────── [copy]',
     '   #31 Build the sync API                 3m',
     '       ●● Explore · idle 3m · 12m · 48k',
     '   #32 Add a dark theme                   3h',
@@ -191,7 +191,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
     '     ·',
     '     ·',
     '     ·',
-    '  Me 3 mine · 3 all ────────────────────────',
+    '  Me 3 mine · 3 all ───────────────── [copy]',
     '    #7 Rewrite the onboarding flow so …   1d',
     '   #12 Fix login redirect loop on Safa…  12m',
     '   ?23 Which auth provider?              10h',
@@ -201,7 +201,7 @@ test('Active open at 44 columns: one title column, ages flush right, spare room 
     '     ·',
     '▸ Inactive                         12D 1C 1S',
     '  ⏎ open · m move · ⇧J/K reorder',
-    '',
+    '  ● TeeratP',
   ])
   await ui.unmount()
 })
@@ -213,7 +213,7 @@ test('Active open at 30 columns drops the age and Refresh, keeps whose cards sho
 
   expect(lines.slice(0, 7)).toEqual([
     ' GitHub            s: Settings',
-    ' n: New   v: Mine   f: Find',
+    'n: New v: Mine + open f: Find',
     '▾ Active',
     '  Backlog 8 mine · 8 all ─────',
     '   #40 Write docs          20h',
@@ -224,7 +224,7 @@ test('Active open at 30 columns drops the age and Refresh, keeps whose cards sho
     '     ·',
     '▸ Inactive           12D 1C 1S',
     '  ⏎ open · m move',
-    '',
+    '  ● TeeratP',
   ])
   await ui.unmount()
 })
@@ -236,7 +236,7 @@ test('Inactive open: Active is a summary, the dim cards keep the title column an
 
   expect(await fits(ui, 44, 'inactive open')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   v: Mine   f: Find',
+    'r: Refresh n: New v: Mine + open f: Find',
     '▸ Active         8 Backlog · 2 Claude · 3 Me',
     '▾ Inactive',
     '  Done 12 ──────────────────────── 10 newest',
@@ -264,7 +264,7 @@ test('Inactive open: Active is a summary, the dim cards keep the title column an
     '     ·',
     '     ·',
     '  ⏎ open · m move · ⇧J/K reorder',
-    '',
+    '  ● TeeratP',
   ])
   await ui.unmount()
 })
@@ -276,17 +276,19 @@ test('both groups folded: two summaries and the line that says to press one, whi
 
   expect(await fits(ui, 44, 'both folded')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   v: Mine   f: Find',
+    'r: Refresh n: New v: Mine + open f: Find',
     '▸ Active         8 Backlog · 2 Claude · 3 Me',
     '▸ Inactive                         12D 1C 1S',
     '  Press a group to open it',
+    '  ● TeeratP',
   ])
   await ui.unmount()
   for (const columns of [24, 30, 80]) {
     const narrow = await mount($, columns)
     const lines = await fits(narrow, columns, 'both folded')
 
-    expect(lines.length).toBe(columns < 30 ? 4 : 5)
+    // The people row ends the list at every width.
+    expect(lines.length).toBe(columns < 30 ? 5 : 6)
     await narrow.unmount()
   }
 })
@@ -297,15 +299,15 @@ test('an empty board says what each section is for, and that the board has no is
 
   expect(await fits(ui, 44, 'empty')).toEqual([
     ' GitHub · updated just now       s: Settings',
-    ' r: Refresh   n: New   v: Mine   f: Find',
+    'r: Refresh n: New v: Mine + open f: Find',
     '▾ Active',
-    '  Backlog 0 mine · 0 all ───────────────────',
+    '  Backlog 0 mine · 0 all ──────────── [copy]',
     '       Nothing yet · n adds a card',
     ...blank(6),
-    '  Claude 0 mine · 0 all ────────────────────',
+    '  Claude 0 mine · 0 all ───────────── [copy]',
     '       Idle · drag a card here',
     ...blank(6),
-    '  Me 0 mine · 0 all ────────────────────────',
+    '  Me 0 mine · 0 all ───────────────── [copy]',
     '       ✓ All clear, nothing needs you',
     ...blank(6),
     '▸ Inactive                             empty',
@@ -364,7 +366,7 @@ test('the first load draws bars where the cards will be, never an empty board', 
 
   expect(await fits(ui, 44, 'loading')).toEqual([
     ' GitHub · loading…               s: Settings',
-    ' r: Refresh   n: New   v: Mine   f: Find',
+    'r: Refresh n: New v: Mine + open f: Find',
     '▾ Active',
     '  Backlog ──────────────────────────────────',
     '       ───────────────────',
@@ -541,7 +543,7 @@ test('an Active header says how many of its cards are the person\'s and how many
     'Me 0 mine · 1 all',
   ])
   const lines = await fits(ui, 44, 'mine counts')
-  expect(lines).toContain(`  Backlog 2 mine · 4 all ${'─'.repeat(19)}`)
+  expect(lines).toContain(`  Backlog 2 mine · 4 all ${'─'.repeat(12)} [copy]`)
   await ui.unmount()
 })
 
@@ -577,12 +579,7 @@ test('the counts do not follow whose cards show: all is every card in the sectio
     'Me 0 mine · 1 all',
   ]
 
-  // Mine: the person's two.
-  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:40', 'card:gh:43'])
-  expect(await activeHeaders(ui)).toEqual(counts)
-
-  // Mine + open: and nobody's.
-  await ui.press({ key: 'who' })
+  // Mine + open, where the pane opens: the person's two and nobody's.
   expect(await under(ui, 'hdr:backlog')).toEqual([
     'card:gh:40',
     'card:gh:42',
@@ -599,6 +596,11 @@ test('the counts do not follow whose cards show: all is every card in the sectio
     'card:gh:43',
   ])
   expect(await activeHeaders(ui)).toEqual(counts)
+
+  // Mine: the person's two.
+  await ui.press({ key: 'who' })
+  expect(await under(ui, 'hdr:backlog')).toEqual(['card:gh:40', 'card:gh:43'])
+  expect(await activeHeaders(ui)).toEqual(counts)
   await ui.unmount()
 })
 
@@ -610,11 +612,11 @@ test('under a filter a header counts the cards shown out of all it holds', async
     await ui.input({ key: 'filter:text', text })
   }
 
-  // In Mine, mika's matching card is not shown, and still counts in all.
+  // In Mine + open, mika's matching card is not shown, and still counts in all.
   await filterBy('theirs')
   expect(await activeHeaders(ui)).toEqual(['Backlog 0/4', 'Claude 0/1', 'Me 0/1'])
 
-  await ui.press({ key: 'who' })
+  // Everyone shows it.
   await ui.press({ key: 'who' })
   expect(await activeHeaders(ui)).toEqual(['Backlog 1/4', 'Claude 0/1', 'Me 1/1'])
 

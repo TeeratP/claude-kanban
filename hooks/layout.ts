@@ -1,4 +1,10 @@
-import type { KanbanCard, KanbanColumn, KanbanGroup, KanbanUi } from '../types'
+import type {
+  KanbanCard,
+  KanbanColumn,
+  KanbanGroup,
+  KanbanPeople,
+  KanbanUi,
+} from '../types'
 import { filterCards, isFiltering } from './filter'
 import {
   GROUPS,
@@ -13,7 +19,7 @@ import {
   padStart,
   truncate,
 } from './model'
-import { isTheirs, whoCards } from './people'
+import { isTheirs, peopleOnBoard, whoCards } from './people'
 import { S } from './strings'
 
 /** How many of a section's cards the filter lets through, out of all of them. */
@@ -61,6 +67,8 @@ export type Row =
   // What the list says while both groups are folded.
   | { kind: 'folded' }
   | { kind: 'note' }
+  // The last row while cards are assigned: each person's colour and name.
+  | { kind: 'people'; logins: string[] }
 
 /** Rows the toolbar takes: the status, then the actions. */
 export const TOOLBAR_ROWS = 2
@@ -79,6 +87,8 @@ export type LayoutInput = {
   isLoading?: boolean
   /** The signed-in login, which `ui.who` goes by. */
   viewer?: string
+  /** The names people go by, which order the people row. */
+  people?: KanbanPeople
 }
 
 /** The cards a section lists, in order: Done and Cancelled are their newest ten. */
@@ -163,12 +173,21 @@ export function applyFilter(
   return { cards: matched, ui: { ...ui, openGroup } }
 }
 
-/** Rows an empty board adds under the groups: the note; none while loading. */
+// Whether any card has someone assigned: the board then ends in the people row.
+const hasPeople = (cards: readonly KanbanCard[]) =>
+  cards.some(card => (card.assignees ?? []).length > 0)
+
+/**
+ * Rows the board adds under the groups: the note on an empty board, or the
+ * people row while a card is assigned; none while loading.
+ */
 export function footRows(
   cards: readonly KanbanCard[],
   isLoading = false,
 ): number {
-  return cards.length > 0 || isLoading ? 0 : 1
+  if (isLoading) return 0
+
+  return cards.length === 0 || hasPeople(cards) ? 1 : 0
 }
 
 /**
@@ -328,6 +347,7 @@ export function layoutBoard({
   legend,
   isLoading,
   viewer,
+  people,
 }: LayoutInput): Row[] {
   const loading = isLoading === true
   const { cards: matched, ui } = applyFilter(cards, stored, viewer)
@@ -402,6 +422,8 @@ export function layoutBoard({
 
   if (cards.length === 0 && !loading) {
     rows.push({ kind: 'note' })
+  } else if (!loading && hasPeople(cards)) {
+    rows.push({ kind: 'people', logins: peopleOnBoard(cards, viewer, people) })
   }
 
   return rows

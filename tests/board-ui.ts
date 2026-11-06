@@ -6,7 +6,7 @@ import { padEnd } from '../hooks/model'
 // Buttons elsewhere. These reach a row by its key (`grp:inactive`, `hdr:human`,
 // `card:<id>`, `more:<column>:<dir>`) on either, so a test body can run on every
 // surface. The section headers (`hdr:`) are labels: Texts where the list is not
-// a Client's, and never Buttons.
+// a Client's, except an active section's, a Button there that copies its cards.
 
 /** What the helpers use of a mounted Pane; any surface's handle fits. */
 export type BoardUi = Pick<Mounted, 'find' | 'findAll' | 'press' | 'drawn'>
@@ -24,10 +24,13 @@ export async function hasClient(ui: BoardUi): Promise<boolean> {
 // The section a header's label names: the pane calls Human `Me`.
 const COLUMN_OF: Record<string, string> = { Me: 'human' }
 
-/** A list row by key, drawn as a Button or by the Client; a section header, a Text, by its label. */
+/** A list row by key, drawn as a Button or by the Client; a section header, a Text (or an active one's Button), by its label. */
 export async function row(ui: BoardUi, key: string) {
   if (await hasClient(ui)) return ui.find({ key, in: CLIENT })
   if (!key.startsWith('hdr:')) return ui.find({ type: 'Button', key })
+
+  const pressed = await ui.find({ type: 'Button', key })
+  if (pressed !== undefined) return pressed
 
   const column = key.slice('hdr:'.length)
   const label =

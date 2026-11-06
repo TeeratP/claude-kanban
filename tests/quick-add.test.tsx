@@ -718,11 +718,12 @@ async function openAt(
       surface,
       props: { ...PANE.props, bodyColumns: width },
     })
-  // Below 24 columns New gives way, so the form is opened wider and the pane
-  // narrowed after, as when a pane is resized with the form open.
-  const opener = await at(Math.max(columns, 24))
+  // Below 30 columns New gives way (the pane opens on Mine + open, a long
+  // label), so the form is opened wider and the pane narrowed after, as when a
+  // pane is resized with the form open.
+  const opener = await at(Math.max(columns, 30))
   await opener.press({ key: 'add' })
-  if (columns >= 24) return { ...world, ui: opener }
+  if (columns >= 30) return { ...world, ui: opener }
 
   await opener.unmount()
 

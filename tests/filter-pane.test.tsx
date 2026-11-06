@@ -405,8 +405,8 @@ for (const surface of WITH_CLIENT) {
   })
 
   test(`the window stops at the last card that matches and follows a card moved past its edge on the ${surface}`, async ($, on) => {
-    // A pane of 22 rows: five rows under each header.
-    const { ui } = await start($, on, surface, long(), 22)
+    // A pane of 23 rows: five rows under each header (the people row takes one).
+    const { ui } = await start($, on, surface, long(), 23)
     // Six of Backlog's eight cards, so four show and two are below.
     await applyFilter(ui, '#11 #12 #13 #14 #15 #16')
     expect(await header(ui, 'backlog')).toBe('Backlog 6/8')
@@ -414,7 +414,7 @@ for (const surface of WITH_CLIENT) {
 
     await $.ui.scroll({
       ...SCROLL,
-      bodyRows: 22,
+      bodyRows: 23,
       by: 40,
       pointer: {
         column: 3,
@@ -426,7 +426,7 @@ for (const surface of WITH_CLIENT) {
     // Two back is all the way back: the window never went past the matches.
     await $.ui.scroll({
       ...SCROLL,
-      bodyRows: 22,
+      bodyRows: 23,
       by: -2,
       pointer: {
         column: 3,
@@ -719,13 +719,13 @@ test('@me keeps the cards of the Me section, as @human does', async ($, on) => {
   await ui.unmount()
 })
 
-test('at 44 columns the filter text shows in Find: the spacing tightens to make room', async ($, on) => {
+test('at 44 columns the filter text shows in Find: Refresh gives way to make room', async ($, on) => {
   const { ui } = await start($, on, 'terminal')
 
   await applyFilter(ui, 'fix')
 
   const [, actions] = await toolbar(ui)
-  expect(actions).toBe('r: Refresh n: New v: Mine f: Find "fix" ✕')
+  expect(actions).toBe(' n: New   v: Mine + open   f: Find "fix" ✕')
   expect(cellWidth(actions)).toBeLessThanOrEqual(PANE.props.bodyColumns)
   await ui.unmount()
 })
@@ -738,7 +738,7 @@ test('a long filter is cut to fit the action row and the status row keeps its te
 
   const [status, actions] = await toolbar(ui)
   expect(actions).toMatch(
-    /^r: Refresh n: New v: Mine f: Find "label[^"]*…" ✕$/,
+    /^ n: New {3}v: Mine \+ open {3}f: Find "labe[^"]*…" ✕$/,
   )
   expect(status).toContain('updated')
   expect(cellWidth(status)).toBeLessThanOrEqual(PANE.props.bodyColumns)

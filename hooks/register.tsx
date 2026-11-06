@@ -96,7 +96,7 @@ export const register: Register = (on, options) => {
 
   // A click on a row, or a card dropped on a section or moved a place, posted by the board's Client.
   on('ui.message', { requestId: 'kanban', element: 'board' }, async ($, e) => {
-    await handleBoardMessage($, e.data)
+    await handleBoardMessage($, e.data, e.surface)
 
     return {}
   }).catch(($, e, next) => next(e))

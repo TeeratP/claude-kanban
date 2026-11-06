@@ -1,4 +1,9 @@
-import type { EngineInterface, RenderInput, UiScrollInput } from 'claude-code'
+import type {
+  EngineInterface,
+  RenderInput,
+  RenderSurface,
+  UiScrollInput,
+} from 'claude-code'
 
 import type {
   KanbanBackendInfo,
@@ -37,7 +42,13 @@ import {
   titleColumn,
 } from './layout'
 import type { Row } from './layout'
-import { INITIAL_UI, TICK_BRIGHT_MS, ageLabel } from './model'
+import {
+  INITIAL_UI,
+  TICK_BRIGHT_MS,
+  ageLabel,
+  groupOf,
+  isPendingId,
+} from './model'
 import { nextWho, ownerOf } from './people'
 import { quickAddRows, toggleQuickAdd } from './quick-add'
 import { minutesLeft } from './rate-limit'
@@ -212,15 +223,71 @@ export async function handleBoardScroll(
   return scrollSection($, column, e.bodyRows, strip, () => step)
 }
 
+// One card as it is copied: `#12 Fix the login`.
+const copyLine = (card: KanbanCard) => `#${card.number} ${card.title}`
+
+// Puts `lines` on the clipboard and says how it went.
+async function copyLines(
+  $: EngineInterface,
+  lines: readonly string[],
+  surface?: RenderSurface,
+) {
+  if (lines.length === 0) {
+    $.ui.toast(S.copyNone)
+    return
+  }
+  const result = await $.ui.copy({
+    text: lines.join('\n'),
+    ...(surface === undefined ? {} : { surface }),
+  })
+  $.ui.toast(
+    result.isCopied ? S.copied(lines.length) : S.copyFailed(result.reason),
+  )
+}
+
+/** Copies a card's number and title. */
+export async function copyCard(
+  $: EngineInterface,
+  cardId: string,
+  surface?: RenderSurface,
+) {
+  const card = (await readBoard($)).cards.find(one => one.id === cardId)
+  await copyLines($, card === undefined ? [] : [copyLine(card)], surface)
+}
+
+/** Copies the cards a section shows, whose and filter applied, one per line, in its order. */
+export async function copyColumn(
+  $: EngineInterface,
+  column: KanbanColumn,
+  surface?: RenderSurface,
+) {
+  const board = await readBoard($)
+  const { cards } = applyFilter(board.cards, await readUi($), board.viewer)
+  await copyLines(
+    $,
+    sectionList(cards, column)
+      .filter(card => !isPendingId(card.id))
+      .map(copyLine),
+    surface,
+  )
+}
+
 /** Acts on what the board's Client posted: a click on a row, a card dropped or a card moved a place. */
 export async function handleBoardMessage(
   $: EngineInterface,
   data: unknown,
+  surface?: RenderSurface,
 ): Promise<void> {
   const message = parseBoardMessage(data)
   if (message === undefined) return
 
   switch (message.type) {
+    case 'copy':
+      await copyCard($, message.cardId, surface)
+      break
+    case 'copyColumn':
+      await copyColumn($, message.column, surface)
+      break
     case 'open':
       await openDetail($, message.cardId)
       break
@@ -305,6 +372,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     legend: hasClient,
     isLoading,
     viewer: board.viewer,
+    people: board.people,
   })
   // A card's second row starts where its title does.
   const titleAt = titleColumn(board.cards, columns)
@@ -489,6 +557,8 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
     canDrag: hasClient,
     canType,
     needsSetup: board.setup !== undefined,
+    viewer: board.viewer,
+    people: board.people,
   }
   const textOf = (row: Row) => {
     const [made] = toRowViews({ ...rowViewInput, rows: [row] })
@@ -515,8 +585,17 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
           </Button>
         )
 
+      // An active section's header ends in [copy]; a press on it copies the section.
       case 'header':
-        return (
+        return groupOf(row.column) === 'active' ? (
+          <Button
+            key={`hdr:${row.column}`}
+            plain
+            onPress={press => copyColumn($, row.column, press.surface)}
+          >
+            {textOf(row)}
+          </Button>
+        ) : (
           <Text key={`hdr:${row.column}`} wrap="truncate-end">
             {textOf(row)}
           </Text>
@@ -527,6 +606,7 @@ export async function renderBoard($: EngineInterface, e: RenderInput<'Pane'>) {
       case 'empty':
       case 'skeleton':
       case 'note':
+      case 'people':
         return <Text wrap="truncate-end">{textOf(row)}</Text>
 
       // The legend is the Client's: the other surfaces have no keys to list.

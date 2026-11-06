@@ -584,6 +584,14 @@ export const S = {
   ownerRow: 'Owner',
   assignNobody: 'nobody',
   assignFailed: (reason: string) => `Could not change who has the card: ${reason}`,
+  // The button that copies a card's number and title, or a section's cards.
+  copyButton: '[copy]',
+  copied: (n: number) =>
+    n === 1 ? 'Copied 1 card.' : `Copied ${n} cards.`,
+  copyNone: 'No cards to copy.',
+  copyFailed: (reason: string) => `Could not copy: ${reason}`,
+  // The dot before each name in the row of whose colour is whose.
+  personDot: '●',
   listHidden: (n: number) =>
     `${n} card${n === 1 ? '' : 's'} assigned to other people are left out; pass all: true to list them.`,
 }

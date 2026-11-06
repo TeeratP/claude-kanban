@@ -76,6 +76,69 @@ export function ownerOf(
   return other === undefined ? '' : nameOf(people, other)
 }
 
+// The colours people's cards are drawn in. Theme colours for sections and
+// marks (claude, permission, error, success) are left out so a card's owner is
+// never mistaken for its state.
+const PERSON_COLORS = [
+  'cyan',
+  'magenta',
+  'green',
+  'yellow',
+  'blueBright',
+  'redBright',
+  'cyanBright',
+  'magentaBright',
+] as const
+
+/** The colour a login's cards are drawn in: the same on every load and in every session. */
+export function colorOf(login: string): string {
+  let hash = 0
+  for (const char of login.toLowerCase()) {
+    hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0
+  }
+
+  return PERSON_COLORS[hash % PERSON_COLORS.length] ?? 'cyan'
+}
+
+/** The assignee a card is coloured by: `viewer` when it is one of them, else the first; none for nobody's. */
+export function colorLoginOf(
+  card: KanbanCard,
+  viewer: string | undefined,
+): string | undefined {
+  const assignees = card.assignees ?? []
+  if (viewer !== undefined && viewer !== '') {
+    const own = assignees.find(one => same(one, viewer))
+    if (own !== undefined) return own
+  }
+
+  return assignees[0]
+}
+
+/**
+ * The people with a card on the board, for the row of whose colour is whose:
+ * `viewer` first, then the rest by the name they go by. Each login once.
+ */
+export function peopleOnBoard(
+  cards: readonly KanbanCard[],
+  viewer: string | undefined,
+  people: KanbanPeople | undefined,
+): string[] {
+  const logins: string[] = []
+  for (const card of cards) {
+    for (const login of card.assignees ?? []) {
+      if (!logins.some(one => same(one, login))) logins.push(login)
+    }
+  }
+  const isViewer = (login: string) =>
+    viewer !== undefined && viewer !== '' && same(login, viewer)
+
+  return logins.sort(
+    (a, b) =>
+      Number(isViewer(b)) - Number(isViewer(a)) ||
+      nameOf(people, a).localeCompare(nameOf(people, b)),
+  )
+}
+
 /** A name as it may be kept: one line, trimmed, at most 40 characters; empty when there is none. */
 export const cleanName = (name: string) =>
   name.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX)

@@ -7,6 +7,8 @@ import type { RowViewInput } from '../hooks/board-rows'
 import { layoutBoard } from '../hooks/layout'
 import type { Row } from '../hooks/layout'
 import { COLUMNS, INITIAL_UI, cellWidth } from '../hooks/model'
+import { colorOf } from '../hooks/people'
+import { S } from '../hooks/strings'
 
 const WIDTHS = [24, 30, 44, 80] as const
 
@@ -93,18 +95,17 @@ test('every row, whole or in its carry and chip forms, fits the pane at 24, 30, 
   }
 })
 
-test('a section header is its label and count, a rule to the edge and the meta flush right', () => {
+test('an active section header is its label and count, a rule to the edge and [copy] flush right', () => {
   const views = rowsOf(44, open('active'))
   const header = (column: string) =>
     views.find(view => view.kind === 'header' && view.column === column)
 
   expect(textOf(header('backlog')?.segs ?? [])).toBe(
-    `  Backlog 1 ${'─'.repeat(32)}`,
+    `  Backlog 1 ${'─'.repeat(25)} [copy]`,
   )
   expect(header('human')?.width).toBe(44)
-  // Claude's header has no meta: its rule runs to the edge.
   expect(textOf(header('claude')?.segs ?? [])).toBe(
-    `  Claude 1 ${'─'.repeat(33)}`,
+    `  Claude 1 ${'─'.repeat(26)} [copy]`,
   )
 })
 
@@ -639,4 +640,137 @@ test('a message from the Client is taken only whole: a group of the two, a colum
     parseBoardMessage({ type: 'page', column: 'done', dir: 'left' }),
   ).toBeUndefined()
   expect(parseBoardMessage('open')).toBeUndefined()
+})
+
+// A board of these cards as the views of its Active group, `who` set to all.
+function viewsOf(
+  cards: KanbanCard[],
+  columns: number,
+  extra: Partial<RowViewInput> = {},
+) {
+  const ui: KanbanUi = { ...INITIAL_UI, openGroup: 'active', who: 'all' }
+
+  return toRowViews(
+    input(
+      layoutBoard({
+        cards,
+        ui,
+        bodyRows: 30,
+        legend: true,
+        viewer: 'TeeratP',
+        people: { alice: 'Alice Smith' },
+      }),
+      columns,
+      { cards, viewer: 'TeeratP', people: { alice: 'Alice Smith' }, ...extra },
+    ),
+  )
+}
+
+const assigned = (number: number, assignees?: string[]): KanbanCard => ({
+  ...cardOf(number, 'backlog'),
+  ...(assignees === undefined ? {} : { assignees }),
+})
+
+test('the people row ends the list when a card is assigned: each name in its colour, the viewer first', () => {
+  const views = viewsOf(
+    [assigned(1, ['alice']), assigned(2, ['TeeratP']), assigned(3)],
+    44,
+  )
+  const last = views.at(-1)
+
+  expect(last?.kind).toBe('text')
+  expect(textOf(last?.segs ?? [])).toBe('  ● TeeratP  ● Alice Smith')
+  const colors = (last?.segs ?? []).filter(one => one.color !== '')
+  expect(colors.map(one => one.color)).toEqual([
+    colorOf('TeeratP'),
+    colorOf('TeeratP'),
+    colorOf('alice'),
+    colorOf('alice'),
+  ])
+})
+
+test('a board with nobody assigned has no people row', () => {
+  const views = viewsOf([assigned(1), assigned(2, [])], 44)
+
+  expect(views.some(view => textOf(view.segs).includes('●'))).toBe(false)
+})
+
+test('the people row says +N for the names that do not fit', () => {
+  const crowd = ['alice', 'bob', 'carol', 'dave'].map((login, i) =>
+    assigned(i + 1, [login]),
+  )
+  const views = viewsOf(crowd, 24)
+  const text = textOf(views.at(-1)?.segs ?? [])
+
+  expect(text).toMatch(/ \+\d+$/)
+  expect(text).toContain('● ')
+  expect(views.at(-1)?.width).toBeLessThanOrEqual(24)
+  // Every name that is not drawn is counted.
+  const drawn = ['Alice Smith', 'bob', 'carol', 'dave'].filter(name =>
+    text.includes(name),
+  ).length
+  expect(Number(/\+(\d+)$/.exec(text)?.[1])).toBe(4 - drawn)
+})
+
+test('an assigned card’s title is in its owner’s colour, the viewer’s when they are one of them', () => {
+  const views = viewsOf(
+    [
+      assigned(1, ['alice']),
+      assigned(2, ['alice', 'TeeratP']),
+      assigned(3),
+    ],
+    44,
+  )
+  const titleOf = (cardId: string) =>
+    views
+      .find(view => view.kind === 'card' && view.cardId === cardId)
+      ?.segs.find(one => one.text.includes('Card'))
+
+  expect(titleOf('gh:1')?.color).toBe(colorOf('alice'))
+  expect(titleOf('gh:2')?.color).toBe(colorOf('TeeratP'))
+  expect(titleOf('gh:3')?.color).toBe('')
+})
+
+test('an active card swaps its meta for [copy] under the pointer; a done card has none', () => {
+  const cards = [assigned(1, ['TeeratP']), cardOf(4, 'done')]
+  const ui: KanbanUi = { ...INITIAL_UI, openGroup: 'active', who: 'all' }
+  const active = toRowViews(
+    input(layoutBoard({ cards, ui, bodyRows: 30, legend: true }), 44, { cards }),
+  ).find(view => view.kind === 'card')
+  const done = toRowViews(
+    input(
+      layoutBoard({
+        cards,
+        ui: { ...ui, openGroup: 'inactive' },
+        bodyRows: 30,
+        legend: true,
+      }),
+      44,
+      { cards },
+    ),
+  ).find(view => view.kind === 'card')
+
+  expect(active?.kind === 'card' ? textOf(active.hoverSegs ?? []) : '').toMatch(
+    /Card 1 +\[copy\]$/,
+  )
+  expect(active?.kind === 'card' ? active.copyAt : undefined).toBe(
+    44 - cellWidth(S.copyButton),
+  )
+  expect(done?.kind === 'card' ? done.hoverSegs : 'x').toBeUndefined()
+  expect(done?.kind === 'card' ? done.copyAt : 'x').toBeUndefined()
+})
+
+test('the copy messages are checked: a card id, or an existing section', () => {
+  expect(parseBoardMessage({ type: 'copy', cardId: 'gh:1' })).toEqual({
+    type: 'copy',
+    cardId: 'gh:1',
+  })
+  expect(parseBoardMessage({ type: 'copy' })).toBeUndefined()
+  expect(parseBoardMessage({ type: 'copyColumn', column: 'human' })).toEqual({
+    type: 'copyColumn',
+    column: 'human',
+  })
+  expect(
+    parseBoardMessage({ type: 'copyColumn', column: 'later' }),
+  ).toBeUndefined()
 })

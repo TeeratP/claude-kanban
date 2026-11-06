@@ -237,11 +237,12 @@ test('a smaller pane gives every section fewer rows, and the same to each', asyn
   await clock.settle()
   const ui = await $.ui.mount({
     ...PANE,
-    props: { ...PANE.props, scroll: { offset: 0, bodyRows: 16 } },
+    props: { ...PANE.props, scroll: { offset: 0, bodyRows: 17 } },
     surface: 'terminal',
   })
 
-  // Three rows under each header: two cards and the count of the rest.
+  // Three rows under each header: two cards and the count of the rest (the
+  // people row takes one of the pane's rows).
   expect(
     (await rowKeys(ui)).filter(key => BACKLOG_KEY.test(key)),
   ).toHaveLength(2)

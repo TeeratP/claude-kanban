@@ -50,9 +50,19 @@ export type RowView =
       carrySegs: Seg[]
       /** Whether the section keeps its cards in the order they were put in. */
       isOrdered: boolean
+      /** The cell its copy button starts at; none when it has no button. */
+      copyAt?: number
     })
   | (Base & { kind: 'more'; column: string; dir: 'up' | 'down' })
-  | (Base & { kind: 'card'; column: string; cardId: string })
+  // `hoverSegs` is what the row shows under the pointer: the copy button in
+  // place of its meta, from cell `copyAt`. A card with none has no button.
+  | (Base & {
+      kind: 'card'
+      column: string
+      cardId: string
+      hoverSegs?: Seg[]
+      copyAt?: number
+    })
   // The dim second row under a card: part of that card, never a stop for the cursor.
   | (Base & { kind: 'detail'; column: string; cardId: string })
   // The empty row of a section names it; other text belongs to none. `keyed` is
@@ -67,7 +77,8 @@ export type Place = { at: 'top' } | { at: 'before' | 'after'; cardId: string }
 /**
  * What the module posts: a click on a row, a card dropped on a section (at a
  * place in it, or last when none) or moved a place up or down in its own, a
- * group opened or folded, and the key that opens Settings.
+ * group opened or folded, the key that opens Settings, and a press on the copy
+ * button of a card or a section.
  */
 export type BoardPost =
   | { type: 'open'; cardId: string }
@@ -76,6 +87,8 @@ export type BoardPost =
   | { type: 'toggleGroup'; group: string }
   | { type: 'page'; column: string; dir: 'up' | 'down' }
   | { type: 'settings' }
+  | { type: 'copy'; cardId: string }
+  | { type: 'copyColumn'; column: string }
 
 /** Where a drop at a pointer position lands, and the rows that show it. */
 export type DropTarget = {
@@ -353,7 +366,18 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
     if (from === undefined) return
 
     if (!start.hasMoved && rows[end]?.key === start.key) {
-      activate(from)
+      // The copy button sits at the row's right end.
+      if (from.kind === 'card' && from.copyAt !== undefined && endX >= from.copyAt) {
+        post({ type: 'copy', cardId: from.cardId })
+      } else if (
+        from.kind === 'header' &&
+        from.copyAt !== undefined &&
+        endX >= from.copyAt
+      ) {
+        post({ type: 'copyColumn', column: from.column })
+      } else {
+        activate(from)
+      }
       return
     }
     if (from.kind !== 'card') return
@@ -614,6 +638,17 @@ const Board: ClientModule<BoardProps, State> = (props, surface) => {
         // A pointer resting on a row, or the card being dragged, is pointed at.
         const isHover =
           row.key === hover && gesture === null && index !== cursorAt
+        // A card under the pointer, or pressed and not yet dragged, shows its copy button.
+        const isPressed =
+          gesture !== null && !gesture.hasMoved && gesture.key === row.key
+        if (
+          row.kind === 'card' &&
+          row.hoverSegs !== undefined &&
+          (isHover || isPressed)
+        ) {
+          segs = row.hoverSegs
+          width = columns
+        }
         let isMarked = false
         if (isGhost || (isHover && row.kind !== 'group')) {
           segs = pointed(segs)

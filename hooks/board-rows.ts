@@ -1,4 +1,9 @@
-import type { KanbanCard, KanbanColumn, KanbanGroup } from '../types'
+import type {
+  KanbanCard,
+  KanbanColumn,
+  KanbanGroup,
+  KanbanPeople,
+} from '../types'
 import type { Place, RowView, Seg } from './board-client'
 import { META_CELLS, cardLine, numberColumn, titleColumn } from './layout'
 import type { Row, SectionCount } from './layout'
@@ -15,6 +20,7 @@ import {
   truncate,
 } from './model'
 import type { Copy } from './model'
+import { colorLoginOf, colorOf, nameOf } from './people'
 import { S } from './strings'
 
 export type RowViewInput = {
@@ -38,6 +44,10 @@ export type RowViewInput = {
   canType: boolean
   /** Whether GitHub is yet to be set up, which an empty board says. */
   needsSetup: boolean
+  /** The signed-in login: the person's own card takes their colour when it has several assignees. */
+  viewer?: string
+  /** The names people go by, for the people row. */
+  people?: KanbanPeople
 }
 
 /** A message the board's Client posts, checked: it came from code, not a fact. */
@@ -48,6 +58,8 @@ export type BoardMessage =
   | { type: 'toggleGroup'; group: KanbanGroup }
   | { type: 'page'; column: KanbanColumn; dir: 'up' | 'down' }
   | { type: 'settings' }
+  | { type: 'copy'; cardId: string }
+  | { type: 'copyColumn'; column: KanbanColumn }
 
 const seg = (text: string, style: Partial<Omit<Seg, 'text'>> = {}): Seg => ({
   text,
@@ -286,7 +298,11 @@ export function headerMeta(
 // How a card's number, title and age are drawn: its section sets it, a
 // question stands out and a failed move turns the number red, where the eye
 // scans.
-function cardStyles(card: KanbanCard, glyph: { color: string } | undefined) {
+function cardStyles(
+  card: KanbanCard,
+  glyph: { color: string } | undefined,
+  viewer: string | undefined,
+) {
   const { column } = card
   const isDim = isDimCard(card)
   const number: Partial<Omit<Seg, 'text'>> =
@@ -297,7 +313,10 @@ function cardStyles(card: KanbanCard, glyph: { color: string } | undefined) {
         : column === 'suspended'
           ? {}
           : { dim: true }
+  // An assigned card's title is in its owner's colour, as the people row lists.
+  const owner = colorLoginOf(card, viewer)
   const title: Partial<Omit<Seg, 'text'>> = {
+    ...(owner === undefined ? {} : { color: colorOf(owner) }),
     ...(isDim || column === 'suspended' ? { dim: true } : {}),
     ...(column === 'cancelled' ? { strike: true } : {}),
   }
@@ -369,10 +388,18 @@ export function toRowViews(input: RowViewInput): RowView[] {
       case 'header': {
         const moveKeys = moveKeysOf(row.column)
         const meta = headerMeta(row.column, row.total)
+        // An active section's header ends in the button that copies its cards.
         const rights: Right[] =
-          meta === undefined || row.isLoading === true
+          row.isLoading === true
             ? []
-            : [{ text: meta, style: { dim: true } }]
+            : groupOf(row.column) === 'active'
+              ? [{ text: S.copyButton, style: {} }]
+              : meta === undefined
+                ? []
+                : [{ text: meta, style: { dim: true } }]
+        const segs = sectionHeader(row, columns, isFiltered, rights)
+        const last = segs[segs.length - 1]
+        const width = widthOf(segs)
         views.push({
           key: `hdr:${row.column}`,
           kind: 'header',
@@ -385,7 +412,11 @@ export function toRowViews(input: RowViewInput): RowView[] {
           carrySegs: sectionHeader(row, columns, isFiltered, [
             { text: moveKeys.join('/'), style: { bold: true } },
           ]),
-          ...view(sectionHeader(row, columns, isFiltered, rights)),
+          ...(groupOf(row.column) === 'active' && last?.text === S.copyButton
+            ? { copyAt: width - cellWidth(S.copyButton) }
+            : {}),
+          segs,
+          width,
         })
         break
       }
@@ -405,32 +436,58 @@ export function toRowViews(input: RowViewInput): RowView[] {
         const glyph = glyphOf(card)
         // A card not yet made has no age to give.
         const age = isPendingId(card.id) ? '' : ageOf(card)
+        const owner = input.ownerOf?.(card) ?? ''
         const line = cardLine(card, columns, numbers, {
           mark: glyph?.text ?? '',
           age,
-          owner: input.ownerOf?.(card) ?? '',
+          owner,
         })
-        const styles = cardStyles(card, glyph)
+        const styles = cardStyles(card, glyph, input.viewer)
+        const segsOf = (
+          one: typeof line,
+          mark: Partial<Omit<Seg, 'text'>>,
+        ): Seg[] =>
+          [
+            seg(one.indent),
+            seg(one.number, styles.number),
+            seg(' '),
+            seg(one.title, styles.title),
+            seg(one.owner, { dim: true }),
+            seg(one.gap),
+            seg(one.mark, mark),
+            seg(one.between),
+            seg(one.age, { dim: true }),
+          ].filter(piece => piece.text !== '')
+        // Under the pointer an active card's meta gives way to its copy button;
+        // a card not yet made has no number to copy.
+        const hasCopy =
+          groupOf(row.column) === 'active' && !isPendingId(card.id)
+        const hover = hasCopy
+          ? segsOf(
+              cardLine(card, columns, numbers, {
+                mark: S.copyButton,
+                age: '',
+                owner,
+              }),
+              {},
+            )
+          : undefined
         views.push({
           key: `card:${card.id}`,
           kind: 'card',
           column: row.column,
           cardId: card.id,
-          ...view(
-            [
-              seg(line.indent),
-              seg(line.number, styles.number),
-              seg(' '),
-              seg(line.title, styles.title),
-              seg(line.owner, { dim: true }),
-              seg(line.gap),
-              seg(line.mark, {
-                dim: glyph?.dim ?? false,
-                color: glyph?.color ?? '',
+          ...(hover === undefined
+            ? {}
+            : {
+                hoverSegs: hover,
+                copyAt: widthOf(hover) - cellWidth(S.copyButton),
               }),
-              seg(line.between),
-              seg(line.age, { dim: true }),
-            ].filter(one => one.text !== ''),
+          ...view(
+            segsOf(line, {
+              dim: glyph?.dim ?? false,
+              color: glyph?.color ?? '',
+            }),
           ),
         })
         break
@@ -538,6 +595,31 @@ export function toRowViews(input: RowViewInput): RowView[] {
         })
         break
 
+      // `● Ann  ● Bo`: each person in the colour of their cards, as many as fit,
+      // then how many more there are.
+      case 'people': {
+        const segs: Seg[] = [seg(INDENT)]
+        let used = INDENT.length
+        let shown = 0
+        for (const login of row.logins) {
+          const name = nameOf(input.people, login)
+          const lead = shown === 0 ? '' : '  '
+          const width = cellWidth(`${lead}${S.personDot} ${name}`)
+          const rest = row.logins.length - shown - 1
+          const more = rest > 0 ? cellWidth(` +${rest}`) : 0
+          if (used + width + more > columns) break
+          segs.push(
+            seg(`${lead}${S.personDot} `, { color: colorOf(login) }),
+            seg(name, { color: colorOf(login) }),
+          )
+          used += width
+          shown += 1
+        }
+        const left = row.logins.length - shown
+        if (left > 0) segs.push(seg(` +${left}`, { dim: true }))
+        views.push({ key: 'people', kind: 'text', ...view(segs) })
+        break
+      }
     }
   }
 
@@ -589,6 +671,10 @@ export function parseBoardMessage(data: unknown): BoardMessage | undefined {
         : undefined
     case 'settings':
       return { type }
+    case 'copy':
+      return typeof cardId === 'string' ? { type, cardId } : undefined
+    case 'copyColumn':
+      return isColumn(column) ? { type, column } : undefined
     default:
       return undefined
   }
