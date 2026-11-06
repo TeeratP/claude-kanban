@@ -1,0 +1,19 @@
+{
+  "_": "One source of truth for both the picture and the music (scripts/music.py reads this too). Frames at 30 fps, 120 BPM: a beat is 15 frames. The drop is the start of the 'logo' scene, the full groove starts with 'full', the ritardando starts with 'end'. 'keys' are keypress and click frames inside a scene (each gets a click); 'impact' is the Approve press. 'outro' is the slowing beats inside the end scene, and the last one is the final chord.",
+  "intro": {
+    "seconds": 45,
+    "scenes": { "problem": 120, "logo": 120, "pane": 150, "pick": 210, "handoff": 240, "moves": 180, "mine": 150, "end": 180 },
+    "full": "pane",
+    "keys": { "problem": [90], "pick": [45, 60], "handoff": [150], "moves": [30, 75, 120, 135], "mine": [45, 105] },
+    "impact": ["handoff", 150],
+    "outro": [0, 15, 31, 48, 67, 89, 116]
+  },
+  "teaser": {
+    "seconds": 25,
+    "scenes": { "hook": 90, "logo": 60, "hero": 240, "montage": 180, "end": 180 },
+    "full": "hero",
+    "keys": { "hook": [60], "hero": [45, 60, 180] },
+    "impact": ["hero", 180],
+    "outro": [0, 18, 42, 76]
+  }
+}
